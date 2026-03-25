@@ -22,6 +22,12 @@ async def on_ready():
     print(f"{bot.user} 온라인")
 
 
+# ⭐ 봇 상태 확인 명령어
+@bot.tree.command(name="핑", description="봇 상태 확인")
+async def ping(interaction: discord.Interaction):
+    await interaction.response.send_message("퐁 🏓")
+
+
 async def main():
     async with bot:
         await bot.load_extension("cogs.settings_cog")
