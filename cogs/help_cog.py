@@ -9,64 +9,70 @@ class Help(commands.Cog):
 
     @app_commands.command(name="도움말", description="봇 명령어 목록을 보여줍니다.")
     async def help_command(self, interaction: discord.Interaction):
-
         embed = discord.Embed(
-            title=":video_game: 내전봇 명령어 도움말",
+            title="🎮 내전봇 명령어 도움말",
             description="사용 가능한 명령어 목록입니다.",
             color=discord.Color.blue()
         )
 
         embed.add_field(
-            name=":gear: 설정",
+            name="⚙️ 설정",
             value="""
-            /설정역할
-            /설정카테고리
-            /설정보기
+/설정역할
+/설정카테고리
+/설정보기
             """,
             inline=False
         )
 
         embed.add_field(
-            name=":loudspeaker: 내전",
+            name="📢 내전",
             value="""
-            /내전생성
-            /내전종료
-            /내전상태
+/내전생성
+/내전종료
+/내전상태
             """,
             inline=False
         )
 
         embed.add_field(
-            name=":busts_in_silhouette: 팀 관련",
+            name="👥 팀 관련",
             value="""
-            /밸런스팀
-            /팀장뽑기
+/밸런스팀
+/내전시작
+/결과기록
             """,
             inline=False
         )
 
         embed.add_field(
-            name=":bar_chart: 전적 / 랭킹",
+            name="📊 전적 / 랭킹",
             value="""
-            /랭킹
-            /최근전적
+/랭킹
+/최근전적
+/내전전적
             """,
             inline=False
         )
 
         embed.add_field(
-            name=":brain: 프로필",
+            name="🧠 티어 등록",
             value="""
-            /발로티어등록
-            /옵치티어등록
+/발로티어등록
+/티어점수표
+/옵치티어등록
+/옵치티어점수표
+/롤티어등록
+/롤티어점수표
             """,
             inline=False
         )
 
         embed.add_field(
-            name=":robot: 기타",
+            name="🤖 기타",
             value="""
-            /핑
+/핑
+/도움말
             """,
             inline=False
         )

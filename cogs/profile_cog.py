@@ -29,6 +29,19 @@ OVERWATCH_TIER_SCORES = {
     "챔피언": 2000,
 }
 
+LOL_TIER_SCORES = {
+    "아이언4": 100, "아이언3": 150, "아이언2": 200, "아이언1": 250,
+    "브론즈4": 300, "브론즈3": 350, "브론즈2": 400, "브론즈1": 450,
+    "실버4": 500, "실버3": 550, "실버2": 600, "실버1": 650,
+    "골드4": 700, "골드3": 750, "골드2": 800, "골드1": 850,
+    "플래티넘4": 900, "플래티넘3": 950, "플래티넘2": 1000, "플래티넘1": 1050,
+    "에메랄드4": 1100, "에메랄드3": 1150, "에메랄드2": 1200, "에메랄드1": 1250,
+    "다이아4": 1300, "다이아3": 1350, "다이아2": 1400, "다이아1": 1450,
+    "마스터": 1550,
+    "그랜드마스터": 1700,
+    "챌린저": 1900,
+}
+
 
 class Profile(commands.Cog):
     def __init__(self, bot):
@@ -85,6 +98,34 @@ class Profile(commands.Cog):
 
         await interaction.response.send_message(
             f"{interaction.user.mention} 오버워치 티어 등록 완료\n"
+            f"티어: **{tier}**\n"
+            f"MMR: **{mmr}**",
+            ephemeral=True
+        )
+
+    @app_commands.command(name="롤티어점수표", description="롤 티어 점수표를 보여줍니다.")
+    async def lol_tier_table(self, interaction: discord.Interaction):
+        text = "\n".join([f"{k}: {v}" for k, v in LOL_TIER_SCORES.items()])
+        await interaction.response.send_message(f"```{text}```", ephemeral=True)
+
+    @app_commands.command(name="롤티어등록", description="롤 티어를 등록하고 MMR로 반영합니다.")
+    async def lol_tier_register(self, interaction: discord.Interaction, 티어: str):
+        tier = 티어.strip()
+
+        if tier not in LOL_TIER_SCORES:
+            await interaction.response.send_message(
+                "올바른 롤 티어를 입력해주세요.\n"
+                "예: 아이언4, 브론즈1, 실버2, 골드3, 플래티넘4, 에메랄드2, 다이아1, 마스터, 그랜드마스터, 챌린저",
+                ephemeral=True
+            )
+            return
+
+        mmr = LOL_TIER_SCORES[tier]
+        db.ensure_player(interaction.guild_id, interaction.user.id, mmr)
+        db.set_player_mmr(interaction.guild_id, interaction.user.id, mmr)
+
+        await interaction.response.send_message(
+            f"{interaction.user.mention} 롤 티어 등록 완료\n"
             f"티어: **{tier}**\n"
             f"MMR: **{mmr}**",
             ephemeral=True
