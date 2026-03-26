@@ -7,7 +7,6 @@ app = Flask(__name__)
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
-
 INDEX_HTML = """
 <!DOCTYPE html>
 <html lang="ko">
@@ -285,6 +284,62 @@ PLAYER_HTML = """
 </html>
 """
 
+LOCKED_HTML = """
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>프리미엄 전용</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #0f172a;
+            color: #e2e8f0;
+            margin: 0;
+            padding: 0;
+        }
+        .container {
+            max-width: 700px;
+            margin: 80px auto;
+            padding: 20px;
+        }
+        .card {
+            background: #1e293b;
+            border-radius: 16px;
+            padding: 32px;
+            text-align: center;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+        }
+        a {
+            color: #60a5fa;
+            text-decoration: none;
+        }
+        .badge {
+            display: inline-block;
+            padding: 8px 14px;
+            border-radius: 999px;
+            background: #f59e0b;
+            color: #0f172a;
+            font-weight: bold;
+            margin-bottom: 16px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="card">
+            <div class="badge">PREMIUM ONLY</div>
+            <h1>상세 전적 페이지는 프리미엄 서버 전용입니다.</h1>
+            <p>이 서버는 현재 무료 서버라서 유저 상세 전적을 볼 수 없습니다.</p>
+            <p>관리자는 봇에서 <strong>/프리미엄켜기</strong> 명령어로 활성화할 수 있습니다.</p>
+            <p><a href="/">← 홈으로 돌아가기</a></p>
+        </div>
+    </div>
+</body>
+</html>
+"""
+
 
 def get_conn():
     if not DATABASE_URL:
@@ -309,11 +364,6 @@ def index():
             params = []
             filters = []
 
-            if selected_game:
-                base_table = "player_game_stats"
-            else:
-                base_table = "players"
-
             if selected_guild_id:
                 filters.append("guild_id = %s")
                 params.append(int(selected_guild_id))
@@ -327,21 +377,60 @@ def index():
                 params.append(f"%{q}%")
                 params.append(f"%{q}%")
 
-            where_clause = ""
-            if filters:
-                where_clause = "WHERE " + " AND ".join(filters)
+            if selected_game:
+                where_clause = ""
+                if filters:
+                    safe_filters = []
+                    for f in filters:
+                        f = f.replace("guild_id", "pgs.guild_id")
+                        f = f.replace("game", "pgs.game")
+                        f = f.replace("user_id", "pgs.user_id")
+                        f = f.replace("display_name", "COALESCE(pgs.display_name, p.display_name)")
+                        safe_filters.append(f)
+                    where_clause = "WHERE " + " AND ".join(safe_filters)
 
-            ranking_sql = f"""
-                SELECT guild_id, user_id, display_name, mmr, win, lose,
-                CASE
-                    WHEN (win + lose) = 0 THEN 0
-                    ELSE ROUND((CAST(win AS NUMERIC) / (win + lose)) * 100, 1)
-                END AS winrate
-                FROM {base_table}
-                {where_clause}
-                ORDER BY mmr DESC, win DESC
-                LIMIT 50
-            """
+                ranking_sql = f"""
+                    SELECT
+                        pgs.guild_id,
+                        pgs.user_id,
+                        COALESCE(pgs.display_name, p.display_name) AS display_name,
+                        pgs.mmr,
+                        pgs.win,
+                        pgs.lose,
+                        CASE
+                            WHEN (pgs.win + pgs.lose) = 0 THEN 0
+                            ELSE ROUND((CAST(pgs.win AS NUMERIC) / (pgs.win + pgs.lose)) * 100, 1)
+                        END AS winrate
+                    FROM player_game_stats pgs
+                    LEFT JOIN players p
+                        ON pgs.guild_id = p.guild_id AND pgs.user_id = p.user_id
+                    {where_clause}
+                    ORDER BY pgs.mmr DESC, pgs.win DESC
+                    LIMIT 50
+                """
+            else:
+                where_clause = ""
+                if filters:
+                    where_clause = "WHERE " + " AND ".join(filters)
+
+                ranking_sql = f"""
+                    SELECT
+                        guild_id,
+                        user_id,
+                        display_name,
+                        mmr,
+                        win,
+                        lose,
+                        CASE
+                            WHEN (win + lose) = 0 THEN 0
+                            ELSE ROUND((CAST(win AS NUMERIC) / (win + lose)) * 100, 1)
+                        END AS winrate
+                    FROM players
+                    {where_clause}
+                    ORDER BY mmr DESC, win DESC
+                    LIMIT 50
+                """
+
             cur.execute(ranking_sql, tuple(params))
             ranking = cur.fetchall()
 
@@ -383,6 +472,18 @@ def index():
 def player_page(guild_id, user_id):
     with get_conn() as conn:
         with conn.cursor() as cur:
+            # ⭐ 프리미엄 서버 체크
+            cur.execute("""
+                SELECT is_premium
+                FROM premium_guilds
+                WHERE guild_id = %s
+            """, (guild_id,))
+            premium_row = cur.fetchone()
+            is_premium = bool(premium_row["is_premium"]) if premium_row else False
+
+            if not is_premium:
+                return render_template_string(LOCKED_HTML)
+
             cur.execute("""
                 SELECT guild_id, user_id, display_name, mmr, win, lose
                 FROM players
