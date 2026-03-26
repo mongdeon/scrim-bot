@@ -1,0 +1,246 @@
+import os
+import psycopg2
+from psycopg2.extras import RealDictCursor
+from flask import Flask, render_template_string, abort
+
+app = Flask(__name__)
+
+DATABASE_URL = os.environ.get("DATABASE_URL")
+
+INDEX_HTML = """
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>내전봇 전적 사이트</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #0f172a;
+            color: #e2e8f0;
+            margin: 0;
+            padding: 0;
+        }
+        .container {
+            max-width: 1100px;
+            margin: 40px auto;
+            padding: 20px;
+        }
+        h1, h2 {
+            margin-bottom: 16px;
+        }
+        .card {
+            background: #1e293b;
+            border-radius: 16px;
+            padding: 20px;
+            margin-bottom: 24px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            overflow: hidden;
+        }
+        th, td {
+            padding: 12px;
+            border-bottom: 1px solid #334155;
+            text-align: left;
+        }
+        th {
+            background: #334155;
+        }
+        a {
+            color: #60a5fa;
+            text-decoration: none;
+        }
+        .muted {
+            color: #94a3b8;
+            font-size: 14px;
+        }
+        .pill {
+            display: inline-block;
+            padding: 6px 10px;
+            border-radius: 999px;
+            background: #334155;
+            margin-right: 8px;
+            font-size: 13px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎮 내전봇 전적 사이트</h1>
+        <p class="muted">PostgreSQL 기반 랭킹 / 전적 / 최근 경기 조회</p>
+
+        <div class="card">
+            <h2>🏆 전체 랭킹 TOP 50</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>유저 ID</th>
+                        <th>MMR</th>
+                        <th>승</th>
+                        <th>패</th>
+                        <th>승률</th>
+                        <th>상세</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in ranking %}
+                    <tr>
+                        <td>{{ loop.index }}</td>
+                        <td>{{ row.user_id }}</td>
+                        <td>{{ row.mmr }}</td>
+                        <td>{{ row.win }}</td>
+                        <td>{{ row.lose }}</td>
+                        <td>{{ row.winrate }}%</td>
+                        <td><a href="/player/{{ row.guild_id }}/{{ row.user_id }}">보기</a></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="card">
+            <h2>📝 최근 경기</h2>
+            {% for match in matches %}
+                <div style="margin-bottom: 12px;">
+                    <span class="pill">Guild {{ match.guild_id }}</span>
+                    <span class="pill">{{ match.game }}</span>
+                    <span class="pill">승리팀 {{ match.winner_team }}</span>
+                    <span class="pill">A평균 {{ match.team_a_avg }}</span>
+                    <span class="pill">B평균 {{ match.team_b_avg }}</span>
+                    <span class="muted">{{ match.created_at }}</span>
+                </div>
+            {% endfor %}
+        </div>
+    </div>
+</body>
+</html>
+"""
+
+PLAYER_HTML = """
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>유저 전적</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #0f172a;
+            color: #e2e8f0;
+            margin: 0;
+            padding: 0;
+        }
+        .container {
+            max-width: 900px;
+            margin: 40px auto;
+            padding: 20px;
+        }
+        .card {
+            background: #1e293b;
+            border-radius: 16px;
+            padding: 24px;
+            margin-bottom: 24px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+        }
+        a {
+            color: #60a5fa;
+            text-decoration: none;
+        }
+        .stat {
+            margin: 10px 0;
+            font-size: 18px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <p><a href="/">← 홈으로</a></p>
+
+        <div class="card">
+            <h1>👤 유저 전적</h1>
+            <div class="stat">Guild ID: {{ player.guild_id }}</div>
+            <div class="stat">User ID: {{ player.user_id }}</div>
+            <div class="stat">MMR: {{ player.mmr }}</div>
+            <div class="stat">승: {{ player.win }}</div>
+            <div class="stat">패: {{ player.lose }}</div>
+            <div class="stat">총판수: {{ total }}</div>
+            <div class="stat">승률: {{ winrate }}%</div>
+        </div>
+    </div>
+</body>
+</html>
+"""
+
+
+def get_conn():
+    if not DATABASE_URL:
+        raise RuntimeError("DATABASE_URL 환경변수가 설정되지 않았습니다.")
+    return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+
+
+@app.route("/")
+def index():
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT guild_id, user_id, mmr, win, lose,
+                CASE
+                    WHEN (win + lose) = 0 THEN 0
+                    ELSE ROUND((CAST(win AS NUMERIC) / (win + lose)) * 100, 1)
+                END AS winrate
+                FROM players
+                ORDER BY mmr DESC, win DESC
+                LIMIT 50
+            """)
+            ranking = cur.fetchall()
+
+            cur.execute("""
+                SELECT id, guild_id, game, winner_team, team_a_avg, team_b_avg, created_at
+                FROM matches
+                ORDER BY id DESC
+                LIMIT 20
+            """)
+            matches = cur.fetchall()
+
+    return render_template_string(INDEX_HTML, ranking=ranking, matches=matches)
+
+
+@app.route("/player/<int:guild_id>/<int:user_id>")
+def player_page(guild_id, user_id):
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT guild_id, user_id, mmr, win, lose
+                FROM players
+                WHERE guild_id = %s AND user_id = %s
+            """, (guild_id, user_id))
+            player = cur.fetchone()
+
+    if not player:
+        abort(404)
+
+    total = player["win"] + player["lose"]
+    winrate = round((player["win"] / total) * 100, 1) if total > 0 else 0.0
+
+    return render_template_string(
+        PLAYER_HTML,
+        player=player,
+        total=total,
+        winrate=winrate
+    )
+
+
+@app.route("/health")
+def health():
+    return {"ok": True}
+
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
