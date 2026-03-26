@@ -24,6 +24,13 @@ class DB:
             """)
 
             cur.execute("""
+            CREATE TABLE IF NOT EXISTS premium_guilds(
+                guild_id BIGINT PRIMARY KEY,
+                is_premium BOOLEAN DEFAULT FALSE
+            )
+            """)
+
+            cur.execute("""
             CREATE TABLE IF NOT EXISTS lobbies(
                 channel_id BIGINT PRIMARY KEY,
                 guild_id BIGINT,
@@ -96,9 +103,24 @@ class DB:
             )
             """)
 
-            # 기존 테이블에 display_name 없을 경우 대비
             cur.execute("ALTER TABLE players ADD COLUMN IF NOT EXISTS display_name TEXT")
             cur.execute("ALTER TABLE player_game_stats ADD COLUMN IF NOT EXISTS display_name TEXT")
+
+    # ---------------- premium ----------------
+    def set_premium(self, guild_id, is_premium: bool):
+        with self.conn.cursor() as cur:
+            cur.execute("""
+            INSERT INTO premium_guilds(guild_id, is_premium)
+            VALUES(%s, %s)
+            ON CONFLICT(guild_id)
+            DO UPDATE SET is_premium=EXCLUDED.is_premium
+            """, (guild_id, is_premium))
+
+    def is_premium_guild(self, guild_id):
+        with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT is_premium FROM premium_guilds WHERE guild_id=%s", (guild_id,))
+            row = cur.fetchone()
+            return bool(row["is_premium"]) if row else False
 
     # ---------------- guild settings ----------------
     def set_role(self, guild_id, role_id):

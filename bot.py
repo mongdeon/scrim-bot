@@ -54,6 +54,7 @@ async def main():
         await bot.load_extension("cogs.ranking_cog")
         await bot.load_extension("cogs.profile_cog")
         await bot.load_extension("cogs.help_cog")
+        await bot.load_extension("cogs.premium_cog")
         await bot.start(TOKEN)
 
 
