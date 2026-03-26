@@ -55,23 +55,16 @@ class Profile(commands.Cog):
     @app_commands.command(name="발로티어등록", description="발로란트 티어를 등록하고 MMR로 반영합니다.")
     async def valorant_tier_register(self, interaction: discord.Interaction, 티어: str):
         tier = 티어.strip()
-
         if tier not in VALORANT_TIER_SCORES:
-            await interaction.response.send_message(
-                "올바른 티어를 입력해주세요.\n"
-                "예: 아이언1, 실버2, 골드3, 플래티넘1, 다이아2, 초월자3, 불멸1, 레디언트",
-                ephemeral=True
-            )
+            await interaction.response.send_message("올바른 발로란트 티어를 입력해주세요.", ephemeral=True)
             return
 
         mmr = VALORANT_TIER_SCORES[tier]
-        db.ensure_player(interaction.guild_id, interaction.user.id, mmr)
-        db.set_player_mmr(interaction.guild_id, interaction.user.id, mmr)
+        db.set_player_mmr(interaction.guild_id, interaction.user.id, mmr, interaction.user.display_name)
+        db.set_player_game_mmr(interaction.guild_id, interaction.user.id, "valorant", mmr, interaction.user.display_name)
 
         await interaction.response.send_message(
-            f"{interaction.user.mention} 발로란트 티어 등록 완료\n"
-            f"티어: **{tier}**\n"
-            f"MMR: **{mmr}**",
+            f"{interaction.user.mention} 발로란트 티어 등록 완료\n티어: **{tier}**\nMMR: **{mmr}**",
             ephemeral=True
         )
 
@@ -83,23 +76,16 @@ class Profile(commands.Cog):
     @app_commands.command(name="옵치티어등록", description="오버워치 티어를 등록하고 MMR로 반영합니다.")
     async def overwatch_tier_register(self, interaction: discord.Interaction, 티어: str):
         tier = 티어.strip()
-
         if tier not in OVERWATCH_TIER_SCORES:
-            await interaction.response.send_message(
-                "올바른 오버워치 티어를 입력해주세요.\n"
-                "예: 브론즈5, 실버3, 골드1, 플래티넘2, 다이아4, 마스터1, 그랜드마스터3, 챔피언",
-                ephemeral=True
-            )
+            await interaction.response.send_message("올바른 오버워치 티어를 입력해주세요.", ephemeral=True)
             return
 
         mmr = OVERWATCH_TIER_SCORES[tier]
-        db.ensure_player(interaction.guild_id, interaction.user.id, mmr)
-        db.set_player_mmr(interaction.guild_id, interaction.user.id, mmr)
+        db.set_player_mmr(interaction.guild_id, interaction.user.id, mmr, interaction.user.display_name)
+        db.set_player_game_mmr(interaction.guild_id, interaction.user.id, "overwatch", mmr, interaction.user.display_name)
 
         await interaction.response.send_message(
-            f"{interaction.user.mention} 오버워치 티어 등록 완료\n"
-            f"티어: **{tier}**\n"
-            f"MMR: **{mmr}**",
+            f"{interaction.user.mention} 오버워치 티어 등록 완료\n티어: **{tier}**\nMMR: **{mmr}**",
             ephemeral=True
         )
 
@@ -111,23 +97,16 @@ class Profile(commands.Cog):
     @app_commands.command(name="롤티어등록", description="롤 티어를 등록하고 MMR로 반영합니다.")
     async def lol_tier_register(self, interaction: discord.Interaction, 티어: str):
         tier = 티어.strip()
-
         if tier not in LOL_TIER_SCORES:
-            await interaction.response.send_message(
-                "올바른 롤 티어를 입력해주세요.\n"
-                "예: 아이언4, 브론즈1, 실버2, 골드3, 플래티넘4, 에메랄드2, 다이아1, 마스터, 그랜드마스터, 챌린저",
-                ephemeral=True
-            )
+            await interaction.response.send_message("올바른 롤 티어를 입력해주세요.", ephemeral=True)
             return
 
         mmr = LOL_TIER_SCORES[tier]
-        db.ensure_player(interaction.guild_id, interaction.user.id, mmr)
-        db.set_player_mmr(interaction.guild_id, interaction.user.id, mmr)
+        db.set_player_mmr(interaction.guild_id, interaction.user.id, mmr, interaction.user.display_name)
+        db.set_player_game_mmr(interaction.guild_id, interaction.user.id, "lol", mmr, interaction.user.display_name)
 
         await interaction.response.send_message(
-            f"{interaction.user.mention} 롤 티어 등록 완료\n"
-            f"티어: **{tier}**\n"
-            f"MMR: **{mmr}**",
+            f"{interaction.user.mention} 롤 티어 등록 완료\n티어: **{tier}**\nMMR: **{mmr}**",
             ephemeral=True
         )
 

@@ -62,10 +62,24 @@ class DB:
             CREATE TABLE IF NOT EXISTS players(
                 guild_id BIGINT,
                 user_id BIGINT,
+                display_name TEXT,
                 mmr INT DEFAULT 1000,
                 win INT DEFAULT 0,
                 lose INT DEFAULT 0,
                 PRIMARY KEY(guild_id, user_id)
+            )
+            """)
+
+            cur.execute("""
+            CREATE TABLE IF NOT EXISTS player_game_stats(
+                guild_id BIGINT,
+                user_id BIGINT,
+                game TEXT,
+                display_name TEXT,
+                mmr INT DEFAULT 1000,
+                win INT DEFAULT 0,
+                lose INT DEFAULT 0,
+                PRIMARY KEY(guild_id, user_id, game)
             )
             """)
 
@@ -81,6 +95,10 @@ class DB:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
             """)
+
+            # 기존 테이블에 display_name 없을 경우 대비
+            cur.execute("ALTER TABLE players ADD COLUMN IF NOT EXISTS display_name TEXT")
+            cur.execute("ALTER TABLE player_game_stats ADD COLUMN IF NOT EXISTS display_name TEXT")
 
     # ---------------- guild settings ----------------
     def set_role(self, guild_id, role_id):
@@ -223,44 +241,105 @@ class DB:
             """, (channel_id, team_name))
             return [row["user_id"] for row in cur.fetchall()]
 
-    # ---------------- persistent player mmr ----------------
-    def ensure_player(self, guild_id, user_id, mmr=1000):
+    # ---------------- global player stats ----------------
+    def ensure_player(self, guild_id, user_id, mmr=1000, display_name=None):
         with self.conn.cursor() as cur:
             cur.execute("""
-            INSERT INTO players(guild_id, user_id, mmr, win, lose)
-            VALUES(%s, %s, %s, 0, 0)
+            INSERT INTO players(guild_id, user_id, display_name, mmr, win, lose)
+            VALUES(%s, %s, %s, %s, 0, 0)
             ON CONFLICT(guild_id, user_id)
             DO NOTHING
-            """, (guild_id, user_id, mmr))
+            """, (guild_id, user_id, display_name, mmr))
 
-    def set_player_mmr(self, guild_id, user_id, mmr):
-        self.ensure_player(guild_id, user_id, mmr)
+            if display_name:
+                cur.execute("""
+                UPDATE players
+                SET display_name=%s
+                WHERE guild_id=%s AND user_id=%s
+                """, (display_name, guild_id, user_id))
+
+    def set_player_mmr(self, guild_id, user_id, mmr, display_name=None):
+        self.ensure_player(guild_id, user_id, mmr, display_name)
         with self.conn.cursor() as cur:
             cur.execute("""
             UPDATE players
-            SET mmr=%s
+            SET mmr=%s,
+                display_name=COALESCE(%s, display_name)
             WHERE guild_id=%s AND user_id=%s
-            """, (mmr, guild_id, user_id))
+            """, (mmr, display_name, guild_id, user_id))
 
-    def apply_match_result(self, guild_id, winners, losers, winner_delta, loser_delta):
+    # ---------------- per-game stats ----------------
+    def ensure_player_game(self, guild_id, user_id, game, mmr=1000, display_name=None):
+        with self.conn.cursor() as cur:
+            cur.execute("""
+            INSERT INTO player_game_stats(guild_id, user_id, game, display_name, mmr, win, lose)
+            VALUES(%s, %s, %s, %s, %s, 0, 0)
+            ON CONFLICT(guild_id, user_id, game)
+            DO NOTHING
+            """, (guild_id, user_id, game, display_name, mmr))
+
+            if display_name:
+                cur.execute("""
+                UPDATE player_game_stats
+                SET display_name=%s
+                WHERE guild_id=%s AND user_id=%s AND game=%s
+                """, (display_name, guild_id, user_id, game))
+
+    def set_player_game_mmr(self, guild_id, user_id, game, mmr, display_name=None):
+        self.ensure_player_game(guild_id, user_id, game, mmr, display_name)
+        with self.conn.cursor() as cur:
+            cur.execute("""
+            UPDATE player_game_stats
+            SET mmr=%s,
+                display_name=COALESCE(%s, display_name)
+            WHERE guild_id=%s AND user_id=%s AND game=%s
+            """, (mmr, display_name, guild_id, user_id, game))
+
+    def apply_match_result(self, guild_id, game, winners, losers, winner_delta, loser_delta, name_map=None):
+        name_map = name_map or {}
+
         with self.conn.cursor() as cur:
             for user_id in winners:
-                self.ensure_player(guild_id, user_id)
+                display_name = name_map.get(user_id)
+                self.ensure_player(guild_id, user_id, 1000, display_name)
+                self.ensure_player_game(guild_id, user_id, game, 1000, display_name)
+
                 cur.execute("""
                 UPDATE players
                 SET mmr = GREATEST(100, mmr + %s),
-                    win = win + 1
+                    win = win + 1,
+                    display_name = COALESCE(%s, display_name)
                 WHERE guild_id=%s AND user_id=%s
-                """, (winner_delta, guild_id, user_id))
+                """, (winner_delta, display_name, guild_id, user_id))
+
+                cur.execute("""
+                UPDATE player_game_stats
+                SET mmr = GREATEST(100, mmr + %s),
+                    win = win + 1,
+                    display_name = COALESCE(%s, display_name)
+                WHERE guild_id=%s AND user_id=%s AND game=%s
+                """, (winner_delta, display_name, guild_id, user_id, game))
 
             for user_id in losers:
-                self.ensure_player(guild_id, user_id)
+                display_name = name_map.get(user_id)
+                self.ensure_player(guild_id, user_id, 1000, display_name)
+                self.ensure_player_game(guild_id, user_id, game, 1000, display_name)
+
                 cur.execute("""
                 UPDATE players
                 SET mmr = GREATEST(100, mmr + %s),
-                    lose = lose + 1
+                    lose = lose + 1,
+                    display_name = COALESCE(%s, display_name)
                 WHERE guild_id=%s AND user_id=%s
-                """, (loser_delta, guild_id, user_id))
+                """, (loser_delta, display_name, guild_id, user_id))
+
+                cur.execute("""
+                UPDATE player_game_stats
+                SET mmr = GREATEST(100, mmr + %s),
+                    lose = lose + 1,
+                    display_name = COALESCE(%s, display_name)
+                WHERE guild_id=%s AND user_id=%s AND game=%s
+                """, (loser_delta, display_name, guild_id, user_id, game))
 
     def get_player(self, guild_id, user_id):
         self.ensure_player(guild_id, user_id)

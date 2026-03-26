@@ -41,6 +41,8 @@ def build_lobby_embed(lobby: dict, players: list[dict], team_a=None, team_b=None
         "overwatch": "Overwatch 2"
     }.get(lobby["game"], lobby["game"])
 
+    need = lobby["team_size"] * 2
+
     color = discord.Color.green()
     if lobby["status"] == "balanced":
         color = discord.Color.orange()
@@ -55,14 +57,14 @@ def build_lobby_embed(lobby: dict, players: list[dict], team_a=None, team_b=None
     )
 
     embed.add_field(name="상태", value=lobby["status"], inline=True)
-    embed.add_field(name="팀 인원", value=str(lobby["team_size"]), inline=True)
-    embed.add_field(name="현재 인원", value=str(len(players)), inline=True)
+    embed.add_field(name="팀 인원", value=f"{lobby['team_size']} vs {lobby['team_size']}", inline=True)
+    embed.add_field(name="현재 인원", value=f"{len(players)} / {need}", inline=True)
 
     if players:
         lines = []
         for idx, player in enumerate(players, start=1):
             lines.append(
-                f"{idx}. <@{player['user_id']}> | MMR {player['mmr']} | {player['position']}"
+                f"{idx}. {player['display_name']} | MMR {player['mmr']} | {player['position']}"
             )
         embed.add_field(name="참가자", value="\n".join(lines[:25]), inline=False)
     else:
@@ -75,12 +77,10 @@ def build_lobby_embed(lobby: dict, players: list[dict], team_a=None, team_b=None
 
     if lobby["status"] == "open":
         embed.set_footer(text="참가 버튼을 눌러 포지션과 MMR을 입력하세요.")
-    elif lobby["status"] == "balanced":
-        embed.set_footer(text="정원이 차서 자동 팀 분배가 완료되었습니다.")
     elif lobby["status"] == "started":
-        embed.set_footer(text="내전이 시작되었습니다.")
+        embed.set_footer(text="정원이 차서 자동 팀 분배 + 자동 음성 이동이 완료되었습니다.")
     else:
-        embed.set_footer(text="내전이 종료되었습니다.")
+        embed.set_footer(text="내전 상태를 확인하세요.")
 
     return embed
 
@@ -146,16 +146,13 @@ class JoinModal(discord.ui.Modal, title="내전 참가"):
             mmr,
             position
         )
-        db.ensure_player(interaction.guild_id, interaction.user.id, mmr)
-        db.set_player_mmr(interaction.guild_id, interaction.user.id, mmr)
+        db.ensure_player(interaction.guild_id, interaction.user.id, mmr, interaction.user.display_name)
+        db.ensure_player_game(interaction.guild_id, interaction.user.id, lobby["game"], mmr, interaction.user.display_name)
 
         await interaction.response.send_message("참가 완료", ephemeral=True)
 
-        # 메시지 갱신
         await self.cog.refresh_lobby_message(interaction.channel, self.channel_id)
-
-        # 정원 꽉 찼으면 자동 팀 분배
-        await self.cog.try_auto_balance(interaction.channel, self.channel_id)
+        await self.cog.try_auto_balance_and_start(interaction.channel, self.channel_id)
 
 
 class JoinButton(discord.ui.Button):
@@ -257,7 +254,62 @@ class Recruit(commands.Cog):
             new_msg = await channel.send(embed=embed, view=view)
             db.set_lobby_message(channel_id, new_msg.id)
 
-    async def try_auto_balance(self, channel: discord.TextChannel, channel_id: int):
+    async def ensure_voice_channels(self, guild: discord.Guild, lobby: dict):
+        settings = db.get_settings(guild.id)
+        if not settings or not settings["category_id"] or not settings["role_id"]:
+            return None, None, None
+
+        category = guild.get_channel(settings["category_id"])
+        role = guild.get_role(settings["role_id"])
+        if not category or not role:
+            return None, None, None
+
+        overwrites = {
+            guild.default_role: discord.PermissionOverwrite(view_channel=False, connect=False),
+            role: discord.PermissionOverwrite(view_channel=True, connect=True, speak=True),
+            guild.me: discord.PermissionOverwrite(view_channel=True, connect=True, speak=True, move_members=True, manage_channels=True),
+        }
+
+        host_member = guild.get_member(lobby["host_id"])
+        if host_member:
+            overwrites[host_member] = discord.PermissionOverwrite(view_channel=True, connect=True, speak=True, move_members=True)
+
+        waiting = guild.get_channel(lobby["waiting_voice_id"]) if lobby["waiting_voice_id"] else None
+        team_a_ch = guild.get_channel(lobby["team_a_voice_id"]) if lobby["team_a_voice_id"] else None
+        team_b_ch = guild.get_channel(lobby["team_b_voice_id"]) if lobby["team_b_voice_id"] else None
+
+        if waiting is None:
+            waiting = await guild.create_voice_channel(
+                name=f"{lobby['game']}-대기방",
+                category=category,
+                overwrites=overwrites
+            )
+        if team_a_ch is None:
+            team_a_ch = await guild.create_voice_channel(
+                name=f"{lobby['game']}-A팀",
+                category=category,
+                overwrites=overwrites
+            )
+        if team_b_ch is None:
+            team_b_ch = await guild.create_voice_channel(
+                name=f"{lobby['game']}-B팀",
+                category=category,
+                overwrites=overwrites
+            )
+
+        db.set_voice_channels(lobby["channel_id"], waiting.id, team_a_ch.id, team_b_ch.id)
+        return waiting, team_a_ch, team_b_ch
+
+    async def move_members(self, guild: discord.Guild, user_ids, target_channel):
+        for uid in user_ids:
+            member = guild.get_member(uid)
+            if member and member.voice and member.voice.channel:
+                try:
+                    await member.move_to(target_channel)
+                except Exception:
+                    pass
+
+    async def try_auto_balance_and_start(self, channel: discord.TextChannel, channel_id: int):
         lobby = db.get_lobby(channel_id)
         if not lobby or lobby["status"] != "open":
             return
@@ -277,7 +329,20 @@ class Recruit(commands.Cog):
         for p in team_b:
             db.add_team_member(channel_id, "B", p["user_id"])
 
-        db.set_lobby_status(channel_id, "balanced")
+        # 자동 음성 이동 + started 처리
+        waiting, team_a_ch, team_b_ch = await self.ensure_voice_channels(channel.guild, {
+            **lobby,
+            "channel_id": channel_id
+        })
+
+        db.set_lobby_status(channel_id, "started")
+
+        team_a_ids = [p["user_id"] for p in team_a]
+        team_b_ids = [p["user_id"] for p in team_b]
+
+        if team_a_ch and team_b_ch:
+            await self.move_members(channel.guild, team_a_ids, team_a_ch)
+            await self.move_members(channel.guild, team_b_ids, team_b_ch)
 
         await self.refresh_lobby_message(channel, channel_id)
 
@@ -285,11 +350,11 @@ class Recruit(commands.Cog):
         b_sum = sum(p["mmr"] for p in team_b)
 
         await channel.send(
-            f"정원이 차서 자동 팀 분배가 완료되었습니다. ({mode_text})\n\n"
+            f"정원이 차서 자동 팀 분배 + 자동 음성 이동이 완료되었습니다. ({mode_text})\n\n"
             f"**A팀 총합:** {a_sum}\n" +
-            "\n".join(f"<@{p['user_id']}> ({p['mmr']}, {p['position']})" for p in team_a) +
+            "\n".join(f"{p['display_name']} ({p['mmr']}, {p['position']})" for p in team_a) +
             f"\n\n**B팀 총합:** {b_sum}\n" +
-            "\n".join(f"<@{p['user_id']}> ({p['mmr']}, {p['position']})" for p in team_b) +
+            "\n".join(f"{p['display_name']} ({p['mmr']}, {p['position']})" for p in team_b) +
             f"\n\n차이: {abs(a_sum - b_sum)}"
         )
 

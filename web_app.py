@@ -1,11 +1,12 @@
 import os
 import psycopg2
 from psycopg2.extras import RealDictCursor
-from flask import Flask, render_template_string, abort
+from flask import Flask, render_template_string, request, abort
 
 app = Flask(__name__)
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
+
 
 INDEX_HTML = """
 <!DOCTYPE html>
@@ -23,7 +24,7 @@ INDEX_HTML = """
             padding: 0;
         }
         .container {
-            max-width: 1100px;
+            max-width: 1200px;
             margin: 40px auto;
             padding: 20px;
         }
@@ -66,19 +67,87 @@ INDEX_HTML = """
             margin-right: 8px;
             font-size: 13px;
         }
+        .filters {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin-bottom: 16px;
+        }
+        select, input, button {
+            padding: 10px 12px;
+            border-radius: 10px;
+            border: 1px solid #475569;
+            background: #0f172a;
+            color: #e2e8f0;
+        }
+        button {
+            cursor: pointer;
+            background: #2563eb;
+            border: none;
+        }
+        .top3 {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 16px;
+            margin-bottom: 20px;
+        }
+        .top-card {
+            background: #334155;
+            border-radius: 16px;
+            padding: 16px;
+        }
+        @media (max-width: 768px) {
+            .top3 {
+                grid-template-columns: 1fr;
+            }
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>🎮 내전봇 전적 사이트</h1>
-        <p class="muted">PostgreSQL 기반 랭킹 / 전적 / 최근 경기 조회</p>
+        <p class="muted">닉네임 / 서버 / 게임 / 검색 지원</p>
 
         <div class="card">
-            <h2>🏆 전체 랭킹 TOP 50</h2>
+            <form method="get" class="filters">
+                <select name="guild_id">
+                    <option value="">전체 서버</option>
+                    {% for gid in guild_ids %}
+                        <option value="{{ gid }}" {% if selected_guild_id == gid|string %}selected{% endif %}>Guild {{ gid }}</option>
+                    {% endfor %}
+                </select>
+
+                <select name="game">
+                    <option value="">전체 게임</option>
+                    {% for g in games %}
+                        <option value="{{ g }}" {% if selected_game == g %}selected{% endif %}>{{ g }}</option>
+                    {% endfor %}
+                </select>
+
+                <input type="text" name="q" placeholder="닉네임 또는 유저 ID 검색" value="{{ q or '' }}">
+                <button type="submit">적용</button>
+            </form>
+        </div>
+
+        {% if ranking|length >= 1 %}
+        <div class="top3">
+            {% for row in ranking[:3] %}
+            <div class="top-card">
+                <h3>#{{ loop.index }} {{ row.display_name or row.user_id }}</h3>
+                <p>MMR {{ row.mmr }}</p>
+                <p>{{ row.win }}승 {{ row.lose }}패 | 승률 {{ row.winrate }}%</p>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        <div class="card">
+            <h2>🏆 랭킹 TOP 50</h2>
             <table>
                 <thead>
                     <tr>
                         <th>#</th>
+                        <th>닉네임</th>
                         <th>유저 ID</th>
                         <th>MMR</th>
                         <th>승</th>
@@ -91,6 +160,7 @@ INDEX_HTML = """
                     {% for row in ranking %}
                     <tr>
                         <td>{{ loop.index }}</td>
+                        <td>{{ row.display_name or "-" }}</td>
                         <td>{{ row.user_id }}</td>
                         <td>{{ row.mmr }}</td>
                         <td>{{ row.win }}</td>
@@ -156,6 +226,18 @@ PLAYER_HTML = """
             margin: 10px 0;
             font-size: 18px;
         }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th, td {
+            padding: 10px;
+            border-bottom: 1px solid #334155;
+            text-align: left;
+        }
+        th {
+            background: #334155;
+        }
     </style>
 </head>
 <body>
@@ -164,13 +246,39 @@ PLAYER_HTML = """
 
         <div class="card">
             <h1>👤 유저 전적</h1>
+            <div class="stat">닉네임: {{ player.display_name or "-" }}</div>
             <div class="stat">Guild ID: {{ player.guild_id }}</div>
             <div class="stat">User ID: {{ player.user_id }}</div>
-            <div class="stat">MMR: {{ player.mmr }}</div>
-            <div class="stat">승: {{ player.win }}</div>
-            <div class="stat">패: {{ player.lose }}</div>
-            <div class="stat">총판수: {{ total }}</div>
-            <div class="stat">승률: {{ winrate }}%</div>
+            <div class="stat">전체 MMR: {{ player.mmr }}</div>
+            <div class="stat">전체 승: {{ player.win }}</div>
+            <div class="stat">전체 패: {{ player.lose }}</div>
+            <div class="stat">전체 승률: {{ winrate }}%</div>
+        </div>
+
+        <div class="card">
+            <h2>🎯 게임별 전적</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>게임</th>
+                        <th>MMR</th>
+                        <th>승</th>
+                        <th>패</th>
+                        <th>승률</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in game_rows %}
+                    <tr>
+                        <td>{{ row.game }}</td>
+                        <td>{{ row.mmr }}</td>
+                        <td>{{ row.win }}</td>
+                        <td>{{ row.lose }}</td>
+                        <td>{{ row.winrate }}%</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
         </div>
     </div>
 </body>
@@ -186,29 +294,89 @@ def get_conn():
 
 @app.route("/")
 def index():
+    selected_guild_id = request.args.get("guild_id", "").strip()
+    selected_game = request.args.get("game", "").strip()
+    q = request.args.get("q", "").strip()
+
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("""
-                SELECT guild_id, user_id, mmr, win, lose,
+            cur.execute("SELECT DISTINCT guild_id FROM players ORDER BY guild_id ASC")
+            guild_ids = [row["guild_id"] for row in cur.fetchall()]
+
+            cur.execute("SELECT DISTINCT game FROM player_game_stats ORDER BY game ASC")
+            games = [row["game"] for row in cur.fetchall()]
+
+            params = []
+            filters = []
+
+            if selected_game:
+                base_table = "player_game_stats"
+            else:
+                base_table = "players"
+
+            if selected_guild_id:
+                filters.append("guild_id = %s")
+                params.append(int(selected_guild_id))
+
+            if selected_game:
+                filters.append("game = %s")
+                params.append(selected_game)
+
+            if q:
+                filters.append("(display_name ILIKE %s OR CAST(user_id AS TEXT) ILIKE %s)")
+                params.append(f"%{q}%")
+                params.append(f"%{q}%")
+
+            where_clause = ""
+            if filters:
+                where_clause = "WHERE " + " AND ".join(filters)
+
+            ranking_sql = f"""
+                SELECT guild_id, user_id, display_name, mmr, win, lose,
                 CASE
                     WHEN (win + lose) = 0 THEN 0
                     ELSE ROUND((CAST(win AS NUMERIC) / (win + lose)) * 100, 1)
                 END AS winrate
-                FROM players
+                FROM {base_table}
+                {where_clause}
                 ORDER BY mmr DESC, win DESC
                 LIMIT 50
-            """)
+            """
+            cur.execute(ranking_sql, tuple(params))
             ranking = cur.fetchall()
 
-            cur.execute("""
+            match_params = []
+            match_filters = []
+            if selected_guild_id:
+                match_filters.append("guild_id = %s")
+                match_params.append(int(selected_guild_id))
+            if selected_game:
+                match_filters.append("game = %s")
+                match_params.append(selected_game)
+
+            match_where = ""
+            if match_filters:
+                match_where = "WHERE " + " AND ".join(match_filters)
+
+            cur.execute(f"""
                 SELECT id, guild_id, game, winner_team, team_a_avg, team_b_avg, created_at
                 FROM matches
+                {match_where}
                 ORDER BY id DESC
                 LIMIT 20
-            """)
+            """, tuple(match_params))
             matches = cur.fetchall()
 
-    return render_template_string(INDEX_HTML, ranking=ranking, matches=matches)
+    return render_template_string(
+        INDEX_HTML,
+        ranking=ranking,
+        matches=matches,
+        guild_ids=guild_ids,
+        games=games,
+        selected_guild_id=selected_guild_id,
+        selected_game=selected_game,
+        q=q
+    )
 
 
 @app.route("/player/<int:guild_id>/<int:user_id>")
@@ -216,11 +384,23 @@ def player_page(guild_id, user_id):
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT guild_id, user_id, mmr, win, lose
+                SELECT guild_id, user_id, display_name, mmr, win, lose
                 FROM players
                 WHERE guild_id = %s AND user_id = %s
             """, (guild_id, user_id))
             player = cur.fetchone()
+
+            cur.execute("""
+                SELECT game, mmr, win, lose,
+                CASE
+                    WHEN (win + lose) = 0 THEN 0
+                    ELSE ROUND((CAST(win AS NUMERIC) / (win + lose)) * 100, 1)
+                END AS winrate
+                FROM player_game_stats
+                WHERE guild_id = %s AND user_id = %s
+                ORDER BY game ASC
+            """, (guild_id, user_id))
+            game_rows = cur.fetchall()
 
     if not player:
         abort(404)
@@ -232,7 +412,8 @@ def player_page(guild_id, user_id):
         PLAYER_HTML,
         player=player,
         total=total,
-        winrate=winrate
+        winrate=winrate,
+        game_rows=game_rows
     )
 
 
