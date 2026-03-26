@@ -78,6 +78,14 @@ class Team(commands.Cog):
     @app_commands.command(name="결과기록", description="경기 결과를 반영하고 ELO를 계산합니다.")
     @app_commands.describe(승리팀="A 또는 B")
     async def record_result(self, interaction: discord.Interaction, 승리팀: str):
+        # ⭐ 프리미엄 체크
+        if not db.is_premium_guild(interaction.guild_id):
+            await interaction.response.send_message(
+                "⚠️ ELO 기능은 프리미엄 서버 전용입니다.\n관리자는 `/프리미엄켜기` 로 활성화할 수 있습니다.",
+                ephemeral=True
+            )
+            return
+
         lobby = db.get_lobby(interaction.channel_id)
         if not lobby:
             await interaction.response.send_message("이 채널에 로비가 없습니다.", ephemeral=True)
