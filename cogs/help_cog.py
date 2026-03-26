@@ -8,6 +8,7 @@ class Help(commands.Cog):
         self.bot = bot
 
     @app_commands.command(name="도움말", description="봇 명령어 목록을 보여줍니다.")
+    @app_commands.command(name="명령어", description="봇 명령어 목록을 보여줍니다.")
     async def help_command(self, interaction: discord.Interaction):
         embed = discord.Embed(
             title="🎮 내전봇 명령어 도움말",
@@ -29,17 +30,17 @@ class Help(commands.Cog):
             name="📢 내전",
             value="""
 /내전생성
-/내전종료
 /내전상태
+/내전시작
+/내전종료
             """,
             inline=False
         )
 
         embed.add_field(
-            name="👥 팀 관련",
+            name="👥 팀 / 결과",
             value="""
 /밸런스팀
-/내전시작
 /결과기록
             """,
             inline=False
@@ -49,8 +50,8 @@ class Help(commands.Cog):
             name="📊 전적 / 랭킹",
             value="""
 /랭킹
-/최근전적
 /내전전적
+/최근전적
             """,
             inline=False
         )
@@ -58,12 +59,12 @@ class Help(commands.Cog):
         embed.add_field(
             name="🧠 티어 등록",
             value="""
-/발로티어등록
 /티어점수표
-/옵치티어등록
+/발로티어등록
 /옵치티어점수표
-/롤티어등록
+/옵치티어등록
 /롤티어점수표
+/롤티어등록
             """,
             inline=False
         )

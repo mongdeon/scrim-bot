@@ -3,6 +3,7 @@ from discord.ext import commands
 from discord import app_commands
 
 from core.db import DB
+from core.matchmaking import auto_balance_players
 
 db = DB()
 
@@ -40,9 +41,17 @@ def build_lobby_embed(lobby: dict, players: list[dict], team_a=None, team_b=None
         "overwatch": "Overwatch 2"
     }.get(lobby["game"], lobby["game"])
 
+    color = discord.Color.green()
+    if lobby["status"] == "balanced":
+        color = discord.Color.orange()
+    elif lobby["status"] == "started":
+        color = discord.Color.blurple()
+    elif lobby["status"] == "finished":
+        color = discord.Color.red()
+
     embed = discord.Embed(
         title=f"{game_name} 내전 모집",
-        color=discord.Color.green()
+        color=color
     )
 
     embed.add_field(name="상태", value=lobby["status"], inline=True)
@@ -64,7 +73,15 @@ def build_lobby_embed(lobby: dict, players: list[dict], team_a=None, team_b=None
     if team_b:
         embed.add_field(name="B팀", value="\n".join(f"<@{uid}>" for uid in team_b), inline=True)
 
-    embed.set_footer(text="참가 버튼을 눌러 포지션과 MMR을 입력하세요.")
+    if lobby["status"] == "open":
+        embed.set_footer(text="참가 버튼을 눌러 포지션과 MMR을 입력하세요.")
+    elif lobby["status"] == "balanced":
+        embed.set_footer(text="정원이 차서 자동 팀 분배가 완료되었습니다.")
+    elif lobby["status"] == "started":
+        embed.set_footer(text="내전이 시작되었습니다.")
+    else:
+        embed.set_footer(text="내전이 종료되었습니다.")
+
     return embed
 
 
@@ -99,6 +116,10 @@ class JoinModal(discord.ui.Modal, title="내전 참가"):
             await interaction.response.send_message("로비가 없습니다.", ephemeral=True)
             return
 
+        if lobby["status"] != "open":
+            await interaction.response.send_message("현재 모집 중이 아닙니다.", ephemeral=True)
+            return
+
         position = str(self.position).strip()
         mmr_raw = str(self.mmr).strip()
 
@@ -129,7 +150,12 @@ class JoinModal(discord.ui.Modal, title="내전 참가"):
         db.set_player_mmr(interaction.guild_id, interaction.user.id, mmr)
 
         await interaction.response.send_message("참가 완료", ephemeral=True)
+
+        # 메시지 갱신
         await self.cog.refresh_lobby_message(interaction.channel, self.channel_id)
+
+        # 정원 꽉 찼으면 자동 팀 분배
+        await self.cog.try_auto_balance(interaction.channel, self.channel_id)
 
 
 class JoinButton(discord.ui.Button):
@@ -147,6 +173,10 @@ class JoinButton(discord.ui.Button):
             await interaction.response.send_message("현재 채널에 로비가 없습니다.", ephemeral=True)
             return
 
+        if lobby["status"] != "open":
+            await interaction.response.send_message("현재 모집 중이 아닙니다.", ephemeral=True)
+            return
+
         await interaction.response.send_modal(
             JoinModal(interaction.channel_id, lobby["game"], self.cog)
         )
@@ -161,6 +191,10 @@ class LeaveButton(discord.ui.Button):
         lobby = db.get_lobby(interaction.channel_id)
         if not lobby:
             await interaction.response.send_message("현재 채널에 로비가 없습니다.", ephemeral=True)
+            return
+
+        if lobby["status"] != "open":
+            await interaction.response.send_message("팀 분배 이후에는 참가취소를 사용할 수 없습니다.", ephemeral=True)
             return
 
         if not db.has_lobby_player(interaction.channel_id, interaction.user.id):
@@ -222,6 +256,42 @@ class Recruit(commands.Cog):
         except discord.NotFound:
             new_msg = await channel.send(embed=embed, view=view)
             db.set_lobby_message(channel_id, new_msg.id)
+
+    async def try_auto_balance(self, channel: discord.TextChannel, channel_id: int):
+        lobby = db.get_lobby(channel_id)
+        if not lobby or lobby["status"] != "open":
+            return
+
+        players = db.get_lobby_players(channel_id)
+        need = lobby["team_size"] * 2
+
+        if len(players) < need:
+            return
+
+        selected = players[:need]
+        (team_a, team_b), mode_text = auto_balance_players(lobby["game"], selected, lobby["team_size"])
+
+        db.clear_teams(channel_id)
+        for p in team_a:
+            db.add_team_member(channel_id, "A", p["user_id"])
+        for p in team_b:
+            db.add_team_member(channel_id, "B", p["user_id"])
+
+        db.set_lobby_status(channel_id, "balanced")
+
+        await self.refresh_lobby_message(channel, channel_id)
+
+        a_sum = sum(p["mmr"] for p in team_a)
+        b_sum = sum(p["mmr"] for p in team_b)
+
+        await channel.send(
+            f"정원이 차서 자동 팀 분배가 완료되었습니다. ({mode_text})\n\n"
+            f"**A팀 총합:** {a_sum}\n" +
+            "\n".join(f"<@{p['user_id']}> ({p['mmr']}, {p['position']})" for p in team_a) +
+            f"\n\n**B팀 총합:** {b_sum}\n" +
+            "\n".join(f"<@{p['user_id']}> ({p['mmr']}, {p['position']})" for p in team_b) +
+            f"\n\n차이: {abs(a_sum - b_sum)}"
+        )
 
     @app_commands.command(name="내전생성", description="내전 모집 메시지를 생성합니다.")
     @app_commands.describe(게임="게임 선택", 팀인원="한 팀 인원 수")
