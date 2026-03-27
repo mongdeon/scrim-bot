@@ -95,14 +95,20 @@ INDEX_HTML = """
             border-radius: 16px;
             padding: 16px;
         }
-        .donate-btn {
+        .action-btn {
             display: inline-block;
-            background: #ec4899;
             padding: 10px 16px;
             border-radius: 10px;
             color: white;
             text-decoration: none;
+            margin-right: 10px;
             margin-bottom: 20px;
+        }
+        .support-btn {
+            background: #22c55e;
+        }
+        .donate-btn {
+            background: #ec4899;
         }
         @media (max-width: 768px) {
             .top3 {
@@ -115,7 +121,10 @@ INDEX_HTML = """
     <div class="container">
         <h1>🎮 내전봇 전적 사이트</h1>
 
-        <a href="/support" class="donate-btn">💖 후원하기</a>
+        <div style="margin-bottom: 20px;">
+            <a href="/support" class="action-btn support-btn">🛟 사용법 / 지원</a>
+            <a href="/support" class="action-btn donate-btn">💖 후원 안내</a>
+        </div>
 
         <div class="card">
             <form method="get" class="filters">
@@ -336,27 +345,32 @@ SUPPORT_HTML = """
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>후원 안내</title>
+    <title>지원 / 사용법</title>
     <style>
         body {
             font-family: Arial, sans-serif;
             background: #0f172a;
             color: #e2e8f0;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            min-height: 100vh;
             margin: 0;
+            padding: 20px;
+        }
+        .container {
+            max-width: 900px;
+            margin: auto;
         }
         .card {
             background: #1e293b;
-            padding: 32px;
+            padding: 20px;
             border-radius: 16px;
-            text-align: center;
-            max-width: 700px;
-            line-height: 1.8;
+            margin-bottom: 20px;
         }
-        a { color: #60a5fa; text-decoration: none; }
+        h1, h2 {
+            margin-bottom: 10px;
+        }
+        a {
+            color: #60a5fa;
+            text-decoration: none;
+        }
         .copy-box {
             background: #334155;
             padding: 12px;
@@ -367,22 +381,63 @@ SUPPORT_HTML = """
     </style>
 </head>
 <body>
-    <div class="card">
-        <h1>💖 개발 후원</h1>
-        <p>이 봇이 도움이 되었다면 후원으로 개발을 응원해주세요.</p>
+<div class="container">
 
-        <p><strong>은행</strong></p>
-        <div class="copy-box">{{ bank_name }}</div>
+<h1>🛟 내전봇 지원 / 사용법</h1>
 
-        <p><strong>계좌번호</strong></p>
-        <div class="copy-box">{{ account_number }}</div>
+<div class="card">
+<h2>🚀 빠른 시작</h2>
+<p>
+1. /설정역할<br>
+2. /설정카테고리<br>
+3. /내전생성<br>
+4. /밸런스팀<br>
+5. /사이트
+</p>
+</div>
 
-        <p><strong>예금주</strong></p>
-        <div class="copy-box">{{ account_holder }}</div>
+<div class="card">
+<h2>📖 주요 기능</h2>
+<p>
+- 자동 내전 모집<br>
+- 자동 팀 분배 (MMR)<br>
+- ELO 랭킹 시스템<br>
+- 전적 웹사이트<br>
+- 음성 채널 자동 이동
+</p>
+</div>
 
-        <p>후원금은 서버비와 기능 업데이트에 사용됩니다.</p>
-        <p><a href="/">← 홈으로 돌아가기</a></p>
-    </div>
+<div class="card">
+<h2>❓ 자주 묻는 질문</h2>
+<p>
+Q. 명령어가 안 떠요?<br>
+→ 봇 초대 후 1~2분 정도 기다렸다가 다시 확인해주세요.<br><br>
+
+Q. 팀이 안 나뉘어요.<br>
+→ 인원이 충분한지 먼저 확인해주세요.<br><br>
+
+Q. 상세 전적이 안 보여요.<br>
+→ 프리미엄 서버만 상세 전적 페이지를 볼 수 있습니다.
+</p>
+</div>
+
+<div class="card">
+<h2>💖 후원 안내</h2>
+<p><strong>은행</strong></p>
+<div class="copy-box">{{ bank_name }}</div>
+
+<p><strong>계좌번호</strong></p>
+<div class="copy-box">{{ account_number }}</div>
+
+<p><strong>예금주</strong></p>
+<div class="copy-box">{{ account_holder }}</div>
+
+<p>후원금은 서버비와 기능 업데이트에 사용됩니다.</p>
+</div>
+
+<p><a href="/">← 홈으로 돌아가기</a></p>
+
+</div>
 </body>
 </html>
 """

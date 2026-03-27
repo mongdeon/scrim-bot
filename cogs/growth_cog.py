@@ -3,7 +3,7 @@ from discord.ext import commands
 from discord import app_commands
 
 BOT_INVITE_URL = "https://discord.com/oauth2/authorize?client_id=1485512756550570094&permissions=20016128&integration_type=0&scope=bot+applications.commands"
-SUPPORT_SERVER_URL = "여기에_지원서버_링크_넣기"
+SUPPORT_SERVER_URL = "elegant-cooperation-production-03d5.up.railway.app"
 WEBSITE_URL = "elegant-cooperation-production-03d5.up.railway.app"
 
 

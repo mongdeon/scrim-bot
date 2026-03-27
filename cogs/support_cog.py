@@ -5,7 +5,7 @@ from discord import app_commands
 
 BANK_NAME = "토스뱅크"
 ACCOUNT_NUMBER = "1000-0103-2111"
-ACCOUNT_HOLDER = "김태용"
+ACCOUNT_HOLDER = "예금주이름"
 
 
 class SupportCog(commands.Cog):
@@ -15,7 +15,7 @@ class SupportCog(commands.Cog):
     @app_commands.command(name="후원", description="봇 개발 후원 안내를 보여줍니다.")
     async def support(self, interaction: discord.Interaction):
         embed = discord.Embed(
-            title=":sparkling_heart: 개발 후원",
+            title="💖 개발 후원",
             description="이 봇이 도움이 되었다면 후원으로 개발을 응원해주세요.",
             color=discord.Color.pink()
         )

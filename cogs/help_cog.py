@@ -15,7 +15,6 @@ class HelpCog(commands.Cog):
             color=discord.Color.green()
         )
 
-        # 서버 설정
         embed.add_field(
             name="⚙️ 서버 설정",
             value=(
@@ -26,7 +25,6 @@ class HelpCog(commands.Cog):
             inline=False
         )
 
-        # 내전
         embed.add_field(
             name="📢 내전",
             value=(
@@ -37,7 +35,6 @@ class HelpCog(commands.Cog):
             inline=False
         )
 
-        # 팀 / 진행
         embed.add_field(
             name="⚔️ 팀 / 진행",
             value=(
@@ -48,22 +45,20 @@ class HelpCog(commands.Cog):
             inline=False
         )
 
-        # 전적 / 랭킹 / 안내
         embed.add_field(
             name="📊 전적 / 랭킹 / 안내",
             value=(
                 "`/랭킹` → 서버 ELO 랭킹\n"
                 "`/내전전적` → 내 전적 확인\n"
                 "`/최근전적` → 최근 경기\n"
-                "`/사이트` → 전적 웹사이트\n"
+                "`/사이트` → 전적 사이트 / 지원 페이지\n"
                 "`/초대` → 봇 초대 링크\n"
-                "`/지원서버` → 지원 서버 링크\n"
+                "`/지원서버` → 지원 링크\n"
                 "`/소개` → 봇 소개"
             ),
             inline=False
         )
 
-        # 티어 시스템
         embed.add_field(
             name="🎯 티어 등록 / 점수표",
             value=(
@@ -80,7 +75,6 @@ class HelpCog(commands.Cog):
             inline=False
         )
 
-        # 프리미엄
         embed.add_field(
             name="⭐ 프리미엄",
             value=(
@@ -93,7 +87,6 @@ class HelpCog(commands.Cog):
             inline=False
         )
 
-        # 기타
         embed.add_field(
             name="💖 기타",
             value=(
