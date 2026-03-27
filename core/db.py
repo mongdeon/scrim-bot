@@ -26,7 +26,8 @@ class DB:
             cur.execute("""
             CREATE TABLE IF NOT EXISTS premium_guilds(
                 guild_id BIGINT PRIMARY KEY,
-                is_premium BOOLEAN DEFAULT FALSE
+                is_premium BOOLEAN DEFAULT FALSE,
+                expires_at TIMESTAMP NULL
             )
             """)
 
@@ -103,6 +104,7 @@ class DB:
             )
             """)
 
+            cur.execute("ALTER TABLE premium_guilds ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP NULL")
             cur.execute("ALTER TABLE players ADD COLUMN IF NOT EXISTS display_name TEXT")
             cur.execute("ALTER TABLE player_game_stats ADD COLUMN IF NOT EXISTS display_name TEXT")
 
@@ -110,17 +112,54 @@ class DB:
     def set_premium(self, guild_id, is_premium: bool):
         with self.conn.cursor() as cur:
             cur.execute("""
-            INSERT INTO premium_guilds(guild_id, is_premium)
-            VALUES(%s, %s)
+            INSERT INTO premium_guilds(guild_id, is_premium, expires_at)
+            VALUES(%s, %s, NULL)
             ON CONFLICT(guild_id)
-            DO UPDATE SET is_premium=EXCLUDED.is_premium
+            DO UPDATE SET is_premium=EXCLUDED.is_premium,
+                          expires_at=NULL
             """, (guild_id, is_premium))
 
+    def set_premium_days(self, guild_id, days: int):
+        with self.conn.cursor() as cur:
+            cur.execute("""
+            INSERT INTO premium_guilds(guild_id, is_premium, expires_at)
+            VALUES(%s, TRUE, NOW() + (%s || ' days')::interval)
+            ON CONFLICT(guild_id)
+            DO UPDATE SET is_premium=TRUE,
+                          expires_at=NOW() + (%s || ' days')::interval
+            """, (guild_id, days, days))
+
+    def clear_expired_premium(self):
+        with self.conn.cursor() as cur:
+            cur.execute("""
+            UPDATE premium_guilds
+            SET is_premium=FALSE
+            WHERE is_premium=TRUE
+              AND expires_at IS NOT NULL
+              AND expires_at < NOW()
+            """)
+
     def is_premium_guild(self, guild_id):
+        self.clear_expired_premium()
         with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT is_premium FROM premium_guilds WHERE guild_id=%s", (guild_id,))
+            cur.execute("""
+            SELECT is_premium, expires_at
+            FROM premium_guilds
+            WHERE guild_id=%s
+            """, (guild_id,))
             row = cur.fetchone()
             return bool(row["is_premium"]) if row else False
+
+    def get_premium_info(self, guild_id):
+        self.clear_expired_premium()
+        with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+            SELECT is_premium, expires_at
+            FROM premium_guilds
+            WHERE guild_id=%s
+            """, (guild_id,))
+            row = cur.fetchone()
+            return dict(row) if row else None
 
     # ---------------- guild settings ----------------
     def set_role(self, guild_id, role_id):
