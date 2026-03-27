@@ -332,7 +332,7 @@ LOCKED_HTML = """
             <div class="badge">PREMIUM ONLY</div>
             <h1>상세 전적 페이지는 프리미엄 서버 전용입니다.</h1>
             <p>이 서버는 현재 무료 서버라서 유저 상세 전적을 볼 수 없습니다.</p>
-            <p>관리자는 봇에서 <strong>/프리미엄켜기</strong> 명령어로 활성화할 수 있습니다.</p>
+            <p>관리자는 봇에서 <strong>/프리미엄확인</strong>으로 상태를 확인할 수 있습니다.</p>
             <p><a href="/">← 홈으로 돌아가기</a></p>
         </div>
     </div>
@@ -472,13 +472,13 @@ def index():
 def player_page(guild_id, user_id):
     with get_conn() as conn:
         with conn.cursor() as cur:
-            # ⭐ 프리미엄 서버 체크
             cur.execute("""
                 SELECT is_premium
                 FROM premium_guilds
                 WHERE guild_id = %s
             """, (guild_id,))
             premium_row = cur.fetchone()
+
             is_premium = bool(premium_row["is_premium"]) if premium_row else False
 
             if not is_premium:
