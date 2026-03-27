@@ -5,7 +5,7 @@ from discord import app_commands
 
 BANK_NAME = "토스뱅크"
 ACCOUNT_NUMBER = "1000-0103-2111"
-ACCOUNT_HOLDER = "예금주이름"
+ACCOUNT_HOLDER = "김태용"
 
 
 class SupportCog(commands.Cog):
