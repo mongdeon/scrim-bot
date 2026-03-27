@@ -114,46 +114,14 @@ def send_discord_support_webhook(inquiry: dict):
                 "description": f"문의번호: **#{inquiry.get('id')}**",
                 "color": 5793266,
                 "fields": [
-                    {
-                        "name": "문의 유형",
-                        "value": str(inquiry.get("category") or "-"),
-                        "inline": True
-                    },
-                    {
-                        "name": "상태",
-                        "value": str(inquiry.get("status") or "pending"),
-                        "inline": True
-                    },
-                    {
-                        "name": "접수 시간",
-                        "value": created_at_text,
-                        "inline": False
-                    },
-                    {
-                        "name": "이름",
-                        "value": str(inquiry.get("name") or "-"),
-                        "inline": True
-                    },
-                    {
-                        "name": "이메일",
-                        "value": str(inquiry.get("email") or "-"),
-                        "inline": True
-                    },
-                    {
-                        "name": "디스코드 아이디",
-                        "value": str(discord_tag),
-                        "inline": True
-                    },
-                    {
-                        "name": "문의 제목",
-                        "value": str(inquiry.get("subject") or "-"),
-                        "inline": False
-                    },
-                    {
-                        "name": "문의 내용",
-                        "value": message_text,
-                        "inline": False
-                    }
+                    {"name": "문의 유형", "value": str(inquiry.get("category") or "-"), "inline": True},
+                    {"name": "상태", "value": str(inquiry.get("status") or "pending"), "inline": True},
+                    {"name": "접수 시간", "value": created_at_text, "inline": False},
+                    {"name": "이름", "value": str(inquiry.get("name") or "-"), "inline": True},
+                    {"name": "이메일", "value": str(inquiry.get("email") or "-"), "inline": True},
+                    {"name": "디스코드 아이디", "value": str(discord_tag), "inline": True},
+                    {"name": "문의 제목", "value": str(inquiry.get("subject") or "-"), "inline": False},
+                    {"name": "문의 내용", "value": message_text, "inline": False},
                 ]
             }
         ]
@@ -179,3 +147,36 @@ def send_discord_support_webhook(inquiry: dict):
         return {"ok": False, "message": f"디스코드 웹훅 URL 오류: {e.reason}"}
     except Exception as e:
         return {"ok": False, "message": f"디스코드 웹훅 전송 실패: {str(e)}"}
+
+
+class DB:
+    @staticmethod
+    def get_connection():
+        return get_db_connection()
+
+    @staticmethod
+    def connect():
+        return get_db_connection()
+
+    @staticmethod
+    def cursor(dict_cursor: bool = False):
+        return db_cursor(dict_cursor=dict_cursor)
+
+    @staticmethod
+    def init_support_inquiry_table():
+        return init_support_inquiry_table()
+
+    @staticmethod
+    def insert_support_inquiry(name, email, category, subject, message, discord_tag=None):
+        return insert_support_inquiry(
+            name=name,
+            email=email,
+            category=category,
+            subject=subject,
+            message=message,
+            discord_tag=discord_tag,
+        )
+
+    @staticmethod
+    def send_discord_support_webhook(inquiry: dict):
+        return send_discord_support_webhook(inquiry)
