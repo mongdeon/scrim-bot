@@ -1,10 +1,18 @@
 import os
 import psycopg2
+from flask import Flask, render_template, request, jsonify
+from core.db import (
+    init_support_inquiry_table,
+    insert_support_inquiry,
+    send_discord_support_webhook,
+)
 from psycopg2.extras import RealDictCursor
 from flask import Flask, render_template_string, request, abort
+from flask import Flask, render_template, request, jsonify
+from core.db import init_support_inquiry_table, insert_support_inquiry
 
 app = Flask(__name__)
-
+init_support_inquiry_table()
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
 BANK_NAME = "토스뱅크"
@@ -16,6 +24,201 @@ INDEX_HTML = """
 <!DOCTYPE html>
 <html lang="ko">
 <head>
+<style>
+    .support-contact-button {
+        background: linear-gradient(135deg, #5865F2, #7289DA);
+        color: #ffffff;
+        border: none;
+        border-radius: 12px;
+        padding: 12px 18px;
+        font-size: 15px;
+        font-weight: 700;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        box-shadow: 0 8px 20px rgba(88, 101, 242, 0.25);
+    }
+
+    .support-contact-button:hover {
+        transform: translateY(-1px);
+        opacity: 0.95;
+    }
+
+    .support-modal-overlay {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.65);
+        z-index: 9999;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+    }
+
+    .support-modal {
+        width: 100%;
+        max-width: 560px;
+        background: #111827;
+        color: #ffffff;
+        border-radius: 18px;
+        padding: 24px;
+        box-shadow: 0 20px 50px rgba(0, 0, 0, 0.35);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .support-modal h2 {
+        margin: 0 0 8px 0;
+        font-size: 24px;
+        font-weight: 800;
+    }
+
+    .support-modal p {
+        margin: 0 0 20px 0;
+        color: #cbd5e1;
+        font-size: 14px;
+    }
+
+    .support-form-group {
+        margin-bottom: 14px;
+    }
+
+    .support-form-group label {
+        display: block;
+        margin-bottom: 8px;
+        font-size: 14px;
+        font-weight: 600;
+        color: #e5e7eb;
+    }
+
+    .support-form-group input,
+    .support-form-group select,
+    .support-form-group textarea {
+        width: 100%;
+        border: 1px solid #334155;
+        background: #0f172a;
+        color: #ffffff;
+        border-radius: 12px;
+        padding: 12px 14px;
+        font-size: 14px;
+        outline: none;
+    }
+
+    .support-form-group textarea {
+        min-height: 140px;
+        resize: vertical;
+    }
+
+    .support-form-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+    }
+
+    .support-modal-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 10px;
+        margin-top: 18px;
+    }
+
+    .support-btn-secondary {
+        background: #1e293b;
+        color: #ffffff;
+        border: none;
+        border-radius: 12px;
+        padding: 12px 16px;
+        font-size: 14px;
+        font-weight: 700;
+        cursor: pointer;
+    }
+
+    .support-btn-primary {
+        background: linear-gradient(135deg, #5865F2, #7289DA);
+        color: #ffffff;
+        border: none;
+        border-radius: 12px;
+        padding: 12px 16px;
+        font-size: 14px;
+        font-weight: 700;
+        cursor: pointer;
+    }
+
+    .support-status-text {
+        margin-top: 12px;
+        font-size: 14px;
+        font-weight: 600;
+    }
+
+    .support-status-success {
+        color: #86efac;
+    }
+
+    .support-status-error {
+        color: #fca5a5;
+    }
+
+    @media (max-width: 640px) {
+        .support-form-row {
+            grid-template-columns: 1fr;
+        }
+    }
+</style>
+<button class="support-contact-button" onclick="openSupportModal()">
+    문의하기
+</button>
+
+<div class="support-modal-overlay" id="supportModalOverlay">
+    <div class="support-modal">
+        <h2>문의하기</h2>
+        <p>버그 제보, 결제 문제, 기능 문의를 남겨주세요.</p>
+
+        <div class="support-form-row">
+            <div class="support-form-group">
+                <label for="supportName">이름</label>
+                <input type="text" id="supportName" placeholder="이름 입력">
+            </div>
+
+            <div class="support-form-group">
+                <label for="supportEmail">이메일</label>
+                <input type="email" id="supportEmail" placeholder="이메일 입력">
+            </div>
+        </div>
+
+        <div class="support-form-row">
+            <div class="support-form-group">
+                <label for="supportCategory">문의 유형</label>
+                <select id="supportCategory">
+                    <option value="일반 문의">일반 문의</option>
+                    <option value="버그 제보">버그 제보</option>
+                    <option value="결제 문의">결제 문의</option>
+                    <option value="프리미엄 문의">프리미엄 문의</option>
+                    <option value="기능 제안">기능 제안</option>
+                </select>
+            </div>
+
+            <div class="support-form-group">
+                <label for="supportDiscordTag">디스코드 아이디</label>
+                <input type="text" id="supportDiscordTag" placeholder="예: user1234">
+            </div>
+        </div>
+
+        <div class="support-form-group">
+            <label for="supportSubject">문의 제목</label>
+            <input type="text" id="supportSubject" placeholder="문의 제목 입력">
+        </div>
+
+        <div class="support-form-group">
+            <label for="supportMessage">문의 내용</label>
+            <textarea id="supportMessage" placeholder="문의 내용을 자세히 적어주세요."></textarea>
+        </div>
+
+        <div class="support-modal-actions">
+            <button class="support-btn-secondary" onclick="closeSupportModal()">닫기</button>
+            <button class="support-btn-primary" onclick="submitSupportInquiry()">보내기</button>
+        </div>
+
+        <div id="supportStatusText" class="support-status-text"></div>
+    </div>
+</div>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>내전봇 전적 사이트</title>
@@ -205,6 +408,99 @@ INDEX_HTML = """
             {% endfor %}
         </div>
     </div>
+<script>
+    function openSupportModal() {
+        document.getElementById("supportModalOverlay").style.display = "flex";
+    }
+
+    function closeSupportModal() {
+        document.getElementById("supportModalOverlay").style.display = "none";
+        const statusText = document.getElementById("supportStatusText");
+        statusText.textContent = "";
+        statusText.className = "support-status-text";
+    }
+
+    async function submitSupportInquiry() {
+        const name = document.getElementById("supportName").value.trim();
+        const email = document.getElementById("supportEmail").value.trim();
+        const category = document.getElementById("supportCategory").value.trim();
+        const discordTag = document.getElementById("supportDiscordTag").value.trim();
+        const subject = document.getElementById("supportSubject").value.trim();
+        const message = document.getElementById("supportMessage").value.trim();
+        const statusText = document.getElementById("supportStatusText");
+
+        statusText.textContent = "";
+        statusText.className = "support-status-text";
+
+        if (!name) {
+            statusText.textContent = "이름을 입력해주세요.";
+            statusText.classList.add("support-status-error");
+            return;
+        }
+
+        if (!email) {
+            statusText.textContent = "이메일을 입력해주세요.";
+            statusText.classList.add("support-status-error");
+            return;
+        }
+
+        if (!subject) {
+            statusText.textContent = "문의 제목을 입력해주세요.";
+            statusText.classList.add("support-status-error");
+            return;
+        }
+
+        if (!message) {
+            statusText.textContent = "문의 내용을 입력해주세요.";
+            statusText.classList.add("support-status-error");
+            return;
+        }
+
+        try {
+            const response = await fetch("/api/support/inquiry", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                    name: name,
+                    email: email,
+                    category: category,
+                    discord_tag: discordTag,
+                    subject: subject,
+                    message: message
+                })
+            });
+
+            const result = await response.json();
+
+            if (result.ok) {
+                statusText.textContent = "문의가 정상적으로 접수되었습니다. 문의번호: " + result.inquiry_id;
+                statusText.classList.add("support-status-success");
+
+                document.getElementById("supportName").value = "";
+                document.getElementById("supportEmail").value = "";
+                document.getElementById("supportCategory").value = "일반 문의";
+                document.getElementById("supportDiscordTag").value = "";
+                document.getElementById("supportSubject").value = "";
+                document.getElementById("supportMessage").value = "";
+            } else {
+                statusText.textContent = result.message || "문의 접수에 실패했습니다.";
+                statusText.classList.add("support-status-error");
+            }
+        } catch (error) {
+            statusText.textContent = "서버와 통신 중 오류가 발생했습니다.";
+            statusText.classList.add("support-status-error");
+        }
+    }
+
+    document.addEventListener("click", function (e) {
+        const overlay = document.getElementById("supportModalOverlay");
+        if (e.target === overlay) {
+            closeSupportModal();
+        }
+    });
+</script>
 </body>
 </html>
 """
@@ -633,6 +929,62 @@ def support_page():
 def health():
     return {"ok": True}
 
+@app.route("/api/support/inquiry", methods=["POST"])
+def api_support_inquiry():
+    try:
+        data = request.get_json()
+
+        name = (data.get("name") or "").strip()
+        email = (data.get("email") or "").strip()
+        category = (data.get("category") or "일반 문의").strip()
+        subject = (data.get("subject") or "").strip()
+        message = (data.get("message") or "").strip()
+        discord_tag = (data.get("discord_tag") or "").strip()
+
+        if not name:
+            return jsonify({"ok": False, "message": "이름을 입력해주세요."}), 400
+
+        if not email:
+            return jsonify({"ok": False, "message": "이메일을 입력해주세요."}), 400
+
+        if not subject:
+            return jsonify({"ok": False, "message": "문의 제목을 입력해주세요."}), 400
+
+        if not message:
+            return jsonify({"ok": False, "message": "문의 내용을 입력해주세요."}), 400
+
+        if len(name) > 100:
+            return jsonify({"ok": False, "message": "이름은 100자 이하로 입력해주세요."}), 400
+
+        if len(email) > 255:
+            return jsonify({"ok": False, "message": "이메일은 255자 이하로 입력해주세요."}), 400
+
+        if len(category) > 100:
+            return jsonify({"ok": False, "message": "문의 유형이 너무 깁니다."}), 400
+
+        if len(subject) > 200:
+            return jsonify({"ok": False, "message": "문의 제목은 200자 이하로 입력해주세요."}), 400
+
+        result = insert_support_inquiry(
+            name=name,
+            email=email,
+            category=category,
+            subject=subject,
+            message=message,
+            discord_tag=discord_tag if discord_tag else None,
+        )
+
+        return jsonify({
+            "ok": True,
+            "message": "문의가 정상적으로 접수되었습니다.",
+            "inquiry_id": result["id"] if result else None
+        })
+
+    except Exception as e:
+        return jsonify({
+            "ok": False,
+            "message": f"서버 오류가 발생했습니다: {str(e)}"
+        }), 500
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
