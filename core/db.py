@@ -3,7 +3,6 @@ import json
 import urllib.request
 import urllib.error
 from contextlib import contextmanager
-from datetime import datetime
 
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -88,6 +87,7 @@ def insert_support_inquiry(name, email, category, subject, message, discord_tag=
 
 def send_discord_support_webhook(inquiry: dict):
     webhook_url = os.getenv("DISCORD_SUPPORT_WEBHOOK_URL", "").strip()
+
     if not webhook_url:
         return {
             "ok": False,
@@ -102,6 +102,7 @@ def send_discord_support_webhook(inquiry: dict):
 
     discord_tag = inquiry.get("discord_tag") or "-"
     message_text = inquiry.get("message") or ""
+
     if len(message_text) > 1000:
         message_text = message_text[:1000] + "\n...(생략)"
 

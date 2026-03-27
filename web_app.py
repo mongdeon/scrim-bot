@@ -1,18 +1,17 @@
 import os
 import psycopg2
-from flask import Flask, render_template, request, jsonify
+from psycopg2.extras import RealDictCursor
+from flask import Flask, render_template_string, request, jsonify, abort
+
 from core.db import (
     init_support_inquiry_table,
     insert_support_inquiry,
     send_discord_support_webhook,
 )
-from psycopg2.extras import RealDictCursor
-from flask import Flask, render_template_string, request, abort
-from flask import Flask, render_template, request, jsonify
-from core.db import init_support_inquiry_table, insert_support_inquiry
 
 app = Flask(__name__)
 init_support_inquiry_table()
+
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
 BANK_NAME = "토스뱅크"
@@ -24,201 +23,6 @@ INDEX_HTML = """
 <!DOCTYPE html>
 <html lang="ko">
 <head>
-<style>
-    .support-contact-button {
-        background: linear-gradient(135deg, #5865F2, #7289DA);
-        color: #ffffff;
-        border: none;
-        border-radius: 12px;
-        padding: 12px 18px;
-        font-size: 15px;
-        font-weight: 700;
-        cursor: pointer;
-        transition: all 0.2s ease;
-        box-shadow: 0 8px 20px rgba(88, 101, 242, 0.25);
-    }
-
-    .support-contact-button:hover {
-        transform: translateY(-1px);
-        opacity: 0.95;
-    }
-
-    .support-modal-overlay {
-        display: none;
-        position: fixed;
-        inset: 0;
-        background: rgba(0, 0, 0, 0.65);
-        z-index: 9999;
-        align-items: center;
-        justify-content: center;
-        padding: 20px;
-    }
-
-    .support-modal {
-        width: 100%;
-        max-width: 560px;
-        background: #111827;
-        color: #ffffff;
-        border-radius: 18px;
-        padding: 24px;
-        box-shadow: 0 20px 50px rgba(0, 0, 0, 0.35);
-        border: 1px solid rgba(255, 255, 255, 0.08);
-    }
-
-    .support-modal h2 {
-        margin: 0 0 8px 0;
-        font-size: 24px;
-        font-weight: 800;
-    }
-
-    .support-modal p {
-        margin: 0 0 20px 0;
-        color: #cbd5e1;
-        font-size: 14px;
-    }
-
-    .support-form-group {
-        margin-bottom: 14px;
-    }
-
-    .support-form-group label {
-        display: block;
-        margin-bottom: 8px;
-        font-size: 14px;
-        font-weight: 600;
-        color: #e5e7eb;
-    }
-
-    .support-form-group input,
-    .support-form-group select,
-    .support-form-group textarea {
-        width: 100%;
-        border: 1px solid #334155;
-        background: #0f172a;
-        color: #ffffff;
-        border-radius: 12px;
-        padding: 12px 14px;
-        font-size: 14px;
-        outline: none;
-    }
-
-    .support-form-group textarea {
-        min-height: 140px;
-        resize: vertical;
-    }
-
-    .support-form-row {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 12px;
-    }
-
-    .support-modal-actions {
-        display: flex;
-        justify-content: flex-end;
-        gap: 10px;
-        margin-top: 18px;
-    }
-
-    .support-btn-secondary {
-        background: #1e293b;
-        color: #ffffff;
-        border: none;
-        border-radius: 12px;
-        padding: 12px 16px;
-        font-size: 14px;
-        font-weight: 700;
-        cursor: pointer;
-    }
-
-    .support-btn-primary {
-        background: linear-gradient(135deg, #5865F2, #7289DA);
-        color: #ffffff;
-        border: none;
-        border-radius: 12px;
-        padding: 12px 16px;
-        font-size: 14px;
-        font-weight: 700;
-        cursor: pointer;
-    }
-
-    .support-status-text {
-        margin-top: 12px;
-        font-size: 14px;
-        font-weight: 600;
-    }
-
-    .support-status-success {
-        color: #86efac;
-    }
-
-    .support-status-error {
-        color: #fca5a5;
-    }
-
-    @media (max-width: 640px) {
-        .support-form-row {
-            grid-template-columns: 1fr;
-        }
-    }
-</style>
-<button class="support-contact-button" onclick="openSupportModal()">
-    문의하기
-</button>
-
-<div class="support-modal-overlay" id="supportModalOverlay">
-    <div class="support-modal">
-        <h2>문의하기</h2>
-        <p>버그 제보, 결제 문제, 기능 문의를 남겨주세요.</p>
-
-        <div class="support-form-row">
-            <div class="support-form-group">
-                <label for="supportName">이름</label>
-                <input type="text" id="supportName" placeholder="이름 입력">
-            </div>
-
-            <div class="support-form-group">
-                <label for="supportEmail">이메일</label>
-                <input type="email" id="supportEmail" placeholder="이메일 입력">
-            </div>
-        </div>
-
-        <div class="support-form-row">
-            <div class="support-form-group">
-                <label for="supportCategory">문의 유형</label>
-                <select id="supportCategory">
-                    <option value="일반 문의">일반 문의</option>
-                    <option value="버그 제보">버그 제보</option>
-                    <option value="결제 문의">결제 문의</option>
-                    <option value="프리미엄 문의">프리미엄 문의</option>
-                    <option value="기능 제안">기능 제안</option>
-                </select>
-            </div>
-
-            <div class="support-form-group">
-                <label for="supportDiscordTag">디스코드 아이디</label>
-                <input type="text" id="supportDiscordTag" placeholder="예: user1234">
-            </div>
-        </div>
-
-        <div class="support-form-group">
-            <label for="supportSubject">문의 제목</label>
-            <input type="text" id="supportSubject" placeholder="문의 제목 입력">
-        </div>
-
-        <div class="support-form-group">
-            <label for="supportMessage">문의 내용</label>
-            <textarea id="supportMessage" placeholder="문의 내용을 자세히 적어주세요."></textarea>
-        </div>
-
-        <div class="support-modal-actions">
-            <button class="support-btn-secondary" onclick="closeSupportModal()">닫기</button>
-            <button class="support-btn-primary" onclick="submitSupportInquiry()">보내기</button>
-        </div>
-
-        <div id="supportStatusText" class="support-status-text"></div>
-    </div>
-</div>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>내전봇 전적 사이트</title>
@@ -235,7 +39,7 @@ INDEX_HTML = """
             margin: 40px auto;
             padding: 20px;
         }
-        h1, h2 {
+        h1, h2, h3 {
             margin-bottom: 16px;
         }
         .card {
@@ -267,6 +71,7 @@ INDEX_HTML = """
             border-radius: 999px;
             background: #334155;
             margin-right: 8px;
+            margin-bottom: 8px;
             font-size: 13px;
         }
         .filters {
@@ -275,7 +80,7 @@ INDEX_HTML = """
             flex-wrap: wrap;
             margin-bottom: 16px;
         }
-        select, input, button {
+        select, input, button, textarea {
             padding: 10px 12px;
             border-radius: 10px;
             border: 1px solid #475569;
@@ -284,8 +89,6 @@ INDEX_HTML = """
         }
         button {
             cursor: pointer;
-            background: #2563eb;
-            border: none;
         }
         .top3 {
             display: grid;
@@ -313,8 +116,129 @@ INDEX_HTML = """
         .donate-btn {
             background: #ec4899;
         }
+        .support-contact-button {
+            background: linear-gradient(135deg, #5865F2, #7289DA);
+            color: #ffffff;
+            border: none;
+            border-radius: 12px;
+            padding: 12px 18px;
+            font-size: 15px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            box-shadow: 0 8px 20px rgba(88, 101, 242, 0.25);
+            margin-left: 8px;
+        }
+        .support-contact-button:hover {
+            transform: translateY(-1px);
+            opacity: 0.95;
+        }
+        .support-modal-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.65);
+            z-index: 9999;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .support-modal {
+            width: 100%;
+            max-width: 560px;
+            background: #111827;
+            color: #ffffff;
+            border-radius: 18px;
+            padding: 24px;
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.35);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        .support-modal h2 {
+            margin: 0 0 8px 0;
+            font-size: 24px;
+            font-weight: 800;
+        }
+        .support-modal p {
+            margin: 0 0 20px 0;
+            color: #cbd5e1;
+            font-size: 14px;
+        }
+        .support-form-group {
+            margin-bottom: 14px;
+        }
+        .support-form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            color: #e5e7eb;
+        }
+        .support-form-group input,
+        .support-form-group select,
+        .support-form-group textarea {
+            width: 100%;
+            box-sizing: border-box;
+            border: 1px solid #334155;
+            background: #0f172a;
+            color: #ffffff;
+            border-radius: 12px;
+            padding: 12px 14px;
+            font-size: 14px;
+            outline: none;
+        }
+        .support-form-group textarea {
+            min-height: 140px;
+            resize: vertical;
+        }
+        .support-form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+        .support-modal-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+            margin-top: 18px;
+        }
+        .support-btn-secondary {
+            background: #1e293b;
+            color: #ffffff;
+            border: none;
+            border-radius: 12px;
+            padding: 12px 16px;
+            font-size: 14px;
+            font-weight: 700;
+            cursor: pointer;
+        }
+        .support-btn-primary {
+            background: linear-gradient(135deg, #5865F2, #7289DA);
+            color: #ffffff;
+            border: none;
+            border-radius: 12px;
+            padding: 12px 16px;
+            font-size: 14px;
+            font-weight: 700;
+            cursor: pointer;
+        }
+        .support-status-text {
+            margin-top: 12px;
+            font-size: 14px;
+            font-weight: 600;
+        }
+        .support-status-success {
+            color: #86efac;
+        }
+        .support-status-error {
+            color: #fca5a5;
+        }
         @media (max-width: 768px) {
             .top3 {
+                grid-template-columns: 1fr;
+            }
+        }
+        @media (max-width: 640px) {
+            .support-form-row {
                 grid-template-columns: 1fr;
             }
         }
@@ -327,6 +251,7 @@ INDEX_HTML = """
         <div style="margin-bottom: 20px;">
             <a href="/support" class="action-btn support-btn">🛟 사용법 / 지원</a>
             <a href="/support" class="action-btn donate-btn">💖 후원 안내</a>
+            <button class="support-contact-button" onclick="openSupportModal()">문의하기</button>
         </div>
 
         <div class="card">
@@ -346,7 +271,7 @@ INDEX_HTML = """
                 </select>
 
                 <input type="text" name="q" placeholder="닉네임 또는 유저 ID 검색" value="{{ q or '' }}">
-                <button type="submit">적용</button>
+                <button type="submit" style="background: #2563eb; border: none;">적용</button>
             </form>
         </div>
 
@@ -408,99 +333,154 @@ INDEX_HTML = """
             {% endfor %}
         </div>
     </div>
-<script>
-    function openSupportModal() {
-        document.getElementById("supportModalOverlay").style.display = "flex";
-    }
 
-    function closeSupportModal() {
-        document.getElementById("supportModalOverlay").style.display = "none";
-        const statusText = document.getElementById("supportStatusText");
-        statusText.textContent = "";
-        statusText.className = "support-status-text";
-    }
+    <div class="support-modal-overlay" id="supportModalOverlay">
+        <div class="support-modal">
+            <h2>문의하기</h2>
+            <p>버그 제보, 결제 문제, 프리미엄 문의를 남겨주세요.</p>
 
-    async function submitSupportInquiry() {
-        const name = document.getElementById("supportName").value.trim();
-        const email = document.getElementById("supportEmail").value.trim();
-        const category = document.getElementById("supportCategory").value.trim();
-        const discordTag = document.getElementById("supportDiscordTag").value.trim();
-        const subject = document.getElementById("supportSubject").value.trim();
-        const message = document.getElementById("supportMessage").value.trim();
-        const statusText = document.getElementById("supportStatusText");
+            <div class="support-form-row">
+                <div class="support-form-group">
+                    <label for="supportName">이름</label>
+                    <input type="text" id="supportName" placeholder="이름 입력">
+                </div>
 
-        statusText.textContent = "";
-        statusText.className = "support-status-text";
+                <div class="support-form-group">
+                    <label for="supportEmail">이메일</label>
+                    <input type="email" id="supportEmail" placeholder="이메일 입력">
+                </div>
+            </div>
 
-        if (!name) {
-            statusText.textContent = "이름을 입력해주세요.";
-            statusText.classList.add("support-status-error");
-            return;
+            <div class="support-form-row">
+                <div class="support-form-group">
+                    <label for="supportCategory">문의 유형</label>
+                    <select id="supportCategory">
+                        <option value="일반 문의">일반 문의</option>
+                        <option value="버그 제보">버그 제보</option>
+                        <option value="결제 문의">결제 문의</option>
+                        <option value="프리미엄 문의">프리미엄 문의</option>
+                        <option value="기능 제안">기능 제안</option>
+                    </select>
+                </div>
+
+                <div class="support-form-group">
+                    <label for="supportDiscordTag">디스코드 아이디</label>
+                    <input type="text" id="supportDiscordTag" placeholder="예: user1234">
+                </div>
+            </div>
+
+            <div class="support-form-group">
+                <label for="supportSubject">문의 제목</label>
+                <input type="text" id="supportSubject" placeholder="문의 제목 입력">
+            </div>
+
+            <div class="support-form-group">
+                <label for="supportMessage">문의 내용</label>
+                <textarea id="supportMessage" placeholder="문의 내용을 자세히 적어주세요."></textarea>
+            </div>
+
+            <div class="support-modal-actions">
+                <button class="support-btn-secondary" onclick="closeSupportModal()">닫기</button>
+                <button class="support-btn-primary" onclick="submitSupportInquiry()">보내기</button>
+            </div>
+
+            <div id="supportStatusText" class="support-status-text"></div>
+        </div>
+    </div>
+
+    <script>
+        function openSupportModal() {
+            document.getElementById("supportModalOverlay").style.display = "flex";
         }
 
-        if (!email) {
-            statusText.textContent = "이메일을 입력해주세요.";
-            statusText.classList.add("support-status-error");
-            return;
+        function closeSupportModal() {
+            document.getElementById("supportModalOverlay").style.display = "none";
+            const statusText = document.getElementById("supportStatusText");
+            statusText.textContent = "";
+            statusText.className = "support-status-text";
         }
 
-        if (!subject) {
-            statusText.textContent = "문의 제목을 입력해주세요.";
-            statusText.classList.add("support-status-error");
-            return;
-        }
+        async function submitSupportInquiry() {
+            const name = document.getElementById("supportName").value.trim();
+            const email = document.getElementById("supportEmail").value.trim();
+            const category = document.getElementById("supportCategory").value.trim();
+            const discordTag = document.getElementById("supportDiscordTag").value.trim();
+            const subject = document.getElementById("supportSubject").value.trim();
+            const message = document.getElementById("supportMessage").value.trim();
+            const statusText = document.getElementById("supportStatusText");
 
-        if (!message) {
-            statusText.textContent = "문의 내용을 입력해주세요.";
-            statusText.classList.add("support-status-error");
-            return;
-        }
+            statusText.textContent = "";
+            statusText.className = "support-status-text";
 
-        try {
-            const response = await fetch("/api/support/inquiry", {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json"
-                },
-                body: JSON.stringify({
-                    name: name,
-                    email: email,
-                    category: category,
-                    discord_tag: discordTag,
-                    subject: subject,
-                    message: message
-                })
-            });
+            if (!name) {
+                statusText.textContent = "이름을 입력해주세요.";
+                statusText.classList.add("support-status-error");
+                return;
+            }
 
-            const result = await response.json();
+            if (!email) {
+                statusText.textContent = "이메일을 입력해주세요.";
+                statusText.classList.add("support-status-error");
+                return;
+            }
 
-            if (result.ok) {
-                statusText.textContent = "문의가 정상적으로 접수되었습니다. 문의번호: " + result.inquiry_id;
-                statusText.classList.add("support-status-success");
+            if (!subject) {
+                statusText.textContent = "문의 제목을 입력해주세요.";
+                statusText.classList.add("support-status-error");
+                return;
+            }
 
-                document.getElementById("supportName").value = "";
-                document.getElementById("supportEmail").value = "";
-                document.getElementById("supportCategory").value = "일반 문의";
-                document.getElementById("supportDiscordTag").value = "";
-                document.getElementById("supportSubject").value = "";
-                document.getElementById("supportMessage").value = "";
-            } else {
-                statusText.textContent = result.message || "문의 접수에 실패했습니다.";
+            if (!message) {
+                statusText.textContent = "문의 내용을 입력해주세요.";
+                statusText.classList.add("support-status-error");
+                return;
+            }
+
+            try {
+                const response = await fetch("/api/support/inquiry", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify({
+                        name: name,
+                        email: email,
+                        category: category,
+                        discord_tag: discordTag,
+                        subject: subject,
+                        message: message
+                    })
+                });
+
+                const result = await response.json();
+
+                if (result.ok) {
+                    statusText.textContent = "문의가 정상적으로 접수되었습니다. 문의번호: " + result.inquiry_id;
+                    statusText.classList.add("support-status-success");
+
+                    document.getElementById("supportName").value = "";
+                    document.getElementById("supportEmail").value = "";
+                    document.getElementById("supportCategory").value = "일반 문의";
+                    document.getElementById("supportDiscordTag").value = "";
+                    document.getElementById("supportSubject").value = "";
+                    document.getElementById("supportMessage").value = "";
+                } else {
+                    statusText.textContent = result.message || "문의 접수에 실패했습니다.";
+                    statusText.classList.add("support-status-error");
+                }
+            } catch (error) {
+                statusText.textContent = "서버와 통신 중 오류가 발생했습니다.";
                 statusText.classList.add("support-status-error");
             }
-        } catch (error) {
-            statusText.textContent = "서버와 통신 중 오류가 발생했습니다.";
-            statusText.classList.add("support-status-error");
         }
-    }
 
-    document.addEventListener("click", function (e) {
-        const overlay = document.getElementById("supportModalOverlay");
-        if (e.target === overlay) {
-            closeSupportModal();
-        }
-    });
-</script>
+        document.addEventListener("click", function (e) {
+            const overlay = document.getElementById("supportModalOverlay");
+            if (e.target === overlay) {
+                closeSupportModal();
+            }
+        });
+    </script>
 </body>
 </html>
 """
@@ -834,9 +814,11 @@ def index():
 
             match_params = []
             match_filters = []
+
             if selected_guild_id:
                 match_filters.append("guild_id = %s")
                 match_params.append(int(selected_guild_id))
+
             if selected_game:
                 match_filters.append("game = %s")
                 match_params.append(selected_game)
@@ -845,13 +827,16 @@ def index():
             if match_filters:
                 match_where = "WHERE " + " AND ".join(match_filters)
 
-            cur.execute(f"""
+            cur.execute(
+                f"""
                 SELECT id, guild_id, game, winner_team, team_a_avg, team_b_avg, created_at
                 FROM matches
                 {match_where}
                 ORDER BY id DESC
                 LIMIT 20
-            """, tuple(match_params))
+                """,
+                tuple(match_params)
+            )
             matches = cur.fetchall()
 
     return render_template_string(
@@ -870,25 +855,32 @@ def index():
 def player_page(guild_id, user_id):
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(
+                """
                 SELECT is_premium
                 FROM premium_guilds
                 WHERE guild_id = %s
-            """, (guild_id,))
+                """,
+                (guild_id,)
+            )
             premium_row = cur.fetchone()
             is_premium = bool(premium_row["is_premium"]) if premium_row else False
 
             if not is_premium:
                 return render_template_string(LOCKED_HTML)
 
-            cur.execute("""
+            cur.execute(
+                """
                 SELECT guild_id, user_id, display_name, mmr, win, lose
                 FROM players
                 WHERE guild_id = %s AND user_id = %s
-            """, (guild_id, user_id))
+                """,
+                (guild_id, user_id)
+            )
             player = cur.fetchone()
 
-            cur.execute("""
+            cur.execute(
+                """
                 SELECT game, mmr, win, lose,
                 CASE
                     WHEN (win + lose) = 0 THEN 0
@@ -897,7 +889,9 @@ def player_page(guild_id, user_id):
                 FROM player_game_stats
                 WHERE guild_id = %s AND user_id = %s
                 ORDER BY game ASC
-            """, (guild_id, user_id))
+                """,
+                (guild_id, user_id)
+            )
             game_rows = cur.fetchall()
 
     if not player:
@@ -928,6 +922,7 @@ def support_page():
 @app.route("/health")
 def health():
     return {"ok": True}
+
 
 @app.route("/api/support/inquiry", methods=["POST"])
 def api_support_inquiry():
@@ -965,7 +960,7 @@ def api_support_inquiry():
         if len(subject) > 200:
             return jsonify({"ok": False, "message": "문의 제목은 200자 이하로 입력해주세요."}), 400
 
-        result = insert_support_inquiry(
+        inquiry = insert_support_inquiry(
             name=name,
             email=email,
             category=category,
@@ -974,10 +969,14 @@ def api_support_inquiry():
             discord_tag=discord_tag if discord_tag else None,
         )
 
+        webhook_result = send_discord_support_webhook(inquiry)
+
         return jsonify({
             "ok": True,
             "message": "문의가 정상적으로 접수되었습니다.",
-            "inquiry_id": result["id"] if result else None
+            "inquiry_id": inquiry["id"],
+            "webhook_ok": webhook_result["ok"],
+            "webhook_message": webhook_result["message"],
         })
 
     except Exception as e:
@@ -985,6 +984,7 @@ def api_support_inquiry():
             "ok": False,
             "message": f"서버 오류가 발생했습니다: {str(e)}"
         }), 500
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
