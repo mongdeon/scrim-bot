@@ -1,11 +1,20 @@
 import os
+import json
+import uuid
+import base64
+import requests
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from flask import Flask, render_template_string, request, abort
 
+from core.db import DB
+from core.config import TOSS_CLIENT_KEY, TOSS_SECRET_KEY, WEBSITE_URL
+
 app = Flask(__name__)
 
+db = DB()
 DATABASE_URL = os.environ.get("DATABASE_URL")
+
 
 INDEX_HTML = """
 <!DOCTYPE html>
@@ -289,52 +298,106 @@ LOCKED_HTML = """
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>프리미엄 전용</title>
     <style>
         body {
             font-family: Arial, sans-serif;
             background: #0f172a;
             color: #e2e8f0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
             margin: 0;
-            padding: 0;
-        }
-        .container {
-            max-width: 700px;
-            margin: 80px auto;
-            padding: 20px;
         }
         .card {
             background: #1e293b;
-            border-radius: 16px;
             padding: 32px;
+            border-radius: 16px;
             text-align: center;
-            box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+            max-width: 700px;
         }
-        a {
-            color: #60a5fa;
-            text-decoration: none;
-        }
-        .badge {
-            display: inline-block;
-            padding: 8px 14px;
-            border-radius: 999px;
-            background: #f59e0b;
-            color: #0f172a;
-            font-weight: bold;
-            margin-bottom: 16px;
-        }
+        a { color: #60a5fa; text-decoration: none; }
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="card">
-            <div class="badge">PREMIUM ONLY</div>
-            <h1>상세 전적 페이지는 프리미엄 서버 전용입니다.</h1>
-            <p>이 서버는 현재 무료 서버라서 유저 상세 전적을 볼 수 없습니다.</p>
-            <p>관리자는 봇에서 <strong>/프리미엄확인</strong>으로 상태를 확인할 수 있습니다.</p>
-            <p><a href="/">← 홈으로 돌아가기</a></p>
-        </div>
+    <div class="card">
+        <h1>상세 전적 페이지는 프리미엄 서버 전용입니다.</h1>
+        <p><a href="/">← 홈으로 돌아가기</a></p>
+    </div>
+</body>
+</html>
+"""
+
+SUCCESS_HTML = """
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>결제 완료</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #0f172a;
+            color: #e2e8f0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+        }
+        .card {
+            background: #1e293b;
+            padding: 32px;
+            border-radius: 16px;
+            text-align: center;
+            max-width: 700px;
+        }
+        a { color: #60a5fa; text-decoration: none; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>✅ 결제 승인 완료</h1>
+        <p>{{ message }}</p>
+        <p><a href="/">홈으로 돌아가기</a></p>
+    </div>
+</body>
+</html>
+"""
+
+FAIL_HTML = """
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>결제 실패</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #0f172a;
+            color: #e2e8f0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+        }
+        .card {
+            background: #1e293b;
+            padding: 32px;
+            border-radius: 16px;
+            text-align: center;
+            max-width: 700px;
+        }
+        a { color: #60a5fa; text-decoration: none; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>❌ 결제 실패</h1>
+        <p>{{ message }}</p>
+        <p><a href="/">홈으로 돌아가기</a></p>
     </div>
 </body>
 </html>
@@ -345,6 +408,11 @@ def get_conn():
     if not DATABASE_URL:
         raise RuntimeError("DATABASE_URL 환경변수가 설정되지 않았습니다.")
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+
+
+def toss_auth_header(secret_key: str) -> str:
+    encoded = base64.b64encode(f"{secret_key}:".encode("utf-8")).decode("utf-8")
+    return f"Basic {encoded}"
 
 
 @app.route("/")
@@ -478,7 +546,6 @@ def player_page(guild_id, user_id):
                 WHERE guild_id = %s
             """, (guild_id,))
             premium_row = cur.fetchone()
-
             is_premium = bool(premium_row["is_premium"]) if premium_row else False
 
             if not is_premium:
@@ -516,6 +583,113 @@ def player_page(guild_id, user_id):
         winrate=winrate,
         game_rows=game_rows
     )
+
+
+@app.route("/buy/<int:guild_id>/<int:days>")
+def buy_page(guild_id, days):
+    if not TOSS_CLIENT_KEY:
+        return "TOSS_CLIENT_KEY가 설정되지 않았습니다.", 500
+
+    amount_map = {
+        30: 5000,
+        90: 12000,
+    }
+
+    if days not in amount_map:
+        return "지원하지 않는 기간입니다.", 400
+
+    amount = amount_map[days]
+    order_id = str(uuid.uuid4()).replace("-", "")[:20]
+    domain = (WEBSITE_URL or request.host_url).rstrip("/")
+
+    return f"""
+    <!DOCTYPE html>
+    <html lang="ko">
+    <head>
+        <meta charset="UTF-8">
+        <title>프리미엄 결제</title>
+        <script src="https://js.tosspayments.com/v1/payment"></script>
+    </head>
+    <body style="background:#0f172a;color:white;font-family:Arial,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;">
+        <script>
+            const tossPayments = TossPayments("{TOSS_CLIENT_KEY}");
+            tossPayments.requestPayment("카드", {{
+                amount: {amount},
+                orderId: "{order_id}",
+                orderName: "내전봇 프리미엄 {days}일",
+                successUrl: "{domain}/payment/success?guild_id={guild_id}&days={days}",
+                failUrl: "{domain}/payment/fail"
+            }});
+        </script>
+    </body>
+    </html>
+    """
+
+
+@app.route("/payment/success")
+def payment_success():
+    if not TOSS_SECRET_KEY:
+        return render_template_string(SUCCESS_HTML, message="TOSS_SECRET_KEY가 설정되지 않았습니다."), 500
+
+    payment_key = request.args.get("paymentKey")
+    order_id = request.args.get("orderId")
+    amount = request.args.get("amount")
+    guild_id = request.args.get("guild_id")
+    days = request.args.get("days")
+
+    if not all([payment_key, order_id, amount, guild_id, days]):
+        return render_template_string(SUCCESS_HTML, message="필수 파라미터가 누락되었습니다."), 400
+
+    amount_map = {
+        "30": 5000,
+        "90": 12000,
+    }
+
+    expected_amount = amount_map.get(days)
+    if expected_amount is None:
+        return render_template_string(SUCCESS_HTML, message="지원하지 않는 결제 기간입니다."), 400
+
+    if int(amount) != expected_amount:
+        return render_template_string(SUCCESS_HTML, message="금액 검증에 실패했습니다."), 400
+
+    headers = {
+        "Authorization": toss_auth_header(TOSS_SECRET_KEY),
+        "Content-Type": "application/json",
+    }
+
+    payload = {
+        "paymentKey": payment_key,
+        "orderId": order_id,
+        "amount": int(amount),
+    }
+
+    try:
+        resp = requests.post(
+            "https://api.tosspayments.com/v1/payments/confirm",
+            headers=headers,
+            data=json.dumps(payload),
+            timeout=20,
+        )
+    except Exception as e:
+        return render_template_string(SUCCESS_HTML, message=f"결제 승인 요청 실패: {e}"), 500
+
+    if resp.status_code != 200:
+        return render_template_string(SUCCESS_HTML, message=f"결제 승인 실패: {resp.text}"), 400
+
+    db.set_premium_days(int(guild_id), int(days))
+
+    return render_template_string(
+        SUCCESS_HTML,
+        message=f"프리미엄 {days}일이 정상 적용되었습니다."
+    )
+
+
+@app.route("/payment/fail")
+def payment_fail():
+    code = request.args.get("code", "")
+    message = request.args.get("message", "결제가 취소되었거나 실패했습니다.")
+    detail = f"{code} {message}".strip()
+    return render_template_string(FAIL_HTML, message=detail), 400
 
 
 @app.route("/health")
