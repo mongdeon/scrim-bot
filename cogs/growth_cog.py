@@ -3,8 +3,8 @@ from discord.ext import commands
 from discord import app_commands
 
 BOT_INVITE_URL = "https://discord.com/oauth2/authorize?client_id=1485512756550570094&permissions=20016128&integration_type=0&scope=bot+applications.commands"
-SUPPORT_SERVER_URL = "elegant-cooperation-production-03d5.up.railway.app"
-WEBSITE_URL = "elegant-cooperation-production-03d5.up.railway.app"
+SUPPORT_SERVER_URL = "https://elegant-cooperation-production-03d5.up.railway.app//support"
+WEBSITE_URL = "https://elegant-cooperation-production-03d5.up.railway.app/"
 
 
 class GrowthCog(commands.Cog):
