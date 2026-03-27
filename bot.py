@@ -56,6 +56,7 @@ async def main():
         await bot.load_extension("cogs.help_cog")
         await bot.load_extension("cogs.premium_cog")
         await bot.load_extension("cogs.site_cog")
+        await bot.load_extension("cogs.support_cog")
         await bot.start(TOKEN)
 
 

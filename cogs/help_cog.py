@@ -9,7 +9,6 @@ class HelpCog(commands.Cog):
 
     @app_commands.command(name="도움말", description="내전봇 명령어 목록을 보여줍니다.")
     async def help_cmd(self, interaction: discord.Interaction):
-
         embed = discord.Embed(
             title="🎮 내전봇 도움말",
             description="사용 가능한 명령어 목록",
@@ -79,17 +78,20 @@ class HelpCog(commands.Cog):
             name="⭐ 프리미엄",
             value="""
 `/프리미엄확인`
-`/프리미엄켜기` → 오너 전용
+`/프리미엄추가` → 오너 전용
+`/프리미엄30일` → 오너 전용
+`/프리미엄90일` → 오너 전용
 `/프리미엄끄기` → 오너 전용
 """,
             inline=False
         )
 
         embed.add_field(
-            name="🤖 기타",
+            name="💖 기타",
             value="""
 `/핑`
 `/도움말`
+`/후원`
 """,
             inline=False
         )
