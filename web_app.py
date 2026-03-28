@@ -143,6 +143,16 @@ BASE_STYLE = """
         cursor: pointer;
     }
 
+    .primary-btn {
+        background: linear-gradient(135deg, #ec4899, #d946ef);
+        color: #fff;
+        border: none;
+        padding: 13px 20px;
+        border-radius: 12px;
+        font-weight: 700;
+        cursor: pointer;
+    }
+
     .top3 {
         display: grid;
         grid-template-columns: repeat(3, 1fr);
@@ -207,8 +217,125 @@ BASE_STYLE = """
         line-height: 1.7;
     }
 
+    .grid-2 {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 18px;
+    }
+
+    .guide-list {
+        display: grid;
+        gap: 14px;
+    }
+
+    .guide-item {
+        background: #394b67;
+        border-radius: 16px;
+        padding: 18px;
+    }
+
+    .guide-item h3 {
+        margin: 0 0 10px 0;
+        font-size: 20px;
+    }
+
+    .guide-item p {
+        margin: 0;
+        line-height: 1.7;
+    }
+
+    .feature-box {
+        background: #394b67;
+        border-radius: 16px;
+        padding: 18px;
+        line-height: 1.9;
+        white-space: pre-line;
+    }
+
+    .account-box {
+        background: #394b67;
+        border-radius: 14px;
+        padding: 14px;
+        margin-bottom: 12px;
+        font-weight: 700;
+        word-break: break-all;
+    }
+
+    .form-group {
+        margin-bottom: 14px;
+    }
+
+    .form-group label {
+        display: block;
+        margin-bottom: 8px;
+        font-weight: 700;
+    }
+
+    .status {
+        margin-top: 14px;
+        font-weight: 800;
+    }
+
+    .ok { color: #86efac; }
+    .err { color: #fca5a5; }
+
+    .admin-login-row {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+    }
+
+    .request-card {
+        background: #394b67;
+        padding: 16px;
+        border-radius: 16px;
+        margin-bottom: 14px;
+    }
+
+    .request-row {
+        margin-bottom: 8px;
+    }
+
+    .status-badge {
+        display: inline-block;
+        padding: 6px 10px;
+        border-radius: 999px;
+        background: #24344f;
+        font-size: 12px;
+        font-weight: 800;
+    }
+
+    .days-input {
+        width: 100px;
+        margin-right: 8px;
+    }
+
+    .approve-btn {
+        background: #16a34a;
+        color: white;
+        border: none;
+        padding: 10px 14px;
+        border-radius: 10px;
+        cursor: pointer;
+        font-weight: 700;
+        margin-right: 8px;
+    }
+
+    .reject-btn {
+        background: #dc2626;
+        color: white;
+        border: none;
+        padding: 10px 14px;
+        border-radius: 10px;
+        cursor: pointer;
+        font-weight: 700;
+    }
+
     @media (max-width: 900px) {
         .top3 {
+            grid-template-columns: 1fr;
+        }
+        .grid-2 {
             grid-template-columns: 1fr;
         }
     }
@@ -221,6 +348,7 @@ BASE_STYLE = """
 </style>
 """
 
+# 홈 UI / 배치는 유지
 INDEX_HTML = """
 <!DOCTYPE html>
 <html lang="ko">
@@ -284,7 +412,7 @@ INDEX_HTML = """
     <div class="card">
         <div class="empty-box">
             이 서버는 아직 전적 데이터가 없습니다.<br>
-            봇은 정상 등록되어 있으며, 내전을 진행하면 랭킹과 최근 경기가 자동으로 표시됩니다.
+            내전을 진행하면 랭킹과 최근 경기 기록이 자동으로 표시됩니다.
         </div>
     </div>
     {% endif %}
@@ -343,6 +471,260 @@ INDEX_HTML = """
         {% endif %}
     </div>
 </div>
+</body>
+</html>
+"""
+
+# 카드형 UI로 변경
+GUIDE_HTML = """
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>명령어 / 프리미엄 소개</title>
+    """ + BASE_STYLE + """
+</head>
+<body>
+<div class="container">
+    <div class="page-title">💿 명령어 / 프리미엄 소개</div>
+
+    <div class="action-row">
+        <a href="/" class="action-btn btn-guide">🏠 홈으로</a>
+        <a href="/support" class="action-btn btn-support">💖 후원 / 프리미엄 신청</a>
+        <a href="/season" class="action-btn btn-season">🏆 시즌 페이지</a>
+    </div>
+
+    <div class="card">
+        <h2 class="section-title">🆓 무료 명령어</h2>
+        <div class="guide-list">
+            <div class="guide-item">
+                <h3>/설정역할</h3>
+                <p>내전에 참여 가능한 인증 역할을 설정합니다.</p>
+            </div>
+            <div class="guide-item">
+                <h3>/설정카테고리</h3>
+                <p>대기방 / 팀 보이스 채널이 생성될 카테고리를 설정합니다.</p>
+            </div>
+            <div class="guide-item">
+                <h3>/내전생성</h3>
+                <p>현재 채널에서 내전 모집을 시작합니다.</p>
+            </div>
+            <div class="guide-item">
+                <h3>/밸런스팀</h3>
+                <p>참가자 기준으로 자동 팀 분배를 진행합니다.</p>
+            </div>
+            <div class="guide-item">
+                <h3>/내전상태</h3>
+                <p>현재 모집 상태, 참가자, 현재 맵 등을 확인합니다.</p>
+            </div>
+            <div class="guide-item">
+                <h3>/내전종료</h3>
+                <p>내전을 종료하고 팀 채널을 정리합니다.</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2 class="section-title">⭐ 프리미엄 기능</h2>
+        <div class="guide-list">
+            <div class="guide-item">
+                <h3>결과기록 / ELO 반영</h3>
+                <p>경기 결과를 기록하고 ELO / MMR, 승패 전적을 자동 반영합니다.</p>
+            </div>
+            <div class="guide-item">
+                <h3>상세 전적</h3>
+                <p>유저별 상세 전적 페이지를 통해 누적 전적과 게임별 기록을 확인할 수 있습니다.</p>
+            </div>
+            <div class="guide-item">
+                <h3>게임별 시즌</h3>
+                <p>서버별, 게임별로 시즌을 따로 운영할 수 있습니다.</p>
+            </div>
+            <div class="guide-item">
+                <h3>시즌 랭킹 / 시즌 경기 기록</h3>
+                <p>현재 시즌 기준 랭킹과 최근 경기 기록을 따로 확인할 수 있습니다.</p>
+            </div>
+            <div class="guide-item">
+                <h3>맵뽑기</h3>
+                <p>현재 로비 게임 기준으로 맵을 랜덤으로 뽑고, 내전 상태에 함께 표시할 수 있습니다.</p>
+            </div>
+        </div>
+    </div>
+</div>
+</body>
+</html>
+"""
+
+# 카드형 UI로 변경
+SUPPORT_HTML = """
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>후원 / 프리미엄 신청</title>
+    """ + BASE_STYLE + """
+</head>
+<body>
+<div class="container">
+    <div class="page-title">💖 후원 / 프리미엄 신청</div>
+
+    <div class="action-row">
+        <a href="/" class="action-btn btn-guide">🏠 홈으로</a>
+        <a href="/guide" class="action-btn btn-support">💿 명령어 / 프리미엄 소개</a>
+        <a href="/admin/premium" class="action-btn btn-admin">🔐 관리자 페이지</a>
+    </div>
+
+    <div class="grid-2">
+        <div>
+            <div class="card">
+                <h2 class="section-title">📖 프리미엄 안내</h2>
+                <p style="line-height:1.8; margin:0;">
+                    프리미엄 가격은 <strong>{{ premium_price }}원 / {{ premium_days }}일</strong> 입니다.<br>
+                    입금 후 아래 신청 폼을 작성하면 관리자가 확인 후 프리미엄을 활성화합니다.
+                </p>
+            </div>
+
+            <div class="card">
+                <h2 class="section-title">⭐ 프리미엄 기능</h2>
+                <div class="guide-list">
+                    <div class="guide-item">
+                        <h3>결과기록 / ELO 반영</h3>
+                        <p>경기 결과를 기록하고 ELO / MMR을 자동 반영합니다.</p>
+                    </div>
+                    <div class="guide-item">
+                        <h3>상세 전적</h3>
+                        <p>유저별 상세 전적과 게임별 기록을 확인할 수 있습니다.</p>
+                    </div>
+                    <div class="guide-item">
+                        <h3>게임별 시즌</h3>
+                        <p>게임마다 별도로 시즌을 운영하고 관리할 수 있습니다.</p>
+                    </div>
+                    <div class="guide-item">
+                        <h3>시즌 랭킹 / 시즌 경기 기록</h3>
+                        <p>시즌 전용 랭킹과 경기 기록을 따로 조회할 수 있습니다.</p>
+                    </div>
+                    <div class="guide-item">
+                        <h3>맵뽑기</h3>
+                        <p>프리미엄 서버 전용으로 맵을 랜덤으로 뽑고 내전 운영에 활용할 수 있습니다.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div>
+            <div class="card">
+                <h2 class="section-title">💳 후원 계좌</h2>
+
+                <div style="margin-bottom:8px; font-weight:700;">은행</div>
+                <div class="account-box">{{ bank_name }}</div>
+
+                <div style="margin-bottom:8px; font-weight:700;">계좌번호</div>
+                <div class="account-box">{{ account_number }}</div>
+
+                <div style="margin-bottom:8px; font-weight:700;">예금주</div>
+                <div class="account-box">{{ account_holder }}</div>
+            </div>
+
+            <div class="card">
+                <h2 class="section-title">📝 프리미엄 신청</h2>
+
+                <div class="form-group">
+                    <label for="guildId">서버 ID</label>
+                    <input type="number" id="guildId" placeholder="예: 123456789012345678">
+                </div>
+
+                <div class="form-group">
+                    <label for="applicantName">입금자명</label>
+                    <input type="text" id="applicantName" placeholder="예: 홍길동">
+                </div>
+
+                <div class="form-group">
+                    <label for="discordTag">디스코드 아이디</label>
+                    <input type="text" id="discordTag" placeholder="예: user1234">
+                </div>
+
+                <div class="form-group">
+                    <label for="amount">입금 금액</label>
+                    <input type="number" id="amount" placeholder="예: 5000">
+                </div>
+
+                <div class="form-group">
+                    <label for="memo">메모</label>
+                    <textarea id="memo" placeholder="추가로 전달할 내용이 있으면 적어주세요."></textarea>
+                </div>
+
+                <button class="primary-btn" onclick="submitPremiumRequest()">프리미엄 신청하기</button>
+                <div id="statusText" class="status"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+async function submitPremiumRequest() {
+    const guildId = document.getElementById("guildId").value.trim();
+    const applicantName = document.getElementById("applicantName").value.trim();
+    const discordTag = document.getElementById("discordTag").value.trim();
+    const amount = document.getElementById("amount").value.trim();
+    const memo = document.getElementById("memo").value.trim();
+    const statusText = document.getElementById("statusText");
+
+    statusText.textContent = "";
+    statusText.className = "status";
+
+    if (!guildId) {
+        statusText.textContent = "서버 ID를 입력해주세요.";
+        statusText.classList.add("err");
+        return;
+    }
+
+    if (!applicantName) {
+        statusText.textContent = "입금자명을 입력해주세요.";
+        statusText.classList.add("err");
+        return;
+    }
+
+    if (!amount) {
+        statusText.textContent = "입금 금액을 입력해주세요.";
+        statusText.classList.add("err");
+        return;
+    }
+
+    try {
+        const response = await fetch("/api/premium/request", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                guild_id: guildId,
+                applicant_name: applicantName,
+                discord_tag: discordTag,
+                amount: amount,
+                memo: memo
+            })
+        });
+
+        const result = await response.json();
+
+        if (result.ok) {
+            statusText.textContent = "프리미엄 신청이 접수되었습니다. 신청번호: " + result.request_id;
+            statusText.classList.add("ok");
+
+            document.getElementById("guildId").value = "";
+            document.getElementById("applicantName").value = "";
+            document.getElementById("discordTag").value = "";
+            document.getElementById("amount").value = "";
+            document.getElementById("memo").value = "";
+        } else {
+            statusText.textContent = result.message || "신청 접수에 실패했습니다.";
+            statusText.classList.add("err");
+        }
+    } catch (error) {
+        statusText.textContent = "서버와 통신 중 오류가 발생했습니다.";
+        statusText.classList.add("err");
+    }
+}
+</script>
 </body>
 </html>
 """
@@ -462,186 +844,6 @@ SEASON_HTML = """
     </div>
     {% endif %}
 </div>
-</body>
-</html>
-"""
-
-GUIDE_HTML = """
-<!DOCTYPE html>
-<html lang="ko">
-<head>
-    <meta charset="UTF-8">
-    <title>명령어 / 프리미엄 소개</title>
-    """ + BASE_STYLE + """
-</head>
-<body>
-<div class="container">
-    <div class="page-title">💿 명령어 / 프리미엄 소개</div>
-
-    <div class="action-row">
-        <a href="/" class="action-btn btn-guide">🏠 홈으로</a>
-        <a href="/support" class="action-btn btn-support">💖 후원 / 프리미엄 신청</a>
-        <a href="/season" class="action-btn btn-season">🏆 시즌 페이지</a>
-    </div>
-
-    <div class="card">
-        <h2 class="section-title">🆓 무료 명령어</h2>
-        <div class="feature-box">- /설정역할
-- /설정카테고리
-- /내전생성
-- /밸런스팀
-- /내전상태
-- /내전종료</div>
-    </div>
-
-    <div class="card">
-        <h2 class="section-title">⭐ 프리미엄 명령어</h2>
-        <div class="feature-box">- /결과기록
-- /시즌생성
-- /시즌종료
-- /시즌확인
-- /시즌목록
-- /시즌랭킹
-- /맵뽑기
-- /맵뽑기상태
-- /맵뽑기초기화</div>
-    </div>
-</div>
-</body>
-</html>
-"""
-
-SUPPORT_HTML = """
-<!DOCTYPE html>
-<html lang="ko">
-<head>
-    <meta charset="UTF-8">
-    <title>후원 / 프리미엄 신청</title>
-    """ + BASE_STYLE + """
-</head>
-<body>
-<div class="container">
-    <div class="page-title">💖 후원 / 프리미엄 신청</div>
-
-    <div class="action-row">
-        <a href="/" class="action-btn btn-guide">🏠 홈으로</a>
-        <a href="/guide" class="action-btn btn-support">💿 명령어 / 프리미엄 소개</a>
-        <a href="/admin/premium" class="action-btn btn-admin">🔐 관리자 페이지</a>
-    </div>
-
-    <div class="card">
-        <h2 class="section-title">프리미엄 안내</h2>
-        <div class="feature-box">- 결과기록 / ELO 반영
-- 상세 전적
-- 게임별 시즌
-- 시즌 랭킹 / 시즌 경기 기록
-- 맵뽑기</div>
-    </div>
-
-    <div class="card">
-        <h2 class="section-title">후원 계좌</h2>
-        <div class="account-box">은행: {{ bank_name }}</div>
-        <div class="account-box">계좌번호: {{ account_number }}</div>
-        <div class="account-box">예금주: {{ account_holder }}</div>
-    </div>
-
-    <div class="card">
-        <h2 class="section-title">프리미엄 신청</h2>
-
-        <div class="form-group">
-            <label for="guildId">서버 ID</label>
-            <input type="number" id="guildId" placeholder="예: 123456789012345678">
-        </div>
-
-        <div class="form-group">
-            <label for="applicantName">입금자명</label>
-            <input type="text" id="applicantName" placeholder="예: 홍길동">
-        </div>
-
-        <div class="form-group">
-            <label for="discordTag">디스코드 아이디</label>
-            <input type="text" id="discordTag" placeholder="예: user1234">
-        </div>
-
-        <div class="form-group">
-            <label for="amount">입금 금액</label>
-            <input type="number" id="amount" placeholder="예: 5000">
-        </div>
-
-        <div class="form-group">
-            <label for="memo">메모</label>
-            <textarea id="memo" placeholder="추가로 전달할 내용이 있으면 적어주세요."></textarea>
-        </div>
-
-        <button class="submit-btn" onclick="submitPremiumRequest()">프리미엄 신청하기</button>
-        <div id="statusText" class="status"></div>
-    </div>
-</div>
-
-<script>
-async function submitPremiumRequest() {
-    const guildId = document.getElementById("guildId").value.trim();
-    const applicantName = document.getElementById("applicantName").value.trim();
-    const discordTag = document.getElementById("discordTag").value.trim();
-    const amount = document.getElementById("amount").value.trim();
-    const memo = document.getElementById("memo").value.trim();
-    const statusText = document.getElementById("statusText");
-
-    statusText.textContent = "";
-    statusText.className = "status";
-
-    if (!guildId) {
-        statusText.textContent = "서버 ID를 입력해주세요.";
-        statusText.classList.add("err");
-        return;
-    }
-
-    if (!applicantName) {
-        statusText.textContent = "입금자명을 입력해주세요.";
-        statusText.classList.add("err");
-        return;
-    }
-
-    if (!amount) {
-        statusText.textContent = "입금 금액을 입력해주세요.";
-        statusText.classList.add("err");
-        return;
-    }
-
-    try {
-        const response = await fetch("/api/premium/request", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                guild_id: guildId,
-                applicant_name: applicantName,
-                discord_tag: discordTag,
-                amount: amount,
-                memo: memo
-            })
-        });
-
-        const result = await response.json();
-
-        if (result.ok) {
-            statusText.textContent = "프리미엄 신청이 접수되었습니다. 신청번호: " + result.request_id;
-            statusText.classList.add("ok");
-
-            document.getElementById("guildId").value = "";
-            document.getElementById("applicantName").value = "";
-            document.getElementById("discordTag").value = "";
-            document.getElementById("amount").value = "";
-            document.getElementById("memo").value = "";
-        } else {
-            statusText.textContent = result.message || "신청 접수에 실패했습니다.";
-            statusText.classList.add("err");
-        }
-    } catch (error) {
-        statusText.textContent = "서버와 통신 중 오류가 발생했습니다.";
-        statusText.classList.add("err");
-    }
-}
-</script>
 </body>
 </html>
 """
@@ -1015,6 +1217,23 @@ def index():
     )
 
 
+@app.route("/guide")
+def guide_page():
+    return render_template_string(GUIDE_HTML)
+
+
+@app.route("/support")
+def support_page():
+    return render_template_string(
+        SUPPORT_HTML,
+        bank_name=BANK_NAME,
+        account_number=ACCOUNT_NUMBER,
+        account_holder=ACCOUNT_HOLDER,
+        premium_price=PREMIUM_PRICE,
+        premium_days=PREMIUM_DAYS,
+    )
+
+
 @app.route("/season")
 def season_page():
     cleanup_expired_premium_guilds()
@@ -1062,21 +1281,6 @@ def season_page():
         matches=matches,
         summary=summary,
         error_message=error_message
-    )
-
-
-@app.route("/guide")
-def guide_page():
-    return render_template_string(GUIDE_HTML)
-
-
-@app.route("/support")
-def support_page():
-    return render_template_string(
-        SUPPORT_HTML,
-        bank_name=BANK_NAME,
-        account_number=ACCOUNT_NUMBER,
-        account_holder=ACCOUNT_HOLDER,
     )
 
 
