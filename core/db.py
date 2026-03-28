@@ -53,36 +53,31 @@ def db_cursor(dict_cursor: bool = False):
 
 
 def init_support_inquiry_table():
-    query = """
-    CREATE TABLE IF NOT EXISTS support_inquiries (
-        id BIGSERIAL PRIMARY KEY,
-        name VARCHAR(100) NOT NULL,
-        email VARCHAR(255) NOT NULL,
-        category VARCHAR(100) NOT NULL DEFAULT '일반 문의',
-        subject VARCHAR(200) NOT NULL,
-        message TEXT NOT NULL,
-        discord_tag VARCHAR(100),
-        status VARCHAR(30) NOT NULL DEFAULT 'pending',
-        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-    """
-
     with db_cursor() as (_, cur):
-        cur.execute(query)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS support_inquiries (
+                id BIGSERIAL PRIMARY KEY,
+                name VARCHAR(100) NOT NULL,
+                email VARCHAR(255) NOT NULL,
+                category VARCHAR(100) NOT NULL DEFAULT '일반 문의',
+                subject VARCHAR(200) NOT NULL,
+                message TEXT NOT NULL,
+                discord_tag VARCHAR(100),
+                status VARCHAR(30) NOT NULL DEFAULT 'pending',
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
 
 
 def insert_support_inquiry(name, email, category, subject, message, discord_tag=None):
-    query = """
-    INSERT INTO support_inquiries (name, email, category, subject, message, discord_tag)
-    VALUES (%s, %s, %s, %s, %s, %s)
-    RETURNING id, name, email, category, subject, message, discord_tag, status, created_at;
-    """
+    init_support_inquiry_table()
 
     with db_cursor(dict_cursor=True) as (_, cur):
-        cur.execute(
-            query,
-            (name, email, category, subject, message, discord_tag),
-        )
+        cur.execute("""
+            INSERT INTO support_inquiries (name, email, category, subject, message, discord_tag)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            RETURNING id, name, email, category, subject, message, discord_tag, status, created_at;
+        """, (name, email, category, subject, message, discord_tag))
         row = cur.fetchone()
         return dict(row) if row else None
 
@@ -175,6 +170,20 @@ def init_premium_tables():
                 premium_until TIMESTAMP,
                 updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
+        """)
+
+
+def cleanup_expired_premium_guilds():
+    init_premium_tables()
+
+    with db_cursor() as (_, cur):
+        cur.execute("""
+            UPDATE premium_guilds
+            SET is_premium = FALSE,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE is_premium = TRUE
+              AND premium_until IS NOT NULL
+              AND premium_until < CURRENT_TIMESTAMP
         """)
 
 
@@ -274,21 +283,386 @@ def reject_premium_request(request_id: int, rejected_by: str = "rejected"):
         return dict(row) if row else None
 
 
-class DB:
-    DEFAULT_SETTINGS = {
-        "guild_id": 0,
-        "category_id": None,
-        "log_channel_id": None,
-        "announcement_channel_id": None,
-        "result_channel_id": None,
-        "voice_category_id": None,
-        "queue_channel_id": None,
-        "recruit_role_id": None,
-        "manager_role_id": None,
-        "premium_role_id": None,
-        "updated_at": None,
+def init_settings_tables():
+    with db_cursor() as (_, cur):
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS guild_settings (
+                guild_id BIGINT PRIMARY KEY,
+                category_id BIGINT,
+                recruit_role_id BIGINT,
+                log_channel_id BIGINT,
+                announcement_channel_id BIGINT,
+                result_channel_id BIGINT,
+                voice_category_id BIGINT,
+                queue_channel_id BIGINT,
+                manager_role_id BIGINT,
+                premium_role_id BIGINT,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
+
+def init_recruit_tables():
+    with db_cursor() as (_, cur):
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS lobbies (
+                channel_id BIGINT PRIMARY KEY,
+                guild_id BIGINT NOT NULL,
+                host_id BIGINT NOT NULL,
+                game VARCHAR(50) NOT NULL,
+                team_size INTEGER NOT NULL,
+                status VARCHAR(30) NOT NULL DEFAULT 'open',
+                message_id BIGINT,
+                waiting_voice_id BIGINT,
+                team_a_voice_id BIGINT,
+                team_b_voice_id BIGINT,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS lobby_players (
+                channel_id BIGINT NOT NULL,
+                user_id BIGINT NOT NULL,
+                display_name VARCHAR(100) NOT NULL,
+                mmr INTEGER NOT NULL,
+                position VARCHAR(50) NOT NULL,
+                joined_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (channel_id, user_id)
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS lobby_teams (
+                channel_id BIGINT NOT NULL,
+                team VARCHAR(1) NOT NULL,
+                user_id BIGINT NOT NULL,
+                PRIMARY KEY (channel_id, team, user_id)
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS players (
+                guild_id BIGINT NOT NULL,
+                user_id BIGINT NOT NULL,
+                display_name VARCHAR(100),
+                mmr INTEGER NOT NULL DEFAULT 1000,
+                win INTEGER NOT NULL DEFAULT 0,
+                lose INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (guild_id, user_id)
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS player_game_stats (
+                guild_id BIGINT NOT NULL,
+                user_id BIGINT NOT NULL,
+                game VARCHAR(50) NOT NULL,
+                display_name VARCHAR(100),
+                mmr INTEGER NOT NULL DEFAULT 1000,
+                win INTEGER NOT NULL DEFAULT 0,
+                lose INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (guild_id, user_id, game)
+            )
+        """)
+
+
+def ensure_guild_settings(guild_id: int):
+    init_settings_tables()
+
+    with db_cursor() as (_, cur):
+        cur.execute("""
+            INSERT INTO guild_settings (guild_id)
+            VALUES (%s)
+            ON CONFLICT (guild_id) DO NOTHING
+        """, (guild_id,))
+
+
+def get_settings(guild_id: int):
+    ensure_guild_settings(guild_id)
+
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("""
+            SELECT
+                guild_id,
+                category_id,
+                recruit_role_id,
+                log_channel_id,
+                announcement_channel_id,
+                result_channel_id,
+                voice_category_id,
+                queue_channel_id,
+                manager_role_id,
+                premium_role_id,
+                updated_at
+            FROM guild_settings
+            WHERE guild_id = %s
+        """, (guild_id,))
+        row = cur.fetchone()
+
+    if not row:
+        return {
+            "guild_id": guild_id,
+            "category_id": None,
+            "recruit_role_id": None,
+            "log_channel_id": None,
+            "announcement_channel_id": None,
+            "result_channel_id": None,
+            "voice_category_id": None,
+            "queue_channel_id": None,
+            "manager_role_id": None,
+            "premium_role_id": None,
+            "updated_at": None,
+        }
+
+    return dict(row)
+
+
+def update_settings(guild_id: int, **kwargs):
+    ensure_guild_settings(guild_id)
+
+    allowed_keys = {
+        "category_id",
+        "recruit_role_id",
+        "log_channel_id",
+        "announcement_channel_id",
+        "result_channel_id",
+        "voice_category_id",
+        "queue_channel_id",
+        "manager_role_id",
+        "premium_role_id",
     }
 
+    if not kwargs:
+        return get_settings(guild_id)
+
+    for key in kwargs.keys():
+        if key not in allowed_keys:
+            raise ValueError(f"허용되지 않은 설정 키입니다: {key}")
+
+    set_parts = [f"{key} = %s" for key in kwargs.keys()]
+    values = list(kwargs.values())
+    values.append(guild_id)
+
+    query = f"""
+        UPDATE guild_settings
+        SET {', '.join(set_parts)},
+            updated_at = CURRENT_TIMESTAMP
+        WHERE guild_id = %s
+    """
+
+    with db_cursor() as (_, cur):
+        cur.execute(query, tuple(values))
+
+    return get_settings(guild_id)
+
+
+def set_role(guild_id: int, role_id: int):
+    return update_settings(guild_id, recruit_role_id=role_id)
+
+
+def set_category(guild_id: int, category_id: int):
+    return update_settings(guild_id, category_id=category_id)
+
+
+def is_premium_guild(guild_id: int) -> bool:
+    cleanup_expired_premium_guilds()
+
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("""
+            SELECT is_premium, premium_until
+            FROM premium_guilds
+            WHERE guild_id = %s
+        """, (guild_id,))
+        row = cur.fetchone()
+
+    if not row:
+        return False
+
+    if not row["is_premium"]:
+        return False
+
+    premium_until = row["premium_until"]
+    if premium_until is not None and premium_until < datetime.utcnow():
+        return False
+
+    return True
+
+
+def get_lobby(channel_id: int):
+    init_recruit_tables()
+
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("""
+            SELECT
+                channel_id,
+                guild_id,
+                host_id,
+                game,
+                team_size,
+                status,
+                message_id,
+                waiting_voice_id,
+                team_a_voice_id,
+                team_b_voice_id,
+                created_at
+            FROM lobbies
+            WHERE channel_id = %s
+        """, (channel_id,))
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def create_lobby(channel_id: int, guild_id: int, host_id: int, game: str, team_size: int):
+    init_recruit_tables()
+
+    with db_cursor() as (_, cur):
+        cur.execute("""
+            INSERT INTO lobbies (
+                channel_id, guild_id, host_id, game, team_size, status
+            )
+            VALUES (%s, %s, %s, %s, %s, 'open')
+            ON CONFLICT (channel_id) DO UPDATE SET
+                guild_id = EXCLUDED.guild_id,
+                host_id = EXCLUDED.host_id,
+                game = EXCLUDED.game,
+                team_size = EXCLUDED.team_size,
+                status = 'open',
+                message_id = NULL,
+                waiting_voice_id = NULL,
+                team_a_voice_id = NULL,
+                team_b_voice_id = NULL
+        """, (channel_id, guild_id, host_id, game, team_size))
+
+
+def set_lobby_message(channel_id: int, message_id: int):
+    with db_cursor() as (_, cur):
+        cur.execute("""
+            UPDATE lobbies
+            SET message_id = %s
+            WHERE channel_id = %s
+        """, (message_id, channel_id))
+
+
+def set_lobby_status(channel_id: int, status: str):
+    with db_cursor() as (_, cur):
+        cur.execute("""
+            UPDATE lobbies
+            SET status = %s
+            WHERE channel_id = %s
+        """, (status, channel_id))
+
+
+def set_voice_channels(channel_id: int, waiting_voice_id: int, team_a_voice_id: int, team_b_voice_id: int):
+    with db_cursor() as (_, cur):
+        cur.execute("""
+            UPDATE lobbies
+            SET waiting_voice_id = %s,
+                team_a_voice_id = %s,
+                team_b_voice_id = %s
+            WHERE channel_id = %s
+        """, (waiting_voice_id, team_a_voice_id, team_b_voice_id, channel_id))
+
+
+def get_lobby_players(channel_id: int):
+    init_recruit_tables()
+
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("""
+            SELECT channel_id, user_id, display_name, mmr, position, joined_at
+            FROM lobby_players
+            WHERE channel_id = %s
+            ORDER BY joined_at ASC
+        """, (channel_id,))
+        return [dict(row) for row in cur.fetchall()]
+
+
+def add_lobby_player(channel_id: int, user_id: int, display_name: str, mmr: int, position: str):
+    with db_cursor() as (_, cur):
+        cur.execute("""
+            INSERT INTO lobby_players (channel_id, user_id, display_name, mmr, position)
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (channel_id, user_id)
+            DO UPDATE SET
+                display_name = EXCLUDED.display_name,
+                mmr = EXCLUDED.mmr,
+                position = EXCLUDED.position
+        """, (channel_id, user_id, display_name, mmr, position))
+
+
+def has_lobby_player(channel_id: int, user_id: int) -> bool:
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("""
+            SELECT 1
+            FROM lobby_players
+            WHERE channel_id = %s AND user_id = %s
+        """, (channel_id, user_id))
+        return cur.fetchone() is not None
+
+
+def remove_lobby_player(channel_id: int, user_id: int):
+    with db_cursor() as (_, cur):
+        cur.execute("""
+            DELETE FROM lobby_players
+            WHERE channel_id = %s AND user_id = %s
+        """, (channel_id, user_id))
+
+
+def clear_teams(channel_id: int):
+    with db_cursor() as (_, cur):
+        cur.execute("""
+            DELETE FROM lobby_teams
+            WHERE channel_id = %s
+        """, (channel_id,))
+
+
+def add_team_member(channel_id: int, team: str, user_id: int):
+    with db_cursor() as (_, cur):
+        cur.execute("""
+            INSERT INTO lobby_teams (channel_id, team, user_id)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (channel_id, team, user_id) DO NOTHING
+        """, (channel_id, team, user_id))
+
+
+def get_team_members(channel_id: int, team: str):
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("""
+            SELECT user_id
+            FROM lobby_teams
+            WHERE channel_id = %s AND team = %s
+            ORDER BY user_id ASC
+        """, (channel_id, team))
+        return [row["user_id"] for row in cur.fetchall()]
+
+
+def ensure_player(guild_id: int, user_id: int, mmr: int = 1000, display_name: Optional[str] = None):
+    init_recruit_tables()
+
+    with db_cursor() as (_, cur):
+        cur.execute("""
+            INSERT INTO players (guild_id, user_id, display_name, mmr, win, lose)
+            VALUES (%s, %s, %s, %s, 0, 0)
+            ON CONFLICT (guild_id, user_id)
+            DO UPDATE SET
+                display_name = COALESCE(EXCLUDED.display_name, players.display_name)
+        """, (guild_id, user_id, display_name, mmr))
+
+
+def ensure_player_game(guild_id: int, user_id: int, game: str, mmr: int = 1000, display_name: Optional[str] = None):
+    init_recruit_tables()
+
+    with db_cursor() as (_, cur):
+        cur.execute("""
+            INSERT INTO player_game_stats (guild_id, user_id, game, display_name, mmr, win, lose)
+            VALUES (%s, %s, %s, %s, %s, 0, 0)
+            ON CONFLICT (guild_id, user_id, game)
+            DO UPDATE SET
+                display_name = COALESCE(EXCLUDED.display_name, player_game_stats.display_name)
+        """, (guild_id, user_id, game, display_name, mmr))
+
+
+class DB:
     def __init__(self):
         self.init_tables()
 
@@ -308,173 +682,10 @@ class DB:
 
     @classmethod
     def init_tables(cls):
-        with db_cursor() as (_, cur):
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS guild_settings (
-                    guild_id BIGINT PRIMARY KEY,
-                    category_id BIGINT,
-                    log_channel_id BIGINT,
-                    announcement_channel_id BIGINT,
-                    result_channel_id BIGINT,
-                    voice_category_id BIGINT,
-                    queue_channel_id BIGINT,
-                    recruit_role_id BIGINT,
-                    manager_role_id BIGINT,
-                    premium_role_id BIGINT,
-                    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-                );
-            """)
+        init_settings_tables()
+        init_recruit_tables()
         init_premium_tables()
-
-    @classmethod
-    def ensure_guild_settings(cls, guild_id: int):
-        cls.init_tables()
-
-        with db_cursor(dict_cursor=True) as (_, cur):
-            cur.execute("""
-                INSERT INTO guild_settings (guild_id)
-                VALUES (%s)
-                ON CONFLICT (guild_id) DO NOTHING
-                RETURNING guild_id;
-            """, (guild_id,))
-            cur.fetchone()
-
-        return cls.get_settings(guild_id)
-
-    @classmethod
-    def get_settings(cls, guild_id: int) -> dict:
-        cls.init_tables()
-
-        with db_cursor(dict_cursor=True) as (_, cur):
-            cur.execute("""
-                SELECT
-                    guild_id,
-                    category_id,
-                    log_channel_id,
-                    announcement_channel_id,
-                    result_channel_id,
-                    voice_category_id,
-                    queue_channel_id,
-                    recruit_role_id,
-                    manager_role_id,
-                    premium_role_id,
-                    updated_at
-                FROM guild_settings
-                WHERE guild_id = %s
-            """, (guild_id,))
-            row = cur.fetchone()
-
-        if not row:
-            cls.ensure_guild_settings(guild_id)
-            with db_cursor(dict_cursor=True) as (_, cur):
-                cur.execute("""
-                    SELECT
-                        guild_id,
-                        category_id,
-                        log_channel_id,
-                        announcement_channel_id,
-                        result_channel_id,
-                        voice_category_id,
-                        queue_channel_id,
-                        recruit_role_id,
-                        manager_role_id,
-                        premium_role_id,
-                        updated_at
-                    FROM guild_settings
-                    WHERE guild_id = %s
-                """, (guild_id,))
-                row = cur.fetchone()
-
-        data = dict(cls.DEFAULT_SETTINGS)
-        data["guild_id"] = guild_id
-
-        if row:
-            data.update(dict(row))
-
-        return data
-
-    @classmethod
-    def set_setting(cls, guild_id: int, key: str, value):
-        allowed_keys = {
-            "category_id",
-            "log_channel_id",
-            "announcement_channel_id",
-            "result_channel_id",
-            "voice_category_id",
-            "queue_channel_id",
-            "recruit_role_id",
-            "manager_role_id",
-            "premium_role_id",
-        }
-
-        if key not in allowed_keys:
-            raise ValueError(f"허용되지 않은 설정 키입니다: {key}")
-
-        cls.ensure_guild_settings(guild_id)
-
-        with db_cursor() as (_, cur):
-            cur.execute(
-                f"""
-                UPDATE guild_settings
-                SET {key} = %s,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE guild_id = %s
-                """,
-                (value, guild_id)
-            )
-
-    @classmethod
-    def update_settings(cls, guild_id: int, **kwargs):
-        if not kwargs:
-            return cls.get_settings(guild_id)
-
-        for key, value in kwargs.items():
-            cls.set_setting(guild_id, key, value)
-
-        return cls.get_settings(guild_id)
-
-    @classmethod
-    def is_premium_guild(cls, guild_id: int) -> bool:
-        init_premium_tables()
-
-        with db_cursor(dict_cursor=True) as (_, cur):
-            cur.execute("""
-                SELECT is_premium, premium_until
-                FROM premium_guilds
-                WHERE guild_id = %s
-            """, (guild_id,))
-            row = cur.fetchone()
-
-        if not row:
-            return False
-
-        if not row["is_premium"]:
-            return False
-
-        premium_until = row["premium_until"]
-        if premium_until is not None and premium_until < datetime.utcnow():
-            return False
-
-        return True
-
-    @classmethod
-    def execute(cls, query: str, params: tuple = ()):
-        with db_cursor() as (_, cur):
-            cur.execute(query, params)
-
-    @classmethod
-    def fetchone(cls, query: str, params: tuple = ()):
-        with db_cursor(dict_cursor=True) as (_, cur):
-            cur.execute(query, params)
-            row = cur.fetchone()
-            return dict(row) if row else None
-
-    @classmethod
-    def fetchall(cls, query: str, params: tuple = ()):
-        with db_cursor(dict_cursor=True) as (_, cur):
-            cur.execute(query, params)
-            rows = cur.fetchall()
-            return [dict(row) for row in rows]
+        init_support_inquiry_table()
 
     @staticmethod
     def init_support_inquiry_table():
@@ -482,14 +693,7 @@ class DB:
 
     @staticmethod
     def insert_support_inquiry(name, email, category, subject, message, discord_tag=None):
-        return insert_support_inquiry(
-            name=name,
-            email=email,
-            category=category,
-            subject=subject,
-            message=message,
-            discord_tag=discord_tag,
-        )
+        return insert_support_inquiry(name, email, category, subject, message, discord_tag)
 
     @staticmethod
     def send_discord_support_webhook(inquiry: dict):
@@ -498,6 +702,10 @@ class DB:
     @staticmethod
     def init_premium_tables():
         return init_premium_tables()
+
+    @staticmethod
+    def cleanup_expired_premium_guilds():
+        return cleanup_expired_premium_guilds()
 
     @staticmethod
     def create_premium_request(guild_id: int, applicant_name: str, amount: int, discord_tag: Optional[str] = None, memo: Optional[str] = None):
@@ -514,3 +722,106 @@ class DB:
     @staticmethod
     def reject_premium_request(request_id: int, rejected_by: str = "rejected"):
         return reject_premium_request(request_id, rejected_by)
+
+    @staticmethod
+    def ensure_guild_settings(guild_id: int):
+        return ensure_guild_settings(guild_id)
+
+    @staticmethod
+    def get_settings(guild_id: int):
+        return get_settings(guild_id)
+
+    @staticmethod
+    def update_settings(guild_id: int, **kwargs):
+        return update_settings(guild_id, **kwargs)
+
+    @staticmethod
+    def set_role(guild_id: int, role_id: int):
+        return set_role(guild_id, role_id)
+
+    @staticmethod
+    def set_category(guild_id: int, category_id: int):
+        return set_category(guild_id, category_id)
+
+    @staticmethod
+    def is_premium_guild(guild_id: int) -> bool:
+        return is_premium_guild(guild_id)
+
+    @staticmethod
+    def init_recruit_tables():
+        return init_recruit_tables()
+
+    @staticmethod
+    def get_lobby(channel_id: int):
+        return get_lobby(channel_id)
+
+    @staticmethod
+    def create_lobby(channel_id: int, guild_id: int, host_id: int, game: str, team_size: int):
+        return create_lobby(channel_id, guild_id, host_id, game, team_size)
+
+    @staticmethod
+    def set_lobby_message(channel_id: int, message_id: int):
+        return set_lobby_message(channel_id, message_id)
+
+    @staticmethod
+    def set_lobby_status(channel_id: int, status: str):
+        return set_lobby_status(channel_id, status)
+
+    @staticmethod
+    def set_voice_channels(channel_id: int, waiting_voice_id: int, team_a_voice_id: int, team_b_voice_id: int):
+        return set_voice_channels(channel_id, waiting_voice_id, team_a_voice_id, team_b_voice_id)
+
+    @staticmethod
+    def get_lobby_players(channel_id: int):
+        return get_lobby_players(channel_id)
+
+    @staticmethod
+    def add_lobby_player(channel_id: int, user_id: int, display_name: str, mmr: int, position: str):
+        return add_lobby_player(channel_id, user_id, display_name, mmr, position)
+
+    @staticmethod
+    def has_lobby_player(channel_id: int, user_id: int) -> bool:
+        return has_lobby_player(channel_id, user_id)
+
+    @staticmethod
+    def remove_lobby_player(channel_id: int, user_id: int):
+        return remove_lobby_player(channel_id, user_id)
+
+    @staticmethod
+    def clear_teams(channel_id: int):
+        return clear_teams(channel_id)
+
+    @staticmethod
+    def add_team_member(channel_id: int, team: str, user_id: int):
+        return add_team_member(channel_id, team, user_id)
+
+    @staticmethod
+    def get_team_members(channel_id: int, team: str):
+        return get_team_members(channel_id, team)
+
+    @staticmethod
+    def ensure_player(guild_id: int, user_id: int, mmr: int = 1000, display_name: Optional[str] = None):
+        return ensure_player(guild_id, user_id, mmr, display_name)
+
+    @staticmethod
+    def ensure_player_game(guild_id: int, user_id: int, game: str, mmr: int = 1000, display_name: Optional[str] = None):
+        return ensure_player_game(guild_id, user_id, game, mmr, display_name)
+
+    @staticmethod
+    def execute(query: str, params: tuple = ()):
+        with db_cursor() as (_, cur):
+            cur.execute(query, params)
+
+    @staticmethod
+    def fetchone(query: str, params: tuple = ()):
+        with db_cursor(dict_cursor=True) as (_, cur):
+            cur.execute(query, params)
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+    @staticmethod
+    def fetchall(query: str, params: tuple = ()):
+        with db_cursor(dict_cursor=True) as (_, cur):
+            cur.execute(query, params)
+            rows = cur.fetchall()
+            return [dict(row) for row in rows]

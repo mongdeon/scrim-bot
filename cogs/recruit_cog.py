@@ -6,6 +6,7 @@ from core.db import DB
 from core.matchmaking import auto_balance_players
 
 db = DB()
+db.init_recruit_tables()
 
 GAME_OPTIONS = [
     app_commands.Choice(name="VALORANT", value="valorant"),
@@ -27,10 +28,10 @@ def member_has_access(member: discord.Member) -> bool:
         return True
 
     settings = db.get_settings(member.guild.id)
-    if not settings or not settings["role_id"]:
+    if not settings or not settings["recruit_role_id"]:
         return False
 
-    return any(role.id == settings["role_id"] for role in member.roles)
+    return any(role.id == settings["recruit_role_id"] for role in member.roles)
 
 
 def build_lobby_embed(lobby: dict, players: list[dict], team_a=None, team_b=None) -> discord.Embed:
@@ -51,11 +52,7 @@ def build_lobby_embed(lobby: dict, players: list[dict], team_a=None, team_b=None
     elif lobby["status"] == "finished":
         color = discord.Color.red()
 
-    embed = discord.Embed(
-        title=f"{game_name} 내전 모집",
-        color=color
-    )
-
+    embed = discord.Embed(title=f"{game_name} 내전 모집", color=color)
     embed.add_field(name="상태", value=lobby["status"], inline=True)
     embed.add_field(name="팀 인원", value=f"{lobby['team_size']} vs {lobby['team_size']}", inline=True)
     embed.add_field(name="현재 인원", value=f"{len(players)} / {need}", inline=True)
@@ -63,9 +60,7 @@ def build_lobby_embed(lobby: dict, players: list[dict], team_a=None, team_b=None
     if players:
         lines = []
         for idx, player in enumerate(players, start=1):
-            lines.append(
-                f"{idx}. {player['display_name']} | MMR {player['mmr']} | {player['position']}"
-            )
+            lines.append(f"{idx}. {player['display_name']} | MMR {player['mmr']} | {player['position']}")
         embed.add_field(name="참가자", value="\n".join(lines[:25]), inline=False)
     else:
         embed.add_field(name="참가자", value="아직 없음", inline=False)
@@ -120,8 +115,8 @@ class JoinModal(discord.ui.Modal, title="내전 참가"):
             await interaction.response.send_message("현재 모집 중이 아닙니다.", ephemeral=True)
             return
 
-        position = str(self.position).strip()
-        mmr_raw = str(self.mmr).strip()
+        position = self.position.value.strip()
+        mmr_raw = self.mmr.value.strip()
 
         if position not in POSITION_MAP.get(self.game_key, []):
             await interaction.response.send_message(
@@ -174,9 +169,7 @@ class JoinButton(discord.ui.Button):
             await interaction.response.send_message("현재 모집 중이 아닙니다.", ephemeral=True)
             return
 
-        await interaction.response.send_modal(
-            JoinModal(interaction.channel_id, lobby["game"], self.cog)
-        )
+        await interaction.response.send_modal(JoinModal(interaction.channel_id, lobby["game"], self.cog))
 
 
 class LeaveButton(discord.ui.Button):
@@ -256,18 +249,20 @@ class Recruit(commands.Cog):
 
     async def ensure_voice_channels(self, guild: discord.Guild, lobby: dict):
         settings = db.get_settings(guild.id)
-        if not settings or not settings["category_id"] or not settings["role_id"]:
+        if not settings or not settings["category_id"] or not settings["recruit_role_id"]:
             return None, None, None
 
         category = guild.get_channel(settings["category_id"])
-        role = guild.get_role(settings["role_id"])
-        if not category or not role:
+        role = guild.get_role(settings["recruit_role_id"])
+        me = guild.me or guild.get_member(self.bot.user.id)
+
+        if not category or not role or not me:
             return None, None, None
 
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(view_channel=False, connect=False),
             role: discord.PermissionOverwrite(view_channel=True, connect=True, speak=True),
-            guild.me: discord.PermissionOverwrite(view_channel=True, connect=True, speak=True, move_members=True, manage_channels=True),
+            me: discord.PermissionOverwrite(view_channel=True, connect=True, speak=True, move_members=True, manage_channels=True),
         }
 
         host_member = guild.get_member(lobby["host_id"])
@@ -329,7 +324,6 @@ class Recruit(commands.Cog):
         for p in team_b:
             db.add_team_member(channel_id, "B", p["user_id"])
 
-        # 자동 음성 이동 + started 처리
         waiting, team_a_ch, team_b_ch = await self.ensure_voice_channels(channel.guild, {
             **lobby,
             "channel_id": channel_id
@@ -351,11 +345,11 @@ class Recruit(commands.Cog):
 
         await channel.send(
             f"정원이 차서 자동 팀 분배 + 자동 음성 이동이 완료되었습니다. ({mode_text})\n\n"
-            f"**A팀 총합:** {a_sum}\n" +
-            "\n".join(f"{p['display_name']} ({p['mmr']}, {p['position']})" for p in team_a) +
-            f"\n\n**B팀 총합:** {b_sum}\n" +
-            "\n".join(f"{p['display_name']} ({p['mmr']}, {p['position']})" for p in team_b) +
-            f"\n\n차이: {abs(a_sum - b_sum)}"
+            f"**A팀 총합:** {a_sum}\n"
+            + "\n".join(f"{p['display_name']} ({p['mmr']}, {p['position']})" for p in team_a)
+            + f"\n\n**B팀 총합:** {b_sum}\n"
+            + "\n".join(f"{p['display_name']} ({p['mmr']}, {p['position']})" for p in team_b)
+            + f"\n\n차이: {abs(a_sum - b_sum)}"
         )
 
     @app_commands.command(name="내전생성", description="내전 모집 메시지를 생성합니다.")
@@ -368,7 +362,7 @@ class Recruit(commands.Cog):
                 return
 
             settings = db.get_settings(interaction.guild_id)
-            if not settings or not settings["role_id"] or not settings["category_id"]:
+            if not settings or not settings["recruit_role_id"] or not settings["category_id"]:
                 await interaction.response.send_message("먼저 /설정역할 과 /설정카테고리 를 해주세요.", ephemeral=True)
                 return
 
