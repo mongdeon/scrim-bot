@@ -1,22 +1,20 @@
 import os
+from datetime import datetime, timedelta
+
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from flask import Flask, render_template_string, request, jsonify, abort
 
-from core.db import (
-    init_support_inquiry_table,
-    insert_support_inquiry,
-    send_discord_support_webhook,
-)
-
 app = Flask(__name__)
-init_support_inquiry_table()
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
+ADMIN_SECRET = os.environ.get("PREMIUM_ADMIN_SECRET", "").strip()
 
 BANK_NAME = "토스뱅크"
 ACCOUNT_NUMBER = "1000-0103-2111"
 ACCOUNT_HOLDER = "김태용"
+PREMIUM_PRICE = 5000
+PREMIUM_DAYS = 30
 
 
 INDEX_HTML = """
@@ -116,129 +114,8 @@ INDEX_HTML = """
         .donate-btn {
             background: #ec4899;
         }
-        .support-contact-button {
-            background: linear-gradient(135deg, #5865F2, #7289DA);
-            color: #ffffff;
-            border: none;
-            border-radius: 12px;
-            padding: 12px 18px;
-            font-size: 15px;
-            font-weight: 700;
-            cursor: pointer;
-            transition: all 0.2s ease;
-            box-shadow: 0 8px 20px rgba(88, 101, 242, 0.25);
-            margin-left: 8px;
-        }
-        .support-contact-button:hover {
-            transform: translateY(-1px);
-            opacity: 0.95;
-        }
-        .support-modal-overlay {
-            display: none;
-            position: fixed;
-            inset: 0;
-            background: rgba(0, 0, 0, 0.65);
-            z-index: 9999;
-            align-items: center;
-            justify-content: center;
-            padding: 20px;
-        }
-        .support-modal {
-            width: 100%;
-            max-width: 560px;
-            background: #111827;
-            color: #ffffff;
-            border-radius: 18px;
-            padding: 24px;
-            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.35);
-            border: 1px solid rgba(255, 255, 255, 0.08);
-        }
-        .support-modal h2 {
-            margin: 0 0 8px 0;
-            font-size: 24px;
-            font-weight: 800;
-        }
-        .support-modal p {
-            margin: 0 0 20px 0;
-            color: #cbd5e1;
-            font-size: 14px;
-        }
-        .support-form-group {
-            margin-bottom: 14px;
-        }
-        .support-form-group label {
-            display: block;
-            margin-bottom: 8px;
-            font-size: 14px;
-            font-weight: 600;
-            color: #e5e7eb;
-        }
-        .support-form-group input,
-        .support-form-group select,
-        .support-form-group textarea {
-            width: 100%;
-            box-sizing: border-box;
-            border: 1px solid #334155;
-            background: #0f172a;
-            color: #ffffff;
-            border-radius: 12px;
-            padding: 12px 14px;
-            font-size: 14px;
-            outline: none;
-        }
-        .support-form-group textarea {
-            min-height: 140px;
-            resize: vertical;
-        }
-        .support-form-row {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 12px;
-        }
-        .support-modal-actions {
-            display: flex;
-            justify-content: flex-end;
-            gap: 10px;
-            margin-top: 18px;
-        }
-        .support-btn-secondary {
-            background: #1e293b;
-            color: #ffffff;
-            border: none;
-            border-radius: 12px;
-            padding: 12px 16px;
-            font-size: 14px;
-            font-weight: 700;
-            cursor: pointer;
-        }
-        .support-btn-primary {
-            background: linear-gradient(135deg, #5865F2, #7289DA);
-            color: #ffffff;
-            border: none;
-            border-radius: 12px;
-            padding: 12px 16px;
-            font-size: 14px;
-            font-weight: 700;
-            cursor: pointer;
-        }
-        .support-status-text {
-            margin-top: 12px;
-            font-size: 14px;
-            font-weight: 600;
-        }
-        .support-status-success {
-            color: #86efac;
-        }
-        .support-status-error {
-            color: #fca5a5;
-        }
         @media (max-width: 768px) {
             .top3 {
-                grid-template-columns: 1fr;
-            }
-        }
-        @media (max-width: 640px) {
-            .support-form-row {
                 grid-template-columns: 1fr;
             }
         }
@@ -249,9 +126,8 @@ INDEX_HTML = """
         <h1>🎮 내전봇 전적 사이트</h1>
 
         <div style="margin-bottom: 20px;">
-            <a href="/support" class="action-btn support-btn">🛟 사용법 / 지원</a>
-            <a href="/support" class="action-btn donate-btn">💖 후원 안내</a>
-            <button class="support-contact-button" onclick="openSupportModal()">문의하기</button>
+            <a href="/support" class="action-btn support-btn">🛟 사용법 / 프리미엄</a>
+            <a href="/support" class="action-btn donate-btn">💖 후원 / 프리미엄 신청</a>
         </div>
 
         <div class="card">
@@ -333,154 +209,6 @@ INDEX_HTML = """
             {% endfor %}
         </div>
     </div>
-
-    <div class="support-modal-overlay" id="supportModalOverlay">
-        <div class="support-modal">
-            <h2>문의하기</h2>
-            <p>버그 제보, 결제 문제, 프리미엄 문의를 남겨주세요.</p>
-
-            <div class="support-form-row">
-                <div class="support-form-group">
-                    <label for="supportName">이름</label>
-                    <input type="text" id="supportName" placeholder="이름 입력">
-                </div>
-
-                <div class="support-form-group">
-                    <label for="supportEmail">이메일</label>
-                    <input type="email" id="supportEmail" placeholder="이메일 입력">
-                </div>
-            </div>
-
-            <div class="support-form-row">
-                <div class="support-form-group">
-                    <label for="supportCategory">문의 유형</label>
-                    <select id="supportCategory">
-                        <option value="일반 문의">일반 문의</option>
-                        <option value="버그 제보">버그 제보</option>
-                        <option value="결제 문의">결제 문의</option>
-                        <option value="프리미엄 문의">프리미엄 문의</option>
-                        <option value="기능 제안">기능 제안</option>
-                    </select>
-                </div>
-
-                <div class="support-form-group">
-                    <label for="supportDiscordTag">디스코드 아이디</label>
-                    <input type="text" id="supportDiscordTag" placeholder="예: user1234">
-                </div>
-            </div>
-
-            <div class="support-form-group">
-                <label for="supportSubject">문의 제목</label>
-                <input type="text" id="supportSubject" placeholder="문의 제목 입력">
-            </div>
-
-            <div class="support-form-group">
-                <label for="supportMessage">문의 내용</label>
-                <textarea id="supportMessage" placeholder="문의 내용을 자세히 적어주세요."></textarea>
-            </div>
-
-            <div class="support-modal-actions">
-                <button class="support-btn-secondary" onclick="closeSupportModal()">닫기</button>
-                <button class="support-btn-primary" onclick="submitSupportInquiry()">보내기</button>
-            </div>
-
-            <div id="supportStatusText" class="support-status-text"></div>
-        </div>
-    </div>
-
-    <script>
-        function openSupportModal() {
-            document.getElementById("supportModalOverlay").style.display = "flex";
-        }
-
-        function closeSupportModal() {
-            document.getElementById("supportModalOverlay").style.display = "none";
-            const statusText = document.getElementById("supportStatusText");
-            statusText.textContent = "";
-            statusText.className = "support-status-text";
-        }
-
-        async function submitSupportInquiry() {
-            const name = document.getElementById("supportName").value.trim();
-            const email = document.getElementById("supportEmail").value.trim();
-            const category = document.getElementById("supportCategory").value.trim();
-            const discordTag = document.getElementById("supportDiscordTag").value.trim();
-            const subject = document.getElementById("supportSubject").value.trim();
-            const message = document.getElementById("supportMessage").value.trim();
-            const statusText = document.getElementById("supportStatusText");
-
-            statusText.textContent = "";
-            statusText.className = "support-status-text";
-
-            if (!name) {
-                statusText.textContent = "이름을 입력해주세요.";
-                statusText.classList.add("support-status-error");
-                return;
-            }
-
-            if (!email) {
-                statusText.textContent = "이메일을 입력해주세요.";
-                statusText.classList.add("support-status-error");
-                return;
-            }
-
-            if (!subject) {
-                statusText.textContent = "문의 제목을 입력해주세요.";
-                statusText.classList.add("support-status-error");
-                return;
-            }
-
-            if (!message) {
-                statusText.textContent = "문의 내용을 입력해주세요.";
-                statusText.classList.add("support-status-error");
-                return;
-            }
-
-            try {
-                const response = await fetch("/api/support/inquiry", {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json"
-                    },
-                    body: JSON.stringify({
-                        name: name,
-                        email: email,
-                        category: category,
-                        discord_tag: discordTag,
-                        subject: subject,
-                        message: message
-                    })
-                });
-
-                const result = await response.json();
-
-                if (result.ok) {
-                    statusText.textContent = "문의가 정상적으로 접수되었습니다. 문의번호: " + result.inquiry_id;
-                    statusText.classList.add("support-status-success");
-
-                    document.getElementById("supportName").value = "";
-                    document.getElementById("supportEmail").value = "";
-                    document.getElementById("supportCategory").value = "일반 문의";
-                    document.getElementById("supportDiscordTag").value = "";
-                    document.getElementById("supportSubject").value = "";
-                    document.getElementById("supportMessage").value = "";
-                } else {
-                    statusText.textContent = result.message || "문의 접수에 실패했습니다.";
-                    statusText.classList.add("support-status-error");
-                }
-            } catch (error) {
-                statusText.textContent = "서버와 통신 중 오류가 발생했습니다.";
-                statusText.classList.add("support-status-error");
-            }
-        }
-
-        document.addEventListener("click", function (e) {
-            const overlay = document.getElementById("supportModalOverlay");
-            if (e.target === overlay) {
-                closeSupportModal();
-            }
-        });
-    </script>
 </body>
 </html>
 """
@@ -609,7 +337,8 @@ LOCKED_HTML = """
     <div class="card">
         <div class="badge">PREMIUM ONLY</div>
         <h1>상세 전적 페이지는 프리미엄 서버 전용입니다.</h1>
-        <p>이 서버는 현재 무료 서버라서 유저 상세 전적을 볼 수 없습니다.</p>
+        <p>후원 후 프리미엄 신청을 완료하고 승인되면 사용할 수 있습니다.</p>
+        <p><a href="/support">→ 프리미엄 신청하러 가기</a></p>
         <p><a href="/">← 홈으로 돌아가기</a></p>
     </div>
 </body>
@@ -621,7 +350,7 @@ SUPPORT_HTML = """
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>지원 / 사용법</title>
+    <title>지원 / 프리미엄</title>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -654,66 +383,421 @@ SUPPORT_HTML = """
             margin: 10px 0;
             word-break: break-all;
         }
+        .form-group {
+            margin-bottom: 14px;
+        }
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+        }
+        .form-group input, .form-group textarea {
+            width: 100%;
+            box-sizing: border-box;
+            padding: 12px;
+            border-radius: 10px;
+            border: 1px solid #475569;
+            background: #0f172a;
+            color: #e2e8f0;
+        }
+        .btn {
+            background: #ec4899;
+            color: white;
+            border: none;
+            padding: 12px 16px;
+            border-radius: 10px;
+            cursor: pointer;
+        }
+        .status {
+            margin-top: 14px;
+            font-weight: bold;
+        }
+        .ok {
+            color: #86efac;
+        }
+        .err {
+            color: #fca5a5;
+        }
     </style>
 </head>
 <body>
 <div class="container">
 
-<h1>🛟 내전봇 지원 / 사용법</h1>
+<h1>💖 후원 / 프리미엄 신청</h1>
 
 <div class="card">
-<h2>🚀 빠른 시작</h2>
-<p>
-1. /설정역할<br>
-2. /설정카테고리<br>
-3. /내전생성<br>
-4. /밸런스팀<br>
-5. /사이트
-</p>
+    <h2>📖 프리미엄 안내</h2>
+    <p>프리미엄 가격: {{ premium_price }}원 / {{ premium_days }}일</p>
+    <p>후원 입금 후 아래 신청 폼을 작성하면 관리자가 확인 후 프리미엄을 활성화합니다.</p>
 </div>
 
 <div class="card">
-<h2>📖 주요 기능</h2>
-<p>
-- 자동 내전 모집<br>
-- 자동 팀 분배 (MMR)<br>
-- ELO 랭킹 시스템<br>
-- 전적 웹사이트<br>
-- 음성 채널 자동 이동
-</p>
+    <h2>💳 후원 계좌</h2>
+    <p><strong>은행</strong></p>
+    <div class="copy-box">{{ bank_name }}</div>
+
+    <p><strong>계좌번호</strong></p>
+    <div class="copy-box">{{ account_number }}</div>
+
+    <p><strong>예금주</strong></p>
+    <div class="copy-box">{{ account_holder }}</div>
 </div>
 
 <div class="card">
-<h2>❓ 자주 묻는 질문</h2>
-<p>
-Q. 명령어가 안 떠요?<br>
-→ 봇 초대 후 1~2분 정도 기다렸다가 다시 확인해주세요.<br><br>
+    <h2>📝 프리미엄 신청</h2>
 
-Q. 팀이 안 나뉘어요.<br>
-→ 인원이 충분한지 먼저 확인해주세요.<br><br>
+    <div class="form-group">
+        <label for="guildId">서버 ID (Guild ID)</label>
+        <input type="number" id="guildId" placeholder="예: 123456789012345678">
+    </div>
 
-Q. 상세 전적이 안 보여요.<br>
-→ 프리미엄 서버만 상세 전적 페이지를 볼 수 있습니다.
-</p>
-</div>
+    <div class="form-group">
+        <label for="applicantName">입금자명</label>
+        <input type="text" id="applicantName" placeholder="예: 홍길동">
+    </div>
 
-<div class="card">
-<h2>💖 후원 안내</h2>
-<p><strong>은행</strong></p>
-<div class="copy-box">{{ bank_name }}</div>
+    <div class="form-group">
+        <label for="discordTag">디스코드 아이디</label>
+        <input type="text" id="discordTag" placeholder="예: user1234">
+    </div>
 
-<p><strong>계좌번호</strong></p>
-<div class="copy-box">{{ account_number }}</div>
+    <div class="form-group">
+        <label for="amount">입금 금액</label>
+        <input type="number" id="amount" placeholder="예: 5000">
+    </div>
 
-<p><strong>예금주</strong></p>
-<div class="copy-box">{{ account_holder }}</div>
+    <div class="form-group">
+        <label for="memo">메모</label>
+        <textarea id="memo" placeholder="필요하면 추가 내용을 적어주세요."></textarea>
+    </div>
 
-<p>후원금은 서버비와 기능 업데이트에 사용됩니다.</p>
+    <button class="btn" onclick="submitPremiumRequest()">프리미엄 신청하기</button>
+    <div id="statusText" class="status"></div>
 </div>
 
 <p><a href="/">← 홈으로 돌아가기</a></p>
 
 </div>
+
+<script>
+async function submitPremiumRequest() {
+    const guildId = document.getElementById("guildId").value.trim();
+    const applicantName = document.getElementById("applicantName").value.trim();
+    const discordTag = document.getElementById("discordTag").value.trim();
+    const amount = document.getElementById("amount").value.trim();
+    const memo = document.getElementById("memo").value.trim();
+    const statusText = document.getElementById("statusText");
+
+    statusText.textContent = "";
+    statusText.className = "status";
+
+    if (!guildId) {
+        statusText.textContent = "서버 ID를 입력해주세요.";
+        statusText.classList.add("err");
+        return;
+    }
+
+    if (!applicantName) {
+        statusText.textContent = "입금자명을 입력해주세요.";
+        statusText.classList.add("err");
+        return;
+    }
+
+    if (!amount) {
+        statusText.textContent = "입금 금액을 입력해주세요.";
+        statusText.classList.add("err");
+        return;
+    }
+
+    try {
+        const response = await fetch("/api/premium/request", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                guild_id: guildId,
+                applicant_name: applicantName,
+                discord_tag: discordTag,
+                amount: amount,
+                memo: memo
+            })
+        });
+
+        const result = await response.json();
+
+        if (result.ok) {
+            statusText.textContent = "프리미엄 신청이 접수되었습니다. 신청번호: " + result.request_id;
+            statusText.classList.add("ok");
+
+            document.getElementById("guildId").value = "";
+            document.getElementById("applicantName").value = "";
+            document.getElementById("discordTag").value = "";
+            document.getElementById("amount").value = "";
+            document.getElementById("memo").value = "";
+        } else {
+            statusText.textContent = result.message || "신청 접수에 실패했습니다.";
+            statusText.classList.add("err");
+        }
+    } catch (error) {
+        statusText.textContent = "서버와 통신 중 오류가 발생했습니다.";
+        statusText.classList.add("err");
+    }
+}
+</script>
+
+</body>
+</html>
+"""
+
+ADMIN_PREMIUM_HTML = """
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>프리미엄 관리자</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #0f172a;
+            color: #e2e8f0;
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: auto;
+        }
+        .card {
+            background: #1e293b;
+            padding: 20px;
+            border-radius: 16px;
+            margin-bottom: 20px;
+        }
+        h1, h2 {
+            margin-bottom: 12px;
+        }
+        input, button, select {
+            padding: 10px 12px;
+            border-radius: 10px;
+            border: 1px solid #475569;
+            background: #0f172a;
+            color: #e2e8f0;
+        }
+        button {
+            cursor: pointer;
+            border: none;
+        }
+        .btn-login {
+            background: #2563eb;
+            color: white;
+        }
+        .btn-approve {
+            background: #16a34a;
+            color: white;
+            margin-right: 8px;
+        }
+        .btn-reject {
+            background: #dc2626;
+            color: white;
+        }
+        .btn-refresh {
+            background: #7c3aed;
+            color: white;
+        }
+        .request-card {
+            background: #334155;
+            padding: 16px;
+            border-radius: 14px;
+            margin-bottom: 14px;
+        }
+        .row {
+            margin-bottom: 8px;
+        }
+        .status {
+            display: inline-block;
+            padding: 5px 10px;
+            border-radius: 999px;
+            background: #475569;
+            font-size: 12px;
+        }
+        .ok {
+            color: #86efac;
+        }
+        .err {
+            color: #fca5a5;
+        }
+        .muted {
+            color: #94a3b8;
+        }
+        .hidden {
+            display: none;
+        }
+        .days-input {
+            width: 100px;
+            margin-right: 8px;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>🔐 프리미엄 관리자 페이지</h1>
+
+    <div class="card" id="loginCard">
+        <h2>관리자 로그인</h2>
+        <p class="muted">PREMIUM_ADMIN_SECRET 값을 입력하면 신청 목록을 불러올 수 있습니다.</p>
+        <input type="password" id="adminSecret" placeholder="관리자 시크릿 입력" style="width: 320px;">
+        <button class="btn-login" onclick="loadRequests()">불러오기</button>
+        <div id="loginStatus" style="margin-top: 12px;"></div>
+    </div>
+
+    <div class="card hidden" id="requestListCard">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap;">
+            <h2>프리미엄 신청 목록</h2>
+            <button class="btn-refresh" onclick="loadRequests()">새로고침</button>
+        </div>
+        <div id="requestList"></div>
+    </div>
+
+    <p><a href="/" style="color:#60a5fa;">← 홈으로 돌아가기</a></p>
+</div>
+
+<script>
+async function loadRequests() {
+    const secret = document.getElementById("adminSecret").value.trim();
+    const loginStatus = document.getElementById("loginStatus");
+    const requestList = document.getElementById("requestList");
+    const requestListCard = document.getElementById("requestListCard");
+
+    loginStatus.textContent = "";
+    requestList.innerHTML = "";
+
+    if (!secret) {
+        loginStatus.textContent = "관리자 시크릿을 입력해주세요.";
+        loginStatus.className = "err";
+        return;
+    }
+
+    try {
+        const response = await fetch("/api/admin/premium/requests", {
+            method: "GET",
+            headers: {
+                "X-Admin-Secret": secret
+            }
+        });
+
+        const result = await response.json();
+
+        if (!result.ok) {
+            loginStatus.textContent = result.message || "불러오기에 실패했습니다.";
+            loginStatus.className = "err";
+            return;
+        }
+
+        loginStatus.textContent = "신청 목록을 불러왔습니다.";
+        loginStatus.className = "ok";
+        requestListCard.classList.remove("hidden");
+
+        if (!result.requests || result.requests.length === 0) {
+            requestList.innerHTML = "<p class='muted'>신청 내역이 없습니다.</p>";
+            return;
+        }
+
+        requestList.innerHTML = result.requests.map((item) => `
+            <div class="request-card">
+                <div class="row"><strong>신청번호:</strong> #${item.id}</div>
+                <div class="row"><strong>서버 ID:</strong> ${item.guild_id}</div>
+                <div class="row"><strong>입금자명:</strong> ${item.applicant_name}</div>
+                <div class="row"><strong>디스코드:</strong> ${item.discord_tag || "-"}</div>
+                <div class="row"><strong>입금 금액:</strong> ${item.amount}원</div>
+                <div class="row"><strong>메모:</strong> ${item.memo || "-"}</div>
+                <div class="row"><strong>상태:</strong> <span class="status">${item.status}</span></div>
+                <div class="row"><strong>신청일:</strong> ${item.created_at}</div>
+                <div class="row" style="margin-top:12px;">
+                    <input class="days-input" type="number" id="days-${item.id}" value="30" min="1">
+                    <button class="btn-approve" onclick="approveRequest(${item.id})">승인</button>
+                    <button class="btn-reject" onclick="rejectRequest(${item.id})">거절</button>
+                </div>
+                <div id="status-${item.id}" style="margin-top:10px;"></div>
+            </div>
+        `).join("");
+    } catch (error) {
+        loginStatus.textContent = "서버와 통신 중 오류가 발생했습니다.";
+        loginStatus.className = "err";
+    }
+}
+
+async function approveRequest(requestId) {
+    const secret = document.getElementById("adminSecret").value.trim();
+    const days = document.getElementById(`days-${requestId}`).value.trim();
+    const statusBox = document.getElementById(`status-${requestId}`);
+
+    statusBox.textContent = "";
+
+    try {
+        const response = await fetch("/api/admin/premium/approve", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "X-Admin-Secret": secret
+            },
+            body: JSON.stringify({
+                request_id: requestId,
+                days: days,
+                approved_by: "admin_page"
+            })
+        });
+
+        const result = await response.json();
+
+        if (result.ok) {
+            statusBox.textContent = "승인 완료 / premium_until: " + result.premium_until;
+            statusBox.className = "ok";
+            loadRequests();
+        } else {
+            statusBox.textContent = result.message || "승인 실패";
+            statusBox.className = "err";
+        }
+    } catch (error) {
+        statusBox.textContent = "서버와 통신 중 오류가 발생했습니다.";
+        statusBox.className = "err";
+    }
+}
+
+async function rejectRequest(requestId) {
+    const secret = document.getElementById("adminSecret").value.trim();
+    const statusBox = document.getElementById(`status-${requestId}`);
+
+    statusBox.textContent = "";
+
+    try {
+        const response = await fetch("/api/admin/premium/reject", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "X-Admin-Secret": secret
+            },
+            body: JSON.stringify({
+                request_id: requestId
+            })
+        });
+
+        const result = await response.json();
+
+        if (result.ok) {
+            statusBox.textContent = "거절 완료";
+            statusBox.className = "ok";
+            loadRequests();
+        } else {
+            statusBox.textContent = result.message || "거절 실패";
+            statusBox.className = "err";
+        }
+    } catch (error) {
+        statusBox.textContent = "서버와 통신 중 오류가 발생했습니다.";
+        statusBox.className = "err";
+    }
+}
+</script>
 </body>
 </html>
 """
@@ -723,6 +807,58 @@ def get_conn():
     if not DATABASE_URL:
         raise RuntimeError("DATABASE_URL 환경변수가 설정되지 않았습니다.")
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+
+
+def init_tables():
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS premium_requests (
+                    id BIGSERIAL PRIMARY KEY,
+                    guild_id BIGINT NOT NULL,
+                    applicant_name VARCHAR(100) NOT NULL,
+                    discord_tag VARCHAR(100),
+                    amount INTEGER NOT NULL,
+                    memo TEXT,
+                    status VARCHAR(30) NOT NULL DEFAULT 'pending',
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    approved_at TIMESTAMP,
+                    approved_by VARCHAR(100)
+                );
+            """)
+
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS premium_guilds (
+                    guild_id BIGINT PRIMARY KEY,
+                    is_premium BOOLEAN NOT NULL DEFAULT FALSE,
+                    premium_until TIMESTAMP,
+                    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+        conn.commit()
+
+
+init_tables()
+
+
+def upsert_premium_guild(guild_id: int, days: int):
+    premium_until = datetime.utcnow() + timedelta(days=days)
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO premium_guilds (guild_id, is_premium, premium_until, updated_at)
+                VALUES (%s, TRUE, %s, CURRENT_TIMESTAMP)
+                ON CONFLICT (guild_id)
+                DO UPDATE SET
+                    is_premium = TRUE,
+                    premium_until = EXCLUDED.premium_until,
+                    updated_at = CURRENT_TIMESTAMP
+                RETURNING guild_id, is_premium, premium_until;
+            """, (guild_id, premium_until))
+            row = cur.fetchone()
+        conn.commit()
+        return row
 
 
 @app.route("/")
@@ -855,43 +991,44 @@ def index():
 def player_page(guild_id, user_id):
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT is_premium
+            cur.execute("""
+                SELECT is_premium, premium_until
                 FROM premium_guilds
                 WHERE guild_id = %s
-                """,
-                (guild_id,)
-            )
+            """, (guild_id,))
             premium_row = cur.fetchone()
-            is_premium = bool(premium_row["is_premium"]) if premium_row else False
+
+            is_premium = False
+            if premium_row:
+                is_premium = bool(premium_row["is_premium"])
+                premium_until = premium_row["premium_until"]
+                if premium_until is not None and premium_until < datetime.utcnow():
+                    is_premium = False
 
             if not is_premium:
                 return render_template_string(LOCKED_HTML)
 
-            cur.execute(
-                """
+            cur.execute("""
                 SELECT guild_id, user_id, display_name, mmr, win, lose
                 FROM players
                 WHERE guild_id = %s AND user_id = %s
-                """,
-                (guild_id, user_id)
-            )
+            """, (guild_id, user_id))
             player = cur.fetchone()
 
-            cur.execute(
-                """
-                SELECT game, mmr, win, lose,
-                CASE
-                    WHEN (win + lose) = 0 THEN 0
-                    ELSE ROUND((CAST(win AS NUMERIC) / (win + lose)) * 100, 1)
-                END AS winrate
+            cur.execute("""
+                SELECT
+                    game,
+                    mmr,
+                    win,
+                    lose,
+                    CASE
+                        WHEN (win + lose) = 0 THEN 0
+                        ELSE ROUND((CAST(win AS NUMERIC) / (win + lose)) * 100, 1)
+                    END AS winrate
                 FROM player_game_stats
                 WHERE guild_id = %s AND user_id = %s
                 ORDER BY game ASC
-                """,
-                (guild_id, user_id)
-            )
+            """, (guild_id, user_id))
             game_rows = cur.fetchall()
 
     if not player:
@@ -915,8 +1052,15 @@ def support_page():
         SUPPORT_HTML,
         bank_name=BANK_NAME,
         account_number=ACCOUNT_NUMBER,
-        account_holder=ACCOUNT_HOLDER
+        account_holder=ACCOUNT_HOLDER,
+        premium_price=PREMIUM_PRICE,
+        premium_days=PREMIUM_DAYS,
     )
+
+
+@app.route("/admin/premium")
+def admin_premium_page():
+    return render_template_string(ADMIN_PREMIUM_HTML)
 
 
 @app.route("/health")
@@ -924,59 +1068,221 @@ def health():
     return {"ok": True}
 
 
-@app.route("/api/support/inquiry", methods=["POST"])
-def api_support_inquiry():
+@app.route("/api/premium/request", methods=["POST"])
+def api_premium_request():
     try:
         data = request.get_json()
 
-        name = (data.get("name") or "").strip()
-        email = (data.get("email") or "").strip()
-        category = (data.get("category") or "일반 문의").strip()
-        subject = (data.get("subject") or "").strip()
-        message = (data.get("message") or "").strip()
+        guild_id = str(data.get("guild_id") or "").strip()
+        applicant_name = (data.get("applicant_name") or "").strip()
         discord_tag = (data.get("discord_tag") or "").strip()
+        amount = str(data.get("amount") or "").strip()
+        memo = (data.get("memo") or "").strip()
 
-        if not name:
-            return jsonify({"ok": False, "message": "이름을 입력해주세요."}), 400
+        if not guild_id:
+            return jsonify({"ok": False, "message": "서버 ID를 입력해주세요."}), 400
 
-        if not email:
-            return jsonify({"ok": False, "message": "이메일을 입력해주세요."}), 400
+        if not guild_id.isdigit():
+            return jsonify({"ok": False, "message": "서버 ID는 숫자만 입력해주세요."}), 400
 
-        if not subject:
-            return jsonify({"ok": False, "message": "문의 제목을 입력해주세요."}), 400
+        if not applicant_name:
+            return jsonify({"ok": False, "message": "입금자명을 입력해주세요."}), 400
 
-        if not message:
-            return jsonify({"ok": False, "message": "문의 내용을 입력해주세요."}), 400
+        if not amount:
+            return jsonify({"ok": False, "message": "입금 금액을 입력해주세요."}), 400
 
-        if len(name) > 100:
-            return jsonify({"ok": False, "message": "이름은 100자 이하로 입력해주세요."}), 400
+        if not amount.isdigit():
+            return jsonify({"ok": False, "message": "입금 금액은 숫자만 입력해주세요."}), 400
 
-        if len(email) > 255:
-            return jsonify({"ok": False, "message": "이메일은 255자 이하로 입력해주세요."}), 400
-
-        if len(category) > 100:
-            return jsonify({"ok": False, "message": "문의 유형이 너무 깁니다."}), 400
-
-        if len(subject) > 200:
-            return jsonify({"ok": False, "message": "문의 제목은 200자 이하로 입력해주세요."}), 400
-
-        inquiry = insert_support_inquiry(
-            name=name,
-            email=email,
-            category=category,
-            subject=subject,
-            message=message,
-            discord_tag=discord_tag if discord_tag else None,
-        )
-
-        webhook_result = send_discord_support_webhook(inquiry)
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO premium_requests (
+                        guild_id, applicant_name, discord_tag, amount, memo, status
+                    )
+                    VALUES (%s, %s, %s, %s, %s, 'pending')
+                    RETURNING id;
+                """, (
+                    int(guild_id),
+                    applicant_name,
+                    discord_tag if discord_tag else None,
+                    int(amount),
+                    memo if memo else None
+                ))
+                row = cur.fetchone()
+            conn.commit()
 
         return jsonify({
             "ok": True,
-            "message": "문의가 정상적으로 접수되었습니다.",
-            "inquiry_id": inquiry["id"],
-            "webhook_ok": webhook_result["ok"],
-            "webhook_message": webhook_result["message"],
+            "message": "프리미엄 신청이 접수되었습니다.",
+            "request_id": row["id"]
+        })
+
+    except Exception as e:
+        return jsonify({
+            "ok": False,
+            "message": f"서버 오류가 발생했습니다: {str(e)}"
+        }), 500
+
+
+@app.route("/api/admin/premium/requests", methods=["GET"])
+def api_admin_premium_requests():
+    try:
+        secret = request.headers.get("X-Admin-Secret", "").strip()
+        if not ADMIN_SECRET or secret != ADMIN_SECRET:
+            return jsonify({"ok": False, "message": "관리자 인증 실패"}), 403
+
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT
+                        id,
+                        guild_id,
+                        applicant_name,
+                        discord_tag,
+                        amount,
+                        memo,
+                        status,
+                        created_at,
+                        approved_at,
+                        approved_by
+                    FROM premium_requests
+                    ORDER BY id DESC
+                    LIMIT 200
+                """)
+                rows = cur.fetchall()
+
+        requests_data = []
+        for row in rows:
+            requests_data.append({
+                "id": row["id"],
+                "guild_id": row["guild_id"],
+                "applicant_name": row["applicant_name"],
+                "discord_tag": row["discord_tag"],
+                "amount": row["amount"],
+                "memo": row["memo"],
+                "status": row["status"],
+                "created_at": str(row["created_at"]),
+                "approved_at": str(row["approved_at"]) if row["approved_at"] else None,
+                "approved_by": row["approved_by"],
+            })
+
+        return jsonify({
+            "ok": True,
+            "requests": requests_data
+        })
+
+    except Exception as e:
+        return jsonify({
+            "ok": False,
+            "message": f"서버 오류가 발생했습니다: {str(e)}"
+        }), 500
+
+
+@app.route("/api/admin/premium/approve", methods=["POST"])
+def api_admin_premium_approve():
+    try:
+        secret = request.headers.get("X-Admin-Secret", "").strip()
+        if not ADMIN_SECRET or secret != ADMIN_SECRET:
+            return jsonify({"ok": False, "message": "관리자 인증 실패"}), 403
+
+        data = request.get_json()
+        request_id = str(data.get("request_id") or "").strip()
+        days = str(data.get("days") or PREMIUM_DAYS).strip()
+        approved_by = (data.get("approved_by") or "admin").strip()
+
+        if not request_id or not request_id.isdigit():
+            return jsonify({"ok": False, "message": "request_id가 올바르지 않습니다."}), 400
+
+        if not str(days).isdigit():
+            return jsonify({"ok": False, "message": "days는 숫자여야 합니다."}), 400
+
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT id, guild_id, status
+                    FROM premium_requests
+                    WHERE id = %s
+                """, (int(request_id),))
+                req_row = cur.fetchone()
+
+                if not req_row:
+                    return jsonify({"ok": False, "message": "신청 내역을 찾을 수 없습니다."}), 404
+
+                if req_row["status"] == "approved":
+                    return jsonify({"ok": False, "message": "이미 승인된 신청입니다."}), 400
+
+                premium_until = datetime.utcnow() + timedelta(days=int(days))
+
+                cur.execute("""
+                    INSERT INTO premium_guilds (guild_id, is_premium, premium_until, updated_at)
+                    VALUES (%s, TRUE, %s, CURRENT_TIMESTAMP)
+                    ON CONFLICT (guild_id)
+                    DO UPDATE SET
+                        is_premium = TRUE,
+                        premium_until = EXCLUDED.premium_until,
+                        updated_at = CURRENT_TIMESTAMP
+                    RETURNING guild_id, is_premium, premium_until;
+                """, (req_row["guild_id"], premium_until))
+                premium_row = cur.fetchone()
+
+                cur.execute("""
+                    UPDATE premium_requests
+                    SET status = 'approved',
+                        approved_at = CURRENT_TIMESTAMP,
+                        approved_by = %s
+                    WHERE id = %s
+                """, (approved_by, int(request_id)))
+
+            conn.commit()
+
+        return jsonify({
+            "ok": True,
+            "message": "프리미엄이 활성화되었습니다.",
+            "guild_id": premium_row["guild_id"],
+            "premium_until": str(premium_row["premium_until"])
+        })
+
+    except Exception as e:
+        return jsonify({
+            "ok": False,
+            "message": f"서버 오류가 발생했습니다: {str(e)}"
+        }), 500
+
+
+@app.route("/api/admin/premium/reject", methods=["POST"])
+def api_admin_premium_reject():
+    try:
+        secret = request.headers.get("X-Admin-Secret", "").strip()
+        if not ADMIN_SECRET or secret != ADMIN_SECRET:
+            return jsonify({"ok": False, "message": "관리자 인증 실패"}), 403
+
+        data = request.get_json()
+        request_id = str(data.get("request_id") or "").strip()
+
+        if not request_id or not request_id.isdigit():
+            return jsonify({"ok": False, "message": "request_id가 올바르지 않습니다."}), 400
+
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE premium_requests
+                    SET status = 'rejected',
+                        approved_at = CURRENT_TIMESTAMP,
+                        approved_by = 'rejected'
+                    WHERE id = %s
+                    RETURNING id;
+                """, (int(request_id),))
+                row = cur.fetchone()
+            conn.commit()
+
+        if not row:
+            return jsonify({"ok": False, "message": "신청 내역을 찾을 수 없습니다."}), 404
+
+        return jsonify({
+            "ok": True,
+            "message": "프리미엄 신청이 거절 처리되었습니다.",
+            "request_id": row["id"]
         })
 
     except Exception as e:
