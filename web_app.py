@@ -1,9 +1,20 @@
 import os
-from datetime import datetime, timedelta
 
-import psycopg2
-from psycopg2.extras import RealDictCursor
 from flask import Flask, render_template_string, request, jsonify, abort
+from psycopg2.extras import RealDictCursor
+
+from core.db import (
+    DB,
+    init_premium_tables,
+    create_premium_request,
+    get_premium_requests,
+    approve_premium_request,
+    reject_premium_request,
+    cleanup_expired_premium_guilds,
+    get_active_premium_guilds,
+    count_active_premium_guilds,
+    is_guild_premium,
+)
 
 app = Flask(__name__)
 
@@ -16,6 +27,8 @@ ACCOUNT_HOLDER = "김태용"
 PREMIUM_PRICE = 5000
 PREMIUM_DAYS = 30
 
+init_premium_tables()
+cleanup_expired_premium_guilds()
 
 INDEX_HTML = """
 <!DOCTYPE html>
@@ -114,6 +127,21 @@ INDEX_HTML = """
         .donate-btn {
             background: #ec4899;
         }
+        .admin-btn {
+            background: #7c3aed;
+        }
+        .info-bar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        .info-chip {
+            background: #334155;
+            border-radius: 999px;
+            padding: 8px 12px;
+            font-size: 13px;
+        }
         @media (max-width: 768px) {
             .top3 {
                 grid-template-columns: 1fr;
@@ -128,6 +156,13 @@ INDEX_HTML = """
         <div style="margin-bottom: 20px;">
             <a href="/support" class="action-btn support-btn">🛟 사용법 / 프리미엄</a>
             <a href="/support" class="action-btn donate-btn">💖 후원 / 프리미엄 신청</a>
+            <a href="/admin/premium" class="action-btn admin-btn">🔐 관리자 페이지</a>
+        </div>
+
+        <div class="info-bar">
+            <div class="info-chip">프리미엄 가격: {{ premium_price }}원</div>
+            <div class="info-chip">프리미엄 기간: {{ premium_days }}일</div>
+            <div class="info-chip">활성 프리미엄 서버 수: {{ active_premium_count }}</div>
         </div>
 
         <div class="card">
@@ -265,6 +300,7 @@ PLAYER_HTML = """
             <div class="stat">전체 승: {{ player.win }}</div>
             <div class="stat">전체 패: {{ player.lose }}</div>
             <div class="stat">전체 승률: {{ winrate }}%</div>
+            <div class="stat">프리미엄 만료일: {{ premium_until }}</div>
         </div>
 
         <div class="card">
@@ -428,6 +464,7 @@ SUPPORT_HTML = """
     <h2>📖 프리미엄 안내</h2>
     <p>프리미엄 가격: {{ premium_price }}원 / {{ premium_days }}일</p>
     <p>후원 입금 후 아래 신청 폼을 작성하면 관리자가 확인 후 프리미엄을 활성화합니다.</p>
+    <p>프리미엄 만료 시 자동으로 비활성화됩니다.</p>
 </div>
 
 <div class="card">
@@ -577,7 +614,7 @@ ADMIN_PREMIUM_HTML = """
         h1, h2 {
             margin-bottom: 12px;
         }
-        input, button, select {
+        input, button {
             padding: 10px 12px;
             border-radius: 10px;
             border: 1px solid #475569;
@@ -604,6 +641,10 @@ ADMIN_PREMIUM_HTML = """
         .btn-refresh {
             background: #7c3aed;
             color: white;
+        }
+        .btn-cleanup {
+            background: #f59e0b;
+            color: #111827;
         }
         .request-card {
             background: #334155;
@@ -637,6 +678,16 @@ ADMIN_PREMIUM_HTML = """
             width: 100px;
             margin-right: 8px;
         }
+        .grid-2 {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+        }
+        @media (max-width: 900px) {
+            .grid-2 {
+                grid-template-columns: 1fr;
+            }
+        }
     </style>
 </head>
 <body>
@@ -645,32 +696,45 @@ ADMIN_PREMIUM_HTML = """
 
     <div class="card" id="loginCard">
         <h2>관리자 로그인</h2>
-        <p class="muted">PREMIUM_ADMIN_SECRET 값을 입력하면 신청 목록을 불러올 수 있습니다.</p>
+        <p class="muted">PREMIUM_ADMIN_SECRET 값을 입력하면 신청 목록과 활성 프리미엄 목록을 불러올 수 있습니다.</p>
         <input type="password" id="adminSecret" placeholder="관리자 시크릿 입력" style="width: 320px;">
-        <button class="btn-login" onclick="loadRequests()">불러오기</button>
+        <button class="btn-login" onclick="loadAdminData()">불러오기</button>
         <div id="loginStatus" style="margin-top: 12px;"></div>
     </div>
 
-    <div class="card hidden" id="requestListCard">
-        <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap;">
-            <h2>프리미엄 신청 목록</h2>
-            <button class="btn-refresh" onclick="loadRequests()">새로고침</button>
+    <div class="grid-2 hidden" id="adminGrid">
+        <div class="card">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap;">
+                <h2>프리미엄 신청 목록</h2>
+                <button class="btn-refresh" onclick="loadAdminData()">새로고침</button>
+            </div>
+            <div id="requestList"></div>
         </div>
-        <div id="requestList"></div>
+
+        <div class="card">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap;">
+                <h2>활성 프리미엄 서버</h2>
+                <button class="btn-cleanup" onclick="cleanupExpired()">만료 자동 정리 실행</button>
+            </div>
+            <div id="cleanupStatus" style="margin-bottom: 12px;"></div>
+            <div id="activePremiumList"></div>
+        </div>
     </div>
 
     <p><a href="/" style="color:#60a5fa;">← 홈으로 돌아가기</a></p>
 </div>
 
 <script>
-async function loadRequests() {
+async function loadAdminData() {
     const secret = document.getElementById("adminSecret").value.trim();
     const loginStatus = document.getElementById("loginStatus");
     const requestList = document.getElementById("requestList");
-    const requestListCard = document.getElementById("requestListCard");
+    const activePremiumList = document.getElementById("activePremiumList");
+    const adminGrid = document.getElementById("adminGrid");
 
     loginStatus.textContent = "";
     requestList.innerHTML = "";
+    activePremiumList.innerHTML = "";
 
     if (!secret) {
         loginStatus.textContent = "관리자 시크릿을 입력해주세요.";
@@ -679,7 +743,7 @@ async function loadRequests() {
     }
 
     try {
-        const response = await fetch("/api/admin/premium/requests", {
+        const response = await fetch("/api/admin/premium/dashboard", {
             method: "GET",
             headers: {
                 "X-Admin-Secret": secret
@@ -694,33 +758,46 @@ async function loadRequests() {
             return;
         }
 
-        loginStatus.textContent = "신청 목록을 불러왔습니다.";
+        loginStatus.textContent = "관리자 데이터를 불러왔습니다.";
         loginStatus.className = "ok";
-        requestListCard.classList.remove("hidden");
+        adminGrid.classList.remove("hidden");
 
         if (!result.requests || result.requests.length === 0) {
             requestList.innerHTML = "<p class='muted'>신청 내역이 없습니다.</p>";
-            return;
+        } else {
+            requestList.innerHTML = result.requests.map((item) => `
+                <div class="request-card">
+                    <div class="row"><strong>신청번호:</strong> #${item.id}</div>
+                    <div class="row"><strong>서버 ID:</strong> ${item.guild_id}</div>
+                    <div class="row"><strong>입금자명:</strong> ${item.applicant_name}</div>
+                    <div class="row"><strong>디스코드:</strong> ${item.discord_tag || "-"}</div>
+                    <div class="row"><strong>입금 금액:</strong> ${item.amount}원</div>
+                    <div class="row"><strong>메모:</strong> ${item.memo || "-"}</div>
+                    <div class="row"><strong>상태:</strong> <span class="status">${item.status}</span></div>
+                    <div class="row"><strong>신청일:</strong> ${item.created_at}</div>
+                    <div class="row"><strong>승인자:</strong> ${item.approved_by || "-"}</div>
+                    <div class="row" style="margin-top:12px;">
+                        <input class="days-input" type="number" id="days-${item.id}" value="30" min="1">
+                        <button class="btn-approve" onclick="approveRequest(${item.id})">승인</button>
+                        <button class="btn-reject" onclick="rejectRequest(${item.id})">거절</button>
+                    </div>
+                    <div id="status-${item.id}" style="margin-top:10px;"></div>
+                </div>
+            `).join("");
         }
 
-        requestList.innerHTML = result.requests.map((item) => `
-            <div class="request-card">
-                <div class="row"><strong>신청번호:</strong> #${item.id}</div>
-                <div class="row"><strong>서버 ID:</strong> ${item.guild_id}</div>
-                <div class="row"><strong>입금자명:</strong> ${item.applicant_name}</div>
-                <div class="row"><strong>디스코드:</strong> ${item.discord_tag || "-"}</div>
-                <div class="row"><strong>입금 금액:</strong> ${item.amount}원</div>
-                <div class="row"><strong>메모:</strong> ${item.memo || "-"}</div>
-                <div class="row"><strong>상태:</strong> <span class="status">${item.status}</span></div>
-                <div class="row"><strong>신청일:</strong> ${item.created_at}</div>
-                <div class="row" style="margin-top:12px;">
-                    <input class="days-input" type="number" id="days-${item.id}" value="30" min="1">
-                    <button class="btn-approve" onclick="approveRequest(${item.id})">승인</button>
-                    <button class="btn-reject" onclick="rejectRequest(${item.id})">거절</button>
+        if (!result.active_premiums || result.active_premiums.length === 0) {
+            activePremiumList.innerHTML = "<p class='muted'>현재 활성 프리미엄 서버가 없습니다.</p>";
+        } else {
+            activePremiumList.innerHTML = result.active_premiums.map((item) => `
+                <div class="request-card">
+                    <div class="row"><strong>서버 ID:</strong> ${item.guild_id}</div>
+                    <div class="row"><strong>프리미엄 상태:</strong> ${item.is_premium ? "활성" : "비활성"}</div>
+                    <div class="row"><strong>만료일:</strong> ${item.premium_until || "-"}</div>
+                    <div class="row"><strong>업데이트일:</strong> ${item.updated_at}</div>
                 </div>
-                <div id="status-${item.id}" style="margin-top:10px;"></div>
-            </div>
-        `).join("");
+            `).join("");
+        }
     } catch (error) {
         loginStatus.textContent = "서버와 통신 중 오류가 발생했습니다.";
         loginStatus.className = "err";
@@ -753,7 +830,7 @@ async function approveRequest(requestId) {
         if (result.ok) {
             statusBox.textContent = "승인 완료 / premium_until: " + result.premium_until;
             statusBox.className = "ok";
-            loadRequests();
+            loadAdminData();
         } else {
             statusBox.textContent = result.message || "승인 실패";
             statusBox.className = "err";
@@ -787,7 +864,7 @@ async function rejectRequest(requestId) {
         if (result.ok) {
             statusBox.textContent = "거절 완료";
             statusBox.className = "ok";
-            loadRequests();
+            loadAdminData();
         } else {
             statusBox.textContent = result.message || "거절 실패";
             statusBox.className = "err";
@@ -795,6 +872,37 @@ async function rejectRequest(requestId) {
     } catch (error) {
         statusBox.textContent = "서버와 통신 중 오류가 발생했습니다.";
         statusBox.className = "err";
+    }
+}
+
+async function cleanupExpired() {
+    const secret = document.getElementById("adminSecret").value.trim();
+    const cleanupStatus = document.getElementById("cleanupStatus");
+
+    cleanupStatus.textContent = "";
+
+    try {
+        const response = await fetch("/api/admin/premium/cleanup-expired", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "X-Admin-Secret": secret
+            }
+        });
+
+        const result = await response.json();
+
+        if (result.ok) {
+            cleanupStatus.textContent = "만료 정리 완료 / 처리된 서버 수: " + result.updated_count;
+            cleanupStatus.className = "ok";
+            loadAdminData();
+        } else {
+            cleanupStatus.textContent = result.message || "정리 실패";
+            cleanupStatus.className = "err";
+        }
+    } catch (error) {
+        cleanupStatus.textContent = "서버와 통신 중 오류가 발생했습니다.";
+        cleanupStatus.className = "err";
     }
 }
 </script>
@@ -806,69 +914,19 @@ async function rejectRequest(requestId) {
 def get_conn():
     if not DATABASE_URL:
         raise RuntimeError("DATABASE_URL 환경변수가 설정되지 않았습니다.")
-    return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
-
-
-def init_tables():
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS premium_requests (
-                    id BIGSERIAL PRIMARY KEY,
-                    guild_id BIGINT NOT NULL,
-                    applicant_name VARCHAR(100) NOT NULL,
-                    discord_tag VARCHAR(100),
-                    amount INTEGER NOT NULL,
-                    memo TEXT,
-                    status VARCHAR(30) NOT NULL DEFAULT 'pending',
-                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    approved_at TIMESTAMP,
-                    approved_by VARCHAR(100)
-                );
-            """)
-
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS premium_guilds (
-                    guild_id BIGINT PRIMARY KEY,
-                    is_premium BOOLEAN NOT NULL DEFAULT FALSE,
-                    premium_until TIMESTAMP,
-                    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-                );
-            """)
-        conn.commit()
-
-
-init_tables()
-
-
-def upsert_premium_guild(guild_id: int, days: int):
-    premium_until = datetime.utcnow() + timedelta(days=days)
-
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO premium_guilds (guild_id, is_premium, premium_until, updated_at)
-                VALUES (%s, TRUE, %s, CURRENT_TIMESTAMP)
-                ON CONFLICT (guild_id)
-                DO UPDATE SET
-                    is_premium = TRUE,
-                    premium_until = EXCLUDED.premium_until,
-                    updated_at = CURRENT_TIMESTAMP
-                RETURNING guild_id, is_premium, premium_until;
-            """, (guild_id, premium_until))
-            row = cur.fetchone()
-        conn.commit()
-        return row
+    return DB.get_connection()
 
 
 @app.route("/")
 def index():
+    cleanup_expired_premium_guilds()
+
     selected_guild_id = request.args.get("guild_id", "").strip()
     selected_game = request.args.get("game", "").strip()
     q = request.args.get("q", "").strip()
 
     with get_conn() as conn:
-        with conn.cursor() as cur:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("SELECT DISTINCT guild_id FROM players ORDER BY guild_id ASC")
             guild_ids = [row["guild_id"] for row in cur.fetchall()]
 
@@ -983,31 +1041,22 @@ def index():
         games=games,
         selected_guild_id=selected_guild_id,
         selected_game=selected_game,
-        q=q
+        q=q,
+        premium_price=PREMIUM_PRICE,
+        premium_days=PREMIUM_DAYS,
+        active_premium_count=count_active_premium_guilds(),
     )
 
 
 @app.route("/player/<int:guild_id>/<int:user_id>")
 def player_page(guild_id, user_id):
+    premium_ok, premium_until = is_guild_premium(guild_id)
+
+    if not premium_ok:
+        return render_template_string(LOCKED_HTML)
+
     with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                SELECT is_premium, premium_until
-                FROM premium_guilds
-                WHERE guild_id = %s
-            """, (guild_id,))
-            premium_row = cur.fetchone()
-
-            is_premium = False
-            if premium_row:
-                is_premium = bool(premium_row["is_premium"])
-                premium_until = premium_row["premium_until"]
-                if premium_until is not None and premium_until < datetime.utcnow():
-                    is_premium = False
-
-            if not is_premium:
-                return render_template_string(LOCKED_HTML)
-
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("""
                 SELECT guild_id, user_id, display_name, mmr, win, lose
                 FROM players
@@ -1042,7 +1091,8 @@ def player_page(guild_id, user_id):
         player=player,
         total=total,
         winrate=winrate,
-        game_rows=game_rows
+        game_rows=game_rows,
+        premium_until=str(premium_until) if premium_until else "-",
     )
 
 
@@ -1094,28 +1144,18 @@ def api_premium_request():
         if not amount.isdigit():
             return jsonify({"ok": False, "message": "입금 금액은 숫자만 입력해주세요."}), 400
 
-        with get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    INSERT INTO premium_requests (
-                        guild_id, applicant_name, discord_tag, amount, memo, status
-                    )
-                    VALUES (%s, %s, %s, %s, %s, 'pending')
-                    RETURNING id;
-                """, (
-                    int(guild_id),
-                    applicant_name,
-                    discord_tag if discord_tag else None,
-                    int(amount),
-                    memo if memo else None
-                ))
-                row = cur.fetchone()
-            conn.commit()
+        row = create_premium_request(
+            guild_id=int(guild_id),
+            applicant_name=applicant_name,
+            discord_tag=discord_tag if discord_tag else None,
+            amount=int(amount),
+            memo=memo if memo else None,
+        )
 
         return jsonify({
             "ok": True,
             "message": "프리미엄 신청이 접수되었습니다.",
-            "request_id": row["id"]
+            "request_id": row["id"] if row else None
         })
 
     except Exception as e:
@@ -1125,51 +1165,41 @@ def api_premium_request():
         }), 500
 
 
-@app.route("/api/admin/premium/requests", methods=["GET"])
-def api_admin_premium_requests():
+@app.route("/api/admin/premium/dashboard", methods=["GET"])
+def api_admin_premium_dashboard():
     try:
         secret = request.headers.get("X-Admin-Secret", "").strip()
         if not ADMIN_SECRET or secret != ADMIN_SECRET:
             return jsonify({"ok": False, "message": "관리자 인증 실패"}), 403
 
-        with get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    SELECT
-                        id,
-                        guild_id,
-                        applicant_name,
-                        discord_tag,
-                        amount,
-                        memo,
-                        status,
-                        created_at,
-                        approved_at,
-                        approved_by
-                    FROM premium_requests
-                    ORDER BY id DESC
-                    LIMIT 200
-                """)
-                rows = cur.fetchall()
-
-        requests_data = []
-        for row in rows:
-            requests_data.append({
-                "id": row["id"],
-                "guild_id": row["guild_id"],
-                "applicant_name": row["applicant_name"],
-                "discord_tag": row["discord_tag"],
-                "amount": row["amount"],
-                "memo": row["memo"],
-                "status": row["status"],
-                "created_at": str(row["created_at"]),
-                "approved_at": str(row["approved_at"]) if row["approved_at"] else None,
-                "approved_by": row["approved_by"],
-            })
+        cleanup_expired_premium_guilds()
 
         return jsonify({
             "ok": True,
-            "requests": requests_data
+            "requests": [
+                {
+                    "id": row["id"],
+                    "guild_id": row["guild_id"],
+                    "applicant_name": row["applicant_name"],
+                    "discord_tag": row["discord_tag"],
+                    "amount": row["amount"],
+                    "memo": row["memo"],
+                    "status": row["status"],
+                    "created_at": str(row["created_at"]),
+                    "approved_at": str(row["approved_at"]) if row["approved_at"] else None,
+                    "approved_by": row["approved_by"],
+                }
+                for row in get_premium_requests()
+            ],
+            "active_premiums": [
+                {
+                    "guild_id": row["guild_id"],
+                    "is_premium": bool(row["is_premium"]),
+                    "premium_until": str(row["premium_until"]) if row["premium_until"] else None,
+                    "updated_at": str(row["updated_at"]),
+                }
+                for row in get_active_premium_guilds()
+            ]
         })
 
     except Exception as e:
@@ -1194,53 +1224,28 @@ def api_admin_premium_approve():
         if not request_id or not request_id.isdigit():
             return jsonify({"ok": False, "message": "request_id가 올바르지 않습니다."}), 400
 
-        if not str(days).isdigit():
+        if not days.isdigit():
             return jsonify({"ok": False, "message": "days는 숫자여야 합니다."}), 400
 
-        with get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    SELECT id, guild_id, status
-                    FROM premium_requests
-                    WHERE id = %s
-                """, (int(request_id),))
-                req_row = cur.fetchone()
+        result = approve_premium_request(
+            request_id=int(request_id),
+            days=int(days),
+            approved_by=approved_by,
+        )
 
-                if not req_row:
-                    return jsonify({"ok": False, "message": "신청 내역을 찾을 수 없습니다."}), 404
+        if not result["ok"]:
+            return jsonify({
+                "ok": False,
+                "message": result["message"],
+            }), result["status_code"]
 
-                if req_row["status"] == "approved":
-                    return jsonify({"ok": False, "message": "이미 승인된 신청입니다."}), 400
-
-                premium_until = datetime.utcnow() + timedelta(days=int(days))
-
-                cur.execute("""
-                    INSERT INTO premium_guilds (guild_id, is_premium, premium_until, updated_at)
-                    VALUES (%s, TRUE, %s, CURRENT_TIMESTAMP)
-                    ON CONFLICT (guild_id)
-                    DO UPDATE SET
-                        is_premium = TRUE,
-                        premium_until = EXCLUDED.premium_until,
-                        updated_at = CURRENT_TIMESTAMP
-                    RETURNING guild_id, is_premium, premium_until;
-                """, (req_row["guild_id"], premium_until))
-                premium_row = cur.fetchone()
-
-                cur.execute("""
-                    UPDATE premium_requests
-                    SET status = 'approved',
-                        approved_at = CURRENT_TIMESTAMP,
-                        approved_by = %s
-                    WHERE id = %s
-                """, (approved_by, int(request_id)))
-
-            conn.commit()
+        data_row = result["data"] or {}
 
         return jsonify({
             "ok": True,
-            "message": "프리미엄이 활성화되었습니다.",
-            "guild_id": premium_row["guild_id"],
-            "premium_until": str(premium_row["premium_until"])
+            "message": result["message"],
+            "guild_id": data_row.get("guild_id"),
+            "premium_until": str(data_row.get("premium_until")) if data_row.get("premium_until") else None,
         })
 
     except Exception as e:
@@ -1263,26 +1268,43 @@ def api_admin_premium_reject():
         if not request_id or not request_id.isdigit():
             return jsonify({"ok": False, "message": "request_id가 올바르지 않습니다."}), 400
 
-        with get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    UPDATE premium_requests
-                    SET status = 'rejected',
-                        approved_at = CURRENT_TIMESTAMP,
-                        approved_by = 'rejected'
-                    WHERE id = %s
-                    RETURNING id;
-                """, (int(request_id),))
-                row = cur.fetchone()
-            conn.commit()
+        result = reject_premium_request(int(request_id))
 
-        if not row:
-            return jsonify({"ok": False, "message": "신청 내역을 찾을 수 없습니다."}), 404
+        if not result["ok"]:
+            return jsonify({
+                "ok": False,
+                "message": result["message"],
+            }), result["status_code"]
+
+        data_row = result["data"] or {}
 
         return jsonify({
             "ok": True,
-            "message": "프리미엄 신청이 거절 처리되었습니다.",
-            "request_id": row["id"]
+            "message": result["message"],
+            "request_id": data_row.get("id"),
+        })
+
+    except Exception as e:
+        return jsonify({
+            "ok": False,
+            "message": f"서버 오류가 발생했습니다: {str(e)}"
+        }), 500
+
+
+@app.route("/api/admin/premium/cleanup-expired", methods=["POST"])
+def api_admin_premium_cleanup_expired():
+    try:
+        secret = request.headers.get("X-Admin-Secret", "").strip()
+        if not ADMIN_SECRET or secret != ADMIN_SECRET:
+            return jsonify({"ok": False, "message": "관리자 인증 실패"}), 403
+
+        updated_guild_ids = cleanup_expired_premium_guilds()
+
+        return jsonify({
+            "ok": True,
+            "message": "만료된 프리미엄 서버 정리가 완료되었습니다.",
+            "updated_count": len(updated_guild_ids),
+            "updated_guild_ids": updated_guild_ids
         })
 
     except Exception as e:
