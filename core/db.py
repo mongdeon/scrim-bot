@@ -178,15 +178,8 @@ def init_premium_tables():
             );
         """)
 
-        cur.execute("""
-            ALTER TABLE premium_guilds
-            ADD COLUMN IF NOT EXISTS premium_until TIMESTAMP
-        """)
-
-        cur.execute("""
-            ALTER TABLE premium_guilds
-            ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-        """)
+        cur.execute("""ALTER TABLE premium_guilds ADD COLUMN IF NOT EXISTS premium_until TIMESTAMP""")
+        cur.execute("""ALTER TABLE premium_guilds ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP""")
 
 
 def cleanup_expired_premium_guilds():
@@ -887,6 +880,312 @@ def delete_lobby(channel_id: int):
 
 
 # -------------------------
+# seasons (NEW)
+# -------------------------
+def init_season_tables():
+    with db_cursor() as (_, cur):
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS seasons (
+                id BIGSERIAL PRIMARY KEY,
+                guild_id BIGINT NOT NULL,
+                game VARCHAR(50) NOT NULL,
+                season_name VARCHAR(100) NOT NULL,
+                is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                started_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                ended_at TIMESTAMP,
+                UNIQUE (guild_id, game, season_name)
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS season_player_stats (
+                guild_id BIGINT NOT NULL,
+                game VARCHAR(50) NOT NULL,
+                season_id BIGINT NOT NULL,
+                user_id BIGINT NOT NULL,
+                display_name VARCHAR(100),
+                mmr INTEGER NOT NULL DEFAULT 1000,
+                win INTEGER NOT NULL DEFAULT 0,
+                lose INTEGER NOT NULL DEFAULT 0,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (guild_id, game, season_id, user_id)
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS season_matches (
+                id BIGSERIAL PRIMARY KEY,
+                guild_id BIGINT NOT NULL,
+                game VARCHAR(50) NOT NULL,
+                season_id BIGINT NOT NULL,
+                channel_id BIGINT NOT NULL,
+                winner_team VARCHAR(1) NOT NULL,
+                team_a_avg INTEGER NOT NULL,
+                team_b_avg INTEGER NOT NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+
+def create_season(guild_id: int, game: str, season_name: str):
+    init_season_tables()
+
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("""
+            UPDATE seasons
+            SET is_active = FALSE,
+                ended_at = CURRENT_TIMESTAMP
+            WHERE guild_id = %s AND game = %s AND is_active = TRUE
+        """, (guild_id, game))
+
+        cur.execute("""
+            INSERT INTO seasons (guild_id, game, season_name, is_active)
+            VALUES (%s, %s, %s, TRUE)
+            RETURNING id, guild_id, game, season_name, is_active, started_at, ended_at
+        """, (guild_id, game, season_name))
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def end_active_season(guild_id: int, game: str):
+    init_season_tables()
+
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("""
+            UPDATE seasons
+            SET is_active = FALSE,
+                ended_at = CURRENT_TIMESTAMP
+            WHERE guild_id = %s AND game = %s AND is_active = TRUE
+            RETURNING id, guild_id, game, season_name, is_active, started_at, ended_at
+        """, (guild_id, game))
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def get_active_season(guild_id: int, game: str):
+    init_season_tables()
+
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("""
+            SELECT id, guild_id, game, season_name, is_active, started_at, ended_at
+            FROM seasons
+            WHERE guild_id = %s AND game = %s AND is_active = TRUE
+            ORDER BY id DESC
+            LIMIT 1
+        """, (guild_id, game))
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def get_seasons(guild_id: int, game: Optional[str] = None, limit: int = 50):
+    init_season_tables()
+
+    with db_cursor(dict_cursor=True) as (_, cur):
+        if game:
+            cur.execute("""
+                SELECT id, guild_id, game, season_name, is_active, started_at, ended_at
+                FROM seasons
+                WHERE guild_id = %s AND game = %s
+                ORDER BY id DESC
+                LIMIT %s
+            """, (guild_id, game, limit))
+        else:
+            cur.execute("""
+                SELECT id, guild_id, game, season_name, is_active, started_at, ended_at
+                FROM seasons
+                WHERE guild_id = %s
+                ORDER BY id DESC
+                LIMIT %s
+            """, (guild_id, limit))
+        return [dict(row) for row in cur.fetchall()]
+
+
+def get_season_by_id(season_id: int):
+    init_season_tables()
+
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("""
+            SELECT id, guild_id, game, season_name, is_active, started_at, ended_at
+            FROM seasons
+            WHERE id = %s
+        """, (season_id,))
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def get_latest_season_for_game(guild_id: int, game: str):
+    init_season_tables()
+
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("""
+            SELECT id, guild_id, game, season_name, is_active, started_at, ended_at
+            FROM seasons
+            WHERE guild_id = %s AND game = %s
+            ORDER BY id DESC
+            LIMIT 1
+        """, (guild_id, game))
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def ensure_season_player(guild_id: int, game: str, season_id: int, user_id: int, display_name: Optional[str] = None):
+    init_season_tables()
+
+    with db_cursor() as (_, cur):
+        cur.execute("""
+            INSERT INTO season_player_stats (
+                guild_id, game, season_id, user_id, display_name, mmr, win, lose
+            )
+            VALUES (%s, %s, %s, %s, %s, 1000, 0, 0)
+            ON CONFLICT (guild_id, game, season_id, user_id)
+            DO UPDATE SET
+                display_name = COALESCE(EXCLUDED.display_name, season_player_stats.display_name),
+                updated_at = CURRENT_TIMESTAMP
+        """, (guild_id, game, season_id, user_id, display_name))
+
+
+def apply_season_match_result(guild_id: int, game: str, season_id: int, winners: list[int], losers: list[int], winner_delta: int, loser_delta: int, name_map: dict):
+    init_season_tables()
+
+    for uid in winners:
+        display_name = name_map.get(uid)
+        ensure_season_player(guild_id, game, season_id, uid, display_name)
+
+        with db_cursor() as (_, cur):
+            cur.execute("""
+                UPDATE season_player_stats
+                SET
+                    mmr = GREATEST(0, mmr + %s),
+                    win = win + 1,
+                    display_name = COALESCE(%s, display_name),
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE guild_id = %s AND game = %s AND season_id = %s AND user_id = %s
+            """, (winner_delta, display_name, guild_id, game, season_id, uid))
+
+    for uid in losers:
+        display_name = name_map.get(uid)
+        ensure_season_player(guild_id, game, season_id, uid, display_name)
+
+        with db_cursor() as (_, cur):
+            cur.execute("""
+                UPDATE season_player_stats
+                SET
+                    mmr = GREATEST(0, mmr + %s),
+                    lose = lose + 1,
+                    display_name = COALESCE(%s, display_name),
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE guild_id = %s AND game = %s AND season_id = %s AND user_id = %s
+            """, (loser_delta, display_name, guild_id, game, season_id, uid))
+
+
+def add_season_match(guild_id: int, game: str, season_id: int, channel_id: int, winner_team: str, team_a_avg: int, team_b_avg: int):
+    init_season_tables()
+
+    with db_cursor() as (_, cur):
+        cur.execute("""
+            INSERT INTO season_matches (
+                guild_id, game, season_id, channel_id, winner_team, team_a_avg, team_b_avg
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """, (guild_id, game, season_id, channel_id, winner_team, team_a_avg, team_b_avg))
+
+
+def get_season_ranking(guild_id: int, game: str, season_id: int, limit: int = 50):
+    init_season_tables()
+
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("""
+            SELECT
+                guild_id,
+                game,
+                season_id,
+                user_id,
+                display_name,
+                mmr,
+                win,
+                lose,
+                CASE
+                    WHEN (win + lose) = 0 THEN 0
+                    ELSE ROUND((CAST(win AS NUMERIC) / (win + lose)) * 100, 1)
+                END AS winrate
+            FROM season_player_stats
+            WHERE guild_id = %s AND game = %s AND season_id = %s
+            ORDER BY mmr DESC, win DESC, user_id ASC
+            LIMIT %s
+        """, (guild_id, game, season_id, limit))
+        return [dict(row) for row in cur.fetchall()]
+
+
+def get_season_matches(guild_id: int, game: str, season_id: int, limit: int = 20):
+    init_season_tables()
+
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("""
+            SELECT id, guild_id, game, season_id, channel_id, winner_team, team_a_avg, team_b_avg, created_at
+            FROM season_matches
+            WHERE guild_id = %s AND game = %s AND season_id = %s
+            ORDER BY id DESC
+            LIMIT %s
+        """, (guild_id, game, season_id, limit))
+        return [dict(row) for row in cur.fetchall()]
+
+
+def get_season_player_detail(guild_id: int, game: str, season_id: int, user_id: int):
+    init_season_tables()
+
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("""
+            SELECT
+                guild_id,
+                game,
+                season_id,
+                user_id,
+                display_name,
+                mmr,
+                win,
+                lose,
+                CASE
+                    WHEN (win + lose) = 0 THEN 0
+                    ELSE ROUND((CAST(win AS NUMERIC) / (win + lose)) * 100, 1)
+                END AS winrate,
+                updated_at
+            FROM season_player_stats
+            WHERE guild_id = %s AND game = %s AND season_id = %s AND user_id = %s
+        """, (guild_id, game, season_id, user_id))
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def get_season_stats_summary(guild_id: int, game: str, season_id: int):
+    init_season_tables()
+
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("""
+            SELECT
+                COUNT(*) AS player_count,
+                COALESCE(AVG(mmr), 0) AS avg_mmr,
+                COALESCE(MAX(mmr), 0) AS top_mmr
+            FROM season_player_stats
+            WHERE guild_id = %s AND game = %s AND season_id = %s
+        """, (guild_id, game, season_id))
+        player_row = cur.fetchone()
+
+        cur.execute("""
+            SELECT COUNT(*) AS match_count
+            FROM season_matches
+            WHERE guild_id = %s AND game = %s AND season_id = %s
+        """, (guild_id, game, season_id))
+        match_row = cur.fetchone()
+
+    return {
+        "player_count": int(player_row["player_count"]) if player_row else 0,
+        "avg_mmr": round(float(player_row["avg_mmr"])) if player_row else 0,
+        "top_mmr": int(player_row["top_mmr"]) if player_row else 0,
+        "match_count": int(match_row["match_count"]) if match_row else 0,
+    }
+
+
+# -------------------------
 # DB wrapper
 # -------------------------
 class DB:
@@ -913,6 +1212,7 @@ class DB:
         init_recruit_tables()
         init_premium_tables()
         init_support_inquiry_table()
+        init_season_tables()
 
     @staticmethod
     def init_support_inquiry_table():
@@ -1031,8 +1331,8 @@ class DB:
         return add_lobby_player(channel_id, user_id, display_name, mmr, position)
 
     @staticmethod
-    def has_lobby_player(channel_id: int, user_id: int) -> bool:
-        return has_lobby_player(channel_id, user_id)
+    def has_lobby_player(channel_id: int) -> bool:
+        return has_lobby_player(channel_id)
 
     @staticmethod
     def remove_lobby_player(channel_id: int, user_id: int):
@@ -1069,6 +1369,63 @@ class DB:
     @staticmethod
     def delete_lobby(channel_id: int):
         return delete_lobby(channel_id)
+
+    # season
+    @staticmethod
+    def init_season_tables():
+        return init_season_tables()
+
+    @staticmethod
+    def create_season(guild_id: int, game: str, season_name: str):
+        return create_season(guild_id, game, season_name)
+
+    @staticmethod
+    def end_active_season(guild_id: int, game: str):
+        return end_active_season(guild_id, game)
+
+    @staticmethod
+    def get_active_season(guild_id: int, game: str):
+        return get_active_season(guild_id, game)
+
+    @staticmethod
+    def get_seasons(guild_id: int, game: Optional[str] = None, limit: int = 50):
+        return get_seasons(guild_id, game, limit)
+
+    @staticmethod
+    def get_season_by_id(season_id: int):
+        return get_season_by_id(season_id)
+
+    @staticmethod
+    def get_latest_season_for_game(guild_id: int, game: str):
+        return get_latest_season_for_game(guild_id, game)
+
+    @staticmethod
+    def ensure_season_player(guild_id: int, game: str, season_id: int, user_id: int, display_name: Optional[str] = None):
+        return ensure_season_player(guild_id, game, season_id, user_id, display_name)
+
+    @staticmethod
+    def apply_season_match_result(guild_id: int, game: str, season_id: int, winners: list[int], losers: list[int], winner_delta: int, loser_delta: int, name_map: dict):
+        return apply_season_match_result(guild_id, game, season_id, winners, losers, winner_delta, loser_delta, name_map)
+
+    @staticmethod
+    def add_season_match(guild_id: int, game: str, season_id: int, channel_id: int, winner_team: str, team_a_avg: int, team_b_avg: int):
+        return add_season_match(guild_id, game, season_id, channel_id, winner_team, team_a_avg, team_b_avg)
+
+    @staticmethod
+    def get_season_ranking(guild_id: int, game: str, season_id: int, limit: int = 50):
+        return get_season_ranking(guild_id, game, season_id, limit)
+
+    @staticmethod
+    def get_season_matches(guild_id: int, game: str, season_id: int, limit: int = 20):
+        return get_season_matches(guild_id, game, season_id, limit)
+
+    @staticmethod
+    def get_season_player_detail(guild_id: int, game: str, season_id: int, user_id: int):
+        return get_season_player_detail(guild_id, game, season_id, user_id)
+
+    @staticmethod
+    def get_season_stats_summary(guild_id: int, game: str, season_id: int):
+        return get_season_stats_summary(guild_id, game, season_id)
 
     @staticmethod
     def execute(query: str, params: tuple = ()):
