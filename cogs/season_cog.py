@@ -39,6 +39,49 @@ class Season(commands.Cog):
     def _check_admin(self, interaction: discord.Interaction) -> bool:
         return interaction.user.guild_permissions.administrator
 
+    def _find_same_named_season(self, guild_id: int, game: str, season_name: str):
+        row = db.fetchone(
+            """
+            SELECT id, guild_id, game, season_name, is_active, started_at, ended_at
+            FROM seasons
+            WHERE guild_id = %s AND game = %s AND season_name = %s
+            LIMIT 1
+            """,
+            (guild_id, game, season_name)
+        )
+        return row
+
+    def _reactivate_existing_season(self, guild_id: int, game: str, season_id: int):
+        db.execute(
+            """
+            UPDATE seasons
+            SET is_active = FALSE,
+                ended_at = CURRENT_TIMESTAMP
+            WHERE guild_id = %s AND game = %s AND is_active = TRUE AND id <> %s
+            """,
+            (guild_id, game, season_id)
+        )
+
+        db.execute(
+            """
+            UPDATE seasons
+            SET is_active = TRUE,
+                ended_at = NULL
+            WHERE id = %s
+            """,
+            (season_id,)
+        )
+
+        row = db.fetchone(
+            """
+            SELECT id, guild_id, game, season_name, is_active, started_at, ended_at
+            FROM seasons
+            WHERE id = %s
+            """,
+            (season_id,)
+        )
+        return row
+
     @app_commands.command(name="시즌생성", description="게임별 시즌을 생성합니다. (프리미엄)")
     @app_commands.choices(게임=GAME_OPTIONS)
     @app_commands.describe(시즌명="예: 시즌1, 2026_Spring")
@@ -62,11 +105,34 @@ class Season(commands.Cog):
             return
 
         try:
+            existing = self._find_same_named_season(interaction.guild_id, 게임.value, season_name)
+
+            if existing:
+                if existing["is_active"]:
+                    await interaction.response.send_message(
+                        f"이미 같은 시즌명이 활성화되어 있습니다.\n\n{season_text(existing)}",
+                        ephemeral=True
+                    )
+                    return
+
+                row = self._reactivate_existing_season(
+                    interaction.guild_id,
+                    게임.value,
+                    existing["id"]
+                )
+
+                await interaction.response.send_message(
+                    f"✅ 기존 시즌을 다시 활성화했습니다.\n{season_text(row)}",
+                    ephemeral=True
+                )
+                return
+
             row = db.create_season(interaction.guild_id, 게임.value, season_name)
             await interaction.response.send_message(
                 f"✅ 시즌 생성 완료\n{season_text(row)}",
                 ephemeral=True
             )
+
         except Exception as e:
             print("시즌생성 오류:", e)
             if interaction.response.is_done():
