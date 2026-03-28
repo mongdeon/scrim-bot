@@ -3,7 +3,8 @@ import json
 import urllib.request
 import urllib.error
 from contextlib import contextmanager
-from typing import Any, Optional
+from datetime import datetime, timedelta
+from typing import Optional
 
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -150,6 +151,129 @@ def send_discord_support_webhook(inquiry: dict):
         return {"ok": False, "message": f"디스코드 웹훅 전송 실패: {str(e)}"}
 
 
+def init_premium_tables():
+    with db_cursor() as (_, cur):
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS premium_requests (
+                id BIGSERIAL PRIMARY KEY,
+                guild_id BIGINT NOT NULL,
+                applicant_name VARCHAR(100) NOT NULL,
+                discord_tag VARCHAR(100),
+                amount INTEGER NOT NULL,
+                memo TEXT,
+                status VARCHAR(30) NOT NULL DEFAULT 'pending',
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                approved_at TIMESTAMP,
+                approved_by VARCHAR(100)
+            );
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS premium_guilds (
+                guild_id BIGINT PRIMARY KEY,
+                is_premium BOOLEAN NOT NULL DEFAULT FALSE,
+                premium_until TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
+
+def create_premium_request(guild_id: int, applicant_name: str, amount: int, discord_tag: Optional[str] = None, memo: Optional[str] = None):
+    init_premium_tables()
+
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("""
+            INSERT INTO premium_requests (
+                guild_id, applicant_name, discord_tag, amount, memo, status
+            )
+            VALUES (%s, %s, %s, %s, %s, 'pending')
+            RETURNING id, guild_id, applicant_name, discord_tag, amount, memo, status, created_at;
+        """, (guild_id, applicant_name, discord_tag, amount, memo))
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def get_premium_requests(limit: int = 200):
+    init_premium_tables()
+
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("""
+            SELECT
+                id,
+                guild_id,
+                applicant_name,
+                discord_tag,
+                amount,
+                memo,
+                status,
+                created_at,
+                approved_at,
+                approved_by
+            FROM premium_requests
+            ORDER BY id DESC
+            LIMIT %s
+        """, (limit,))
+        rows = cur.fetchall()
+        return [dict(row) for row in rows]
+
+
+def approve_premium_request(request_id: int, days: int = 30, approved_by: str = "admin"):
+    init_premium_tables()
+    premium_until = datetime.utcnow() + timedelta(days=days)
+
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("""
+            SELECT id, guild_id, status
+            FROM premium_requests
+            WHERE id = %s
+        """, (request_id,))
+        req_row = cur.fetchone()
+
+        if not req_row:
+            raise ValueError("신청 내역을 찾을 수 없습니다.")
+
+        if req_row["status"] == "approved":
+            raise ValueError("이미 승인된 신청입니다.")
+
+        cur.execute("""
+            INSERT INTO premium_guilds (guild_id, is_premium, premium_until, updated_at)
+            VALUES (%s, TRUE, %s, CURRENT_TIMESTAMP)
+            ON CONFLICT (guild_id)
+            DO UPDATE SET
+                is_premium = TRUE,
+                premium_until = EXCLUDED.premium_until,
+                updated_at = CURRENT_TIMESTAMP
+            RETURNING guild_id, is_premium, premium_until
+        """, (req_row["guild_id"], premium_until))
+        premium_row = cur.fetchone()
+
+        cur.execute("""
+            UPDATE premium_requests
+            SET status = 'approved',
+                approved_at = CURRENT_TIMESTAMP,
+                approved_by = %s
+            WHERE id = %s
+        """, (approved_by, request_id))
+
+        return dict(premium_row) if premium_row else None
+
+
+def reject_premium_request(request_id: int, rejected_by: str = "rejected"):
+    init_premium_tables()
+
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("""
+            UPDATE premium_requests
+            SET status = 'rejected',
+                approved_at = CURRENT_TIMESTAMP,
+                approved_by = %s
+            WHERE id = %s
+            RETURNING id
+        """, (rejected_by, request_id))
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
 class DB:
     DEFAULT_SETTINGS = {
         "guild_id": 0,
@@ -200,15 +324,7 @@ class DB:
                     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
             """)
-
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS premium_guilds (
-                    guild_id BIGINT PRIMARY KEY,
-                    is_premium BOOLEAN NOT NULL DEFAULT FALSE,
-                    premium_until TIMESTAMP,
-                    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-                );
-            """)
+        init_premium_tables()
 
     @classmethod
     def ensure_guild_settings(cls, guild_id: int):
@@ -278,7 +394,7 @@ class DB:
         return data
 
     @classmethod
-    def set_setting(cls, guild_id: int, key: str, value: Optional[int]):
+    def set_setting(cls, guild_id: int, key: str, value):
         allowed_keys = {
             "category_id",
             "log_channel_id",
@@ -319,7 +435,7 @@ class DB:
 
     @classmethod
     def is_premium_guild(cls, guild_id: int) -> bool:
-        cls.init_tables()
+        init_premium_tables()
 
         with db_cursor(dict_cursor=True) as (_, cur):
             cur.execute("""
@@ -336,10 +452,8 @@ class DB:
             return False
 
         premium_until = row["premium_until"]
-        if premium_until is not None:
-            from datetime import datetime
-            if premium_until < datetime.utcnow():
-                return False
+        if premium_until is not None and premium_until < datetime.utcnow():
+            return False
 
         return True
 
@@ -349,14 +463,14 @@ class DB:
             cur.execute(query, params)
 
     @classmethod
-    def fetchone(cls, query: str, params: tuple = ()) -> Optional[dict]:
+    def fetchone(cls, query: str, params: tuple = ()):
         with db_cursor(dict_cursor=True) as (_, cur):
             cur.execute(query, params)
             row = cur.fetchone()
             return dict(row) if row else None
 
     @classmethod
-    def fetchall(cls, query: str, params: tuple = ()) -> list[dict]:
+    def fetchall(cls, query: str, params: tuple = ()):
         with db_cursor(dict_cursor=True) as (_, cur):
             cur.execute(query, params)
             rows = cur.fetchall()
@@ -380,3 +494,23 @@ class DB:
     @staticmethod
     def send_discord_support_webhook(inquiry: dict):
         return send_discord_support_webhook(inquiry)
+
+    @staticmethod
+    def init_premium_tables():
+        return init_premium_tables()
+
+    @staticmethod
+    def create_premium_request(guild_id: int, applicant_name: str, amount: int, discord_tag: Optional[str] = None, memo: Optional[str] = None):
+        return create_premium_request(guild_id, applicant_name, amount, discord_tag, memo)
+
+    @staticmethod
+    def get_premium_requests(limit: int = 200):
+        return get_premium_requests(limit)
+
+    @staticmethod
+    def approve_premium_request(request_id: int, days: int = 30, approved_by: str = "admin"):
+        return approve_premium_request(request_id, days, approved_by)
+
+    @staticmethod
+    def reject_premium_request(request_id: int, rejected_by: str = "rejected"):
+        return reject_premium_request(request_id, rejected_by)
