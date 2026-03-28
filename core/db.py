@@ -52,6 +52,9 @@ def db_cursor(dict_cursor: bool = False):
         conn.close()
 
 
+# -------------------------
+# support inquiries
+# -------------------------
 def init_support_inquiry_table():
     with db_cursor() as (_, cur):
         cur.execute("""
@@ -146,6 +149,9 @@ def send_discord_support_webhook(inquiry: dict):
         return {"ok": False, "message": f"디스코드 웹훅 전송 실패: {str(e)}"}
 
 
+# -------------------------
+# premium
+# -------------------------
 def init_premium_tables():
     with db_cursor() as (_, cur):
         cur.execute("""
@@ -293,6 +299,130 @@ def reject_premium_request(request_id: int, rejected_by: str = "rejected"):
         return dict(row) if row else None
 
 
+def get_active_premium_guilds():
+    cleanup_expired_premium_guilds()
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("""
+            SELECT guild_id, is_premium, premium_until, updated_at
+            FROM premium_guilds
+            WHERE is_premium = TRUE
+            ORDER BY guild_id ASC
+        """)
+        rows = cur.fetchall()
+        return [dict(row) for row in rows]
+
+
+def count_active_premium_guilds() -> int:
+    cleanup_expired_premium_guilds()
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("""
+            SELECT COUNT(*) AS cnt
+            FROM premium_guilds
+            WHERE is_premium = TRUE
+        """)
+        row = cur.fetchone()
+        return int(row["cnt"]) if row else 0
+
+
+def is_premium_guild(guild_id: int) -> bool:
+    cleanup_expired_premium_guilds()
+
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("""
+            SELECT is_premium, premium_until
+            FROM premium_guilds
+            WHERE guild_id = %s
+        """, (guild_id,))
+        row = cur.fetchone()
+
+    if not row:
+        return False
+
+    if not row["is_premium"]:
+        return False
+
+    premium_until = row["premium_until"]
+    if premium_until is not None and premium_until < datetime.utcnow():
+        return False
+
+    return True
+
+
+def is_guild_premium(guild_id: int) -> bool:
+    return is_premium_guild(guild_id)
+
+
+def get_premium_info(guild_id: int):
+    cleanup_expired_premium_guilds()
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("""
+            SELECT guild_id, is_premium, premium_until, updated_at
+            FROM premium_guilds
+            WHERE guild_id = %s
+        """, (guild_id,))
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def set_premium(guild_id: int, enabled: bool):
+    init_premium_tables()
+
+    if enabled:
+        with db_cursor() as (_, cur):
+            cur.execute("""
+                INSERT INTO premium_guilds (guild_id, is_premium, premium_until, updated_at)
+                VALUES (%s, TRUE, NULL, CURRENT_TIMESTAMP)
+                ON CONFLICT (guild_id)
+                DO UPDATE SET
+                    is_premium = TRUE,
+                    updated_at = CURRENT_TIMESTAMP
+            """, (guild_id,))
+    else:
+        with db_cursor() as (_, cur):
+            cur.execute("""
+                INSERT INTO premium_guilds (guild_id, is_premium, premium_until, updated_at)
+                VALUES (%s, FALSE, NULL, CURRENT_TIMESTAMP)
+                ON CONFLICT (guild_id)
+                DO UPDATE SET
+                    is_premium = FALSE,
+                    premium_until = NULL,
+                    updated_at = CURRENT_TIMESTAMP
+            """, (guild_id,))
+
+    return get_premium_info(guild_id)
+
+
+def set_premium_days(guild_id: int, days: int):
+    init_premium_tables()
+    current = get_premium_info(guild_id)
+
+    now = datetime.utcnow()
+    base_time = now
+
+    if current and current.get("is_premium") and current.get("premium_until"):
+        premium_until = current["premium_until"]
+        if premium_until > now:
+            base_time = premium_until
+
+    new_until = base_time + timedelta(days=days)
+
+    with db_cursor() as (_, cur):
+        cur.execute("""
+            INSERT INTO premium_guilds (guild_id, is_premium, premium_until, updated_at)
+            VALUES (%s, TRUE, %s, CURRENT_TIMESTAMP)
+            ON CONFLICT (guild_id)
+            DO UPDATE SET
+                is_premium = TRUE,
+                premium_until = %s,
+                updated_at = CURRENT_TIMESTAMP
+        """, (guild_id, new_until, new_until))
+
+    return get_premium_info(guild_id)
+
+
+# -------------------------
+# settings
+# -------------------------
 def init_settings_tables():
     with db_cursor() as (_, cur):
         cur.execute("""
@@ -311,122 +441,16 @@ def init_settings_tables():
             );
         """)
 
-        cur.execute("""
-            ALTER TABLE guild_settings
-            ADD COLUMN IF NOT EXISTS category_id BIGINT
-        """)
-        cur.execute("""
-            ALTER TABLE guild_settings
-            ADD COLUMN IF NOT EXISTS recruit_role_id BIGINT
-        """)
-        cur.execute("""
-            ALTER TABLE guild_settings
-            ADD COLUMN IF NOT EXISTS log_channel_id BIGINT
-        """)
-        cur.execute("""
-            ALTER TABLE guild_settings
-            ADD COLUMN IF NOT EXISTS announcement_channel_id BIGINT
-        """)
-        cur.execute("""
-            ALTER TABLE guild_settings
-            ADD COLUMN IF NOT EXISTS result_channel_id BIGINT
-        """)
-        cur.execute("""
-            ALTER TABLE guild_settings
-            ADD COLUMN IF NOT EXISTS voice_category_id BIGINT
-        """)
-        cur.execute("""
-            ALTER TABLE guild_settings
-            ADD COLUMN IF NOT EXISTS queue_channel_id BIGINT
-        """)
-        cur.execute("""
-            ALTER TABLE guild_settings
-            ADD COLUMN IF NOT EXISTS manager_role_id BIGINT
-        """)
-        cur.execute("""
-            ALTER TABLE guild_settings
-            ADD COLUMN IF NOT EXISTS premium_role_id BIGINT
-        """)
-        cur.execute("""
-            ALTER TABLE guild_settings
-            ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-        """)
-
-
-def init_recruit_tables():
-    with db_cursor() as (_, cur):
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS lobbies (
-                channel_id BIGINT PRIMARY KEY,
-                guild_id BIGINT NOT NULL,
-                host_id BIGINT NOT NULL,
-                game VARCHAR(50) NOT NULL,
-                team_size INTEGER NOT NULL,
-                status VARCHAR(30) NOT NULL DEFAULT 'open',
-                message_id BIGINT,
-                waiting_voice_id BIGINT,
-                team_a_voice_id BIGINT,
-                team_b_voice_id BIGINT,
-                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-
-        cur.execute("""ALTER TABLE lobbies ADD COLUMN IF NOT EXISTS guild_id BIGINT""")
-        cur.execute("""ALTER TABLE lobbies ADD COLUMN IF NOT EXISTS host_id BIGINT""")
-        cur.execute("""ALTER TABLE lobbies ADD COLUMN IF NOT EXISTS game VARCHAR(50)""")
-        cur.execute("""ALTER TABLE lobbies ADD COLUMN IF NOT EXISTS team_size INTEGER""")
-        cur.execute("""ALTER TABLE lobbies ADD COLUMN IF NOT EXISTS status VARCHAR(30) DEFAULT 'open'""")
-        cur.execute("""ALTER TABLE lobbies ADD COLUMN IF NOT EXISTS message_id BIGINT""")
-        cur.execute("""ALTER TABLE lobbies ADD COLUMN IF NOT EXISTS waiting_voice_id BIGINT""")
-        cur.execute("""ALTER TABLE lobbies ADD COLUMN IF NOT EXISTS team_a_voice_id BIGINT""")
-        cur.execute("""ALTER TABLE lobbies ADD COLUMN IF NOT EXISTS team_b_voice_id BIGINT""")
-        cur.execute("""ALTER TABLE lobbies ADD COLUMN IF NOT EXISTS created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP""")
-
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS lobby_players (
-                channel_id BIGINT NOT NULL,
-                user_id BIGINT NOT NULL,
-                display_name VARCHAR(100) NOT NULL,
-                mmr INTEGER NOT NULL,
-                position VARCHAR(50) NOT NULL,
-                joined_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (channel_id, user_id)
-            )
-        """)
-
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS lobby_teams (
-                channel_id BIGINT NOT NULL,
-                team VARCHAR(1) NOT NULL,
-                user_id BIGINT NOT NULL,
-                PRIMARY KEY (channel_id, team, user_id)
-            )
-        """)
-
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS players (
-                guild_id BIGINT NOT NULL,
-                user_id BIGINT NOT NULL,
-                display_name VARCHAR(100),
-                mmr INTEGER NOT NULL DEFAULT 1000,
-                win INTEGER NOT NULL DEFAULT 0,
-                lose INTEGER NOT NULL DEFAULT 0,
-                PRIMARY KEY (guild_id, user_id)
-            )
-        """)
-
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS player_game_stats (
-                guild_id BIGINT NOT NULL,
-                user_id BIGINT NOT NULL,
-                game VARCHAR(50) NOT NULL,
-                display_name VARCHAR(100),
-                mmr INTEGER NOT NULL DEFAULT 1000,
-                win INTEGER NOT NULL DEFAULT 0,
-                lose INTEGER NOT NULL DEFAULT 0,
-                PRIMARY KEY (guild_id, user_id, game)
-            )
-        """)
+        cur.execute("""ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS category_id BIGINT""")
+        cur.execute("""ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS recruit_role_id BIGINT""")
+        cur.execute("""ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS log_channel_id BIGINT""")
+        cur.execute("""ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS announcement_channel_id BIGINT""")
+        cur.execute("""ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS result_channel_id BIGINT""")
+        cur.execute("""ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS voice_category_id BIGINT""")
+        cur.execute("""ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS queue_channel_id BIGINT""")
+        cur.execute("""ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS manager_role_id BIGINT""")
+        cur.execute("""ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS premium_role_id BIGINT""")
+        cur.execute("""ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP""")
 
 
 def ensure_guild_settings(guild_id: int):
@@ -527,125 +551,101 @@ def set_category(guild_id: int, category_id: int):
     return update_settings(guild_id, category_id=category_id)
 
 
-def is_premium_guild(guild_id: int) -> bool:
-    cleanup_expired_premium_guilds()
-
-    with db_cursor(dict_cursor=True) as (_, cur):
-        cur.execute("""
-            SELECT is_premium, premium_until
-            FROM premium_guilds
-            WHERE guild_id = %s
-        """, (guild_id,))
-        row = cur.fetchone()
-
-    if not row:
-        return False
-
-    if not row["is_premium"]:
-        return False
-
-    premium_until = row["premium_until"]
-    if premium_until is not None and premium_until < datetime.utcnow():
-        return False
-
-    return True
-
-
-def get_active_premium_guilds():
-    cleanup_expired_premium_guilds()
-    with db_cursor(dict_cursor=True) as (_, cur):
-        cur.execute("""
-            SELECT guild_id, is_premium, premium_until, updated_at
-            FROM premium_guilds
-            WHERE is_premium = TRUE
-            ORDER BY guild_id ASC
-        """)
-        rows = cur.fetchall()
-        return [dict(row) for row in rows]
-
-
-def count_active_premium_guilds() -> int:
-    cleanup_expired_premium_guilds()
-    with db_cursor(dict_cursor=True) as (_, cur):
-        cur.execute("""
-            SELECT COUNT(*) AS cnt
-            FROM premium_guilds
-            WHERE is_premium = TRUE
-        """)
-        row = cur.fetchone()
-        return int(row["cnt"]) if row else 0
-
-
-def is_guild_premium(guild_id: int) -> bool:
-    return is_premium_guild(guild_id)
-
-
-def get_premium_info(guild_id: int):
-    cleanup_expired_premium_guilds()
-    with db_cursor(dict_cursor=True) as (_, cur):
-        cur.execute("""
-            SELECT guild_id, is_premium, premium_until, updated_at
-            FROM premium_guilds
-            WHERE guild_id = %s
-        """, (guild_id,))
-        row = cur.fetchone()
-        return dict(row) if row else None
-
-
-def set_premium(guild_id: int, enabled: bool):
-    init_premium_tables()
-
-    if enabled:
-        with db_cursor() as (_, cur):
-            cur.execute("""
-                INSERT INTO premium_guilds (guild_id, is_premium, premium_until, updated_at)
-                VALUES (%s, TRUE, NULL, CURRENT_TIMESTAMP)
-                ON CONFLICT (guild_id)
-                DO UPDATE SET
-                    is_premium = TRUE,
-                    updated_at = CURRENT_TIMESTAMP
-            """, (guild_id,))
-    else:
-        with db_cursor() as (_, cur):
-            cur.execute("""
-                INSERT INTO premium_guilds (guild_id, is_premium, premium_until, updated_at)
-                VALUES (%s, FALSE, NULL, CURRENT_TIMESTAMP)
-                ON CONFLICT (guild_id)
-                DO UPDATE SET
-                    is_premium = FALSE,
-                    premium_until = NULL,
-                    updated_at = CURRENT_TIMESTAMP
-            """, (guild_id,))
-
-    return get_premium_info(guild_id)
-
-
-def set_premium_days(guild_id: int, days: int):
-    init_premium_tables()
-    current = get_premium_info(guild_id)
-
-    now = datetime.utcnow()
-    base_time = now
-
-    if current and current.get("is_premium") and current.get("premium_until"):
-        premium_until = current["premium_until"]
-        if premium_until > now:
-            base_time = premium_until
-
-    new_until = base_time + timedelta(days=days)
-
+# -------------------------
+# recruit / lobby / ranking
+# -------------------------
+def init_recruit_tables():
     with db_cursor() as (_, cur):
         cur.execute("""
-            INSERT INTO premium_guilds (guild_id, is_premium, premium_until, updated_at)
-            VALUES (%s, TRUE, %s, CURRENT_TIMESTAMP)
-            ON CONFLICT (guild_id)
-            DO UPDATE SET
-                is_premium = TRUE,
-                premium_until = %s,
-                updated_at = CURRENT_TIMESTAMP
-        """, (guild_id, new_until, new_until))
+            CREATE TABLE IF NOT EXISTS lobbies (
+                channel_id BIGINT PRIMARY KEY,
+                guild_id BIGINT NOT NULL,
+                host_id BIGINT NOT NULL,
+                game VARCHAR(50) NOT NULL,
+                team_size INTEGER NOT NULL,
+                status VARCHAR(30) NOT NULL DEFAULT 'open',
+                message_id BIGINT,
+                waiting_voice_id BIGINT,
+                team_a_voice_id BIGINT,
+                team_b_voice_id BIGINT,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
 
-    return get_premium_info(guild_id)
+        cur.execute("""ALTER TABLE lobbies ADD COLUMN IF NOT EXISTS guild_id BIGINT""")
+        cur.execute("""ALTER TABLE lobbies ADD COLUMN IF NOT EXISTS host_id BIGINT""")
+        cur.execute("""ALTER TABLE lobbies ADD COLUMN IF NOT EXISTS game VARCHAR(50)""")
+        cur.execute("""ALTER TABLE lobbies ADD COLUMN IF NOT EXISTS team_size INTEGER""")
+        cur.execute("""ALTER TABLE lobbies ADD COLUMN IF NOT EXISTS status VARCHAR(30) DEFAULT 'open'""")
+        cur.execute("""ALTER TABLE lobbies ADD COLUMN IF NOT EXISTS message_id BIGINT""")
+        cur.execute("""ALTER TABLE lobbies ADD COLUMN IF NOT EXISTS waiting_voice_id BIGINT""")
+        cur.execute("""ALTER TABLE lobbies ADD COLUMN IF NOT EXISTS team_a_voice_id BIGINT""")
+        cur.execute("""ALTER TABLE lobbies ADD COLUMN IF NOT EXISTS team_b_voice_id BIGINT""")
+        cur.execute("""ALTER TABLE lobbies ADD COLUMN IF NOT EXISTS created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP""")
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS lobby_players (
+                channel_id BIGINT NOT NULL,
+                user_id BIGINT NOT NULL,
+                display_name VARCHAR(100) NOT NULL,
+                mmr INTEGER NOT NULL,
+                position VARCHAR(50) NOT NULL,
+                joined_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (channel_id, user_id)
+            )
+        """)
+
+        cur.execute("""ALTER TABLE lobby_players ADD COLUMN IF NOT EXISTS display_name VARCHAR(100)""")
+        cur.execute("""ALTER TABLE lobby_players ADD COLUMN IF NOT EXISTS mmr INTEGER""")
+        cur.execute("""ALTER TABLE lobby_players ADD COLUMN IF NOT EXISTS position VARCHAR(50)""")
+        cur.execute("""ALTER TABLE lobby_players ADD COLUMN IF NOT EXISTS joined_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP""")
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS lobby_teams (
+                channel_id BIGINT NOT NULL,
+                team VARCHAR(1) NOT NULL,
+                user_id BIGINT NOT NULL,
+                PRIMARY KEY (channel_id, team, user_id)
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS players (
+                guild_id BIGINT NOT NULL,
+                user_id BIGINT NOT NULL,
+                display_name VARCHAR(100),
+                mmr INTEGER NOT NULL DEFAULT 1000,
+                win INTEGER NOT NULL DEFAULT 0,
+                lose INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (guild_id, user_id)
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS player_game_stats (
+                guild_id BIGINT NOT NULL,
+                user_id BIGINT NOT NULL,
+                game VARCHAR(50) NOT NULL,
+                display_name VARCHAR(100),
+                mmr INTEGER NOT NULL DEFAULT 1000,
+                win INTEGER NOT NULL DEFAULT 0,
+                lose INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (guild_id, user_id, game)
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS matches (
+                id BIGSERIAL PRIMARY KEY,
+                guild_id BIGINT NOT NULL,
+                channel_id BIGINT NOT NULL,
+                game VARCHAR(50) NOT NULL,
+                winner_team VARCHAR(1) NOT NULL,
+                team_a_avg INTEGER NOT NULL,
+                team_b_avg INTEGER NOT NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
 
 
 def get_lobby(channel_id: int):
@@ -824,19 +824,6 @@ def ensure_player_game(guild_id: int, user_id: int, game: str, mmr: int = 1000, 
 def add_match(guild_id: int, channel_id: int, game: str, winner_team: str, team_a_avg: int, team_b_avg: int):
     with db_cursor() as (_, cur):
         cur.execute("""
-            CREATE TABLE IF NOT EXISTS matches (
-                id BIGSERIAL PRIMARY KEY,
-                guild_id BIGINT NOT NULL,
-                channel_id BIGINT NOT NULL,
-                game VARCHAR(50) NOT NULL,
-                winner_team VARCHAR(1) NOT NULL,
-                team_a_avg INTEGER NOT NULL,
-                team_b_avg INTEGER NOT NULL,
-                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-
-        cur.execute("""
             INSERT INTO matches (guild_id, channel_id, game, winner_team, team_a_avg, team_b_avg)
             VALUES (%s, %s, %s, %s, %s, %s)
         """, (guild_id, channel_id, game, winner_team, team_a_avg, team_b_avg))
@@ -899,6 +886,9 @@ def delete_lobby(channel_id: int):
         cur.execute("DELETE FROM lobbies WHERE channel_id = %s", (channel_id,))
 
 
+# -------------------------
+# DB wrapper
+# -------------------------
 class DB:
     def __init__(self):
         self.init_tables()
