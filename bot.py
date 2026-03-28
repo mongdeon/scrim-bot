@@ -45,10 +45,24 @@ async def try_send_welcome_message(guild: discord.Guild):
             print(f"환영 메시지 전송 실패 ({guild.id}): {e}")
 
 
+async def sync_existing_guilds():
+    for guild in bot.guilds:
+        try:
+            db.register_guild(guild.id, guild.name)
+            db.ensure_guild_settings(guild.id)
+            if not db.get_premium_info(guild.id):
+                db.set_premium(guild.id, False)
+            print(f"기존 서버 동기화 완료: {guild.name} ({guild.id})")
+        except Exception as e:
+            print(f"기존 서버 동기화 실패 ({guild.id}): {e}")
+
+
 @bot.event
 async def on_ready():
     try:
         DB.init_tables()
+        await sync_existing_guilds()
+
         synced = await bot.tree.sync()
         print(f"글로벌 슬래시 동기화 완료: {len(synced)}개")
     except Exception as e:
@@ -62,21 +76,28 @@ async def on_guild_join(guild: discord.Guild):
     try:
         print(f"새 서버 추가됨: {guild.name} ({guild.id})")
 
-        # 전체 테이블 보장
         DB.init_tables()
-
-        # 서버 기본 설정 생성
+        db.register_guild(guild.id, guild.name)
         db.ensure_guild_settings(guild.id)
 
-        # 프리미엄 기본값 생성
-        db.set_premium(guild.id, False)
+        if not db.get_premium_info(guild.id):
+            db.set_premium(guild.id, False)
 
-        print(f"서버 자동 초기화 완료: {guild.name} ({guild.id})")
+        print(f"서버 자동 초기화 + 등록 완료: {guild.name} ({guild.id})")
 
         await try_send_welcome_message(guild)
 
     except Exception as e:
         print(f"on_guild_join 자동 초기화 오류 ({guild.id}): {e}")
+
+
+@bot.event
+async def on_guild_remove(guild: discord.Guild):
+    try:
+        db.deactivate_guild(guild.id)
+        print(f"서버 비활성 처리 완료: {guild.name} ({guild.id})")
+    except Exception as e:
+        print(f"on_guild_remove 오류 ({guild.id}): {e}")
 
 
 @bot.event

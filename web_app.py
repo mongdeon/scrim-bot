@@ -17,6 +17,7 @@ from core.db import (
     get_season_ranking,
     get_season_matches,
     get_season_stats_summary,
+    get_registered_guilds,
 )
 
 app = Flask(__name__)
@@ -142,16 +143,6 @@ BASE_STYLE = """
         cursor: pointer;
     }
 
-    .primary-btn {
-        background: linear-gradient(135deg, #ec4899, #d946ef);
-        color: #fff;
-        border: none;
-        padding: 13px 20px;
-        border-radius: 12px;
-        font-weight: 700;
-        cursor: pointer;
-    }
-
     .top3 {
         display: grid;
         grid-template-columns: repeat(3, 1fr);
@@ -208,125 +199,16 @@ BASE_STYLE = """
         margin-bottom: 12px;
     }
 
-    .grid-2 {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 18px;
-    }
-
-    .guide-list {
-        display: grid;
-        gap: 14px;
-    }
-
-    .guide-item {
+    .empty-box {
         background: #394b67;
         border-radius: 16px;
         padding: 18px;
-    }
-
-    .guide-item h3 {
-        margin: 0 0 10px 0;
-        font-size: 20px;
-    }
-
-    .guide-item p {
-        margin: 0;
+        color: #cbd5e1;
         line-height: 1.7;
-    }
-
-    .feature-box {
-        background: #394b67;
-        border-radius: 16px;
-        padding: 18px;
-        line-height: 1.9;
-        white-space: pre-line;
-    }
-
-    .account-box {
-        background: #394b67;
-        border-radius: 14px;
-        padding: 14px;
-        margin-bottom: 12px;
-        font-weight: 700;
-        word-break: break-all;
-    }
-
-    .form-group {
-        margin-bottom: 14px;
-    }
-
-    .form-group label {
-        display: block;
-        margin-bottom: 8px;
-        font-weight: 700;
-    }
-
-    .status {
-        margin-top: 14px;
-        font-weight: 800;
-    }
-
-    .ok { color: #86efac; }
-    .err { color: #fca5a5; }
-
-    .admin-login-row {
-        display: flex;
-        gap: 10px;
-        flex-wrap: wrap;
-    }
-
-    .request-card {
-        background: #394b67;
-        padding: 16px;
-        border-radius: 16px;
-        margin-bottom: 14px;
-    }
-
-    .request-row {
-        margin-bottom: 8px;
-    }
-
-    .status-badge {
-        display: inline-block;
-        padding: 6px 10px;
-        border-radius: 999px;
-        background: #24344f;
-        font-size: 12px;
-        font-weight: 800;
-    }
-
-    .days-input {
-        width: 100px;
-        margin-right: 8px;
-    }
-
-    .approve-btn {
-        background: #16a34a;
-        color: white;
-        border: none;
-        padding: 10px 14px;
-        border-radius: 10px;
-        cursor: pointer;
-        font-weight: 700;
-        margin-right: 8px;
-    }
-
-    .reject-btn {
-        background: #dc2626;
-        color: white;
-        border: none;
-        padding: 10px 14px;
-        border-radius: 10px;
-        cursor: pointer;
-        font-weight: 700;
     }
 
     @media (max-width: 900px) {
         .top3 {
-            grid-template-columns: 1fr;
-        }
-        .grid-2 {
             grid-template-columns: 1fr;
         }
     }
@@ -353,7 +235,7 @@ INDEX_HTML = """
     <div class="page-title">🎮 내전봇 전적 사이트</div>
 
     <div class="action-row">
-        <a href="/guide" class="action-btn btn-guide">🛟 명령어 / 프리미엄 소개</a>
+        <a href="/guide" class="action-btn btn-guide">💿 명령어 / 프리미엄 소개</a>
         <a href="/support" class="action-btn btn-support">💖 후원 / 프리미엄 신청</a>
         <a href="/admin/premium" class="action-btn btn-admin">🔐 관리자 페이지</a>
         <a href="/season" class="action-btn btn-season">🏆 시즌 페이지</a>
@@ -367,10 +249,12 @@ INDEX_HTML = """
 
     <div class="card">
         <form method="get" class="filters">
-            <select name="guild_id" style="max-width:220px;">
+            <select name="guild_id" style="max-width:320px;">
                 <option value="">전체 서버</option>
-                {% for gid in guild_ids %}
-                    <option value="{{ gid }}" {% if selected_guild_id == gid|string %}selected{% endif %}>Guild {{ gid }}</option>
+                {% for guild in guilds %}
+                    <option value="{{ guild.guild_id }}" {% if selected_guild_id == guild.guild_id|string %}selected{% endif %}>
+                        {{ guild.guild_name or ("Guild " ~ guild.guild_id) }}
+                    </option>
                 {% endfor %}
             </select>
 
@@ -396,10 +280,18 @@ INDEX_HTML = """
         </div>
         {% endfor %}
     </div>
+    {% elif selected_guild_id %}
+    <div class="card">
+        <div class="empty-box">
+            이 서버는 아직 전적 데이터가 없습니다.<br>
+            봇은 정상 등록되어 있으며, 내전을 진행하면 랭킹과 최근 경기가 자동으로 표시됩니다.
+        </div>
+    </div>
     {% endif %}
 
     <div class="card">
         <h2 class="section-title">🏆 랭킹 TOP 50</h2>
+        {% if ranking %}
         <table>
             <thead>
                 <tr>
@@ -428,21 +320,147 @@ INDEX_HTML = """
                 {% endfor %}
             </tbody>
         </table>
+        {% else %}
+        <div class="empty-box">표시할 랭킹 데이터가 없습니다.</div>
+        {% endif %}
     </div>
 
     <div class="card">
         <h2 class="section-title">📝 최근 경기</h2>
-        {% for match in matches %}
-        <div class="match-item">
-            <span class="pill">Guild {{ match.guild_id }}</span>
-            <span class="pill">{{ match.game }}</span>
-            <span class="pill">승리팀 {{ match.winner_team }}</span>
-            <span class="pill">A평균 {{ match.team_a_avg }}</span>
-            <span class="pill">B평균 {{ match.team_b_avg }}</span>
-            <span class="pill">{{ match.created_at }}</span>
-        </div>
-        {% endfor %}
+        {% if matches %}
+            {% for match in matches %}
+            <div class="match-item">
+                <span class="pill">Guild {{ match.guild_id }}</span>
+                <span class="pill">{{ match.game }}</span>
+                <span class="pill">승리팀 {{ match.winner_team }}</span>
+                <span class="pill">A평균 {{ match.team_a_avg }}</span>
+                <span class="pill">B평균 {{ match.team_b_avg }}</span>
+                <span class="pill">{{ match.created_at }}</span>
+            </div>
+            {% endfor %}
+        {% else %}
+            <div class="empty-box">표시할 최근 경기 데이터가 없습니다.</div>
+        {% endif %}
     </div>
+</div>
+</body>
+</html>
+"""
+
+SEASON_HTML = """
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>시즌 페이지</title>
+    """ + BASE_STYLE + """
+</head>
+<body>
+<div class="container">
+    <div class="page-title">🏆 시즌 페이지</div>
+
+    <div class="action-row">
+        <a href="/" class="action-btn btn-guide">🏠 홈으로</a>
+        <a href="/guide" class="action-btn btn-support">💿 명령어 / 프리미엄 소개</a>
+        <a href="/support" class="action-btn btn-season">💖 후원 / 프리미엄 신청</a>
+    </div>
+
+    <div class="card">
+        <form method="get" class="filters">
+            <select name="guild_id" style="max-width:320px;">
+                <option value="">서버 선택</option>
+                {% for guild in guilds %}
+                    <option value="{{ guild.guild_id }}" {% if guild_id == guild.guild_id|string %}selected{% endif %}>
+                        {{ guild.guild_name or ("Guild " ~ guild.guild_id) }}
+                    </option>
+                {% endfor %}
+            </select>
+
+            <select name="game" style="max-width:240px;">
+                <option value="">게임 선택</option>
+                {% for g in games %}
+                    <option value="{{ g }}" {% if selected_game == g %}selected{% endif %}>{{ g }}</option>
+                {% endfor %}
+            </select>
+            <button type="submit" class="submit-btn">조회</button>
+        </form>
+    </div>
+
+    {% if error_message %}
+    <div class="card">
+        <div class="empty-box">{{ error_message }}</div>
+    </div>
+    {% endif %}
+
+    {% if season %}
+    <div class="card">
+        <h2 class="section-title">현재 시즌</h2>
+        <div class="pill">서버: {{ season.guild_id }}</div>
+        <div class="pill">게임: {{ season.game }}</div>
+        <div class="pill">시즌명: {{ season.season_name }}</div>
+        <div class="pill">시작일: {{ season.started_at }}</div>
+        <div class="pill">상태: {% if season.is_active %}진행 중{% else %}종료{% endif %}</div>
+    </div>
+
+    <div class="card">
+        <h2 class="section-title">시즌 요약</h2>
+        <div class="pill">참가자 수: {{ summary.player_count }}</div>
+        <div class="pill">평균 MMR: {{ summary.avg_mmr }}</div>
+        <div class="pill">최고 MMR: {{ summary.top_mmr }}</div>
+        <div class="pill">경기 수: {{ summary.match_count }}</div>
+    </div>
+
+    <div class="card">
+        <h2 class="section-title">시즌 랭킹</h2>
+        {% if ranking %}
+        <table>
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>닉네임</th>
+                    <th>유저 ID</th>
+                    <th>MMR</th>
+                    <th>승</th>
+                    <th>패</th>
+                    <th>승률</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in ranking %}
+                <tr>
+                    <td>{{ loop.index }}</td>
+                    <td>{{ row.display_name or "-" }}</td>
+                    <td>{{ row.user_id }}</td>
+                    <td>{{ row.mmr }}</td>
+                    <td>{{ row.win }}</td>
+                    <td>{{ row.lose }}</td>
+                    <td>{{ row.winrate }}%</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="empty-box">시즌 전적이 아직 없습니다.</div>
+        {% endif %}
+    </div>
+
+    <div class="card">
+        <h2 class="section-title">시즌 최근 경기</h2>
+        {% if matches %}
+            {% for match in matches %}
+            <div class="match-item">
+                <span class="pill">승리팀 {{ match.winner_team }}</span>
+                <span class="pill">A평균 {{ match.team_a_avg }}</span>
+                <span class="pill">B평균 {{ match.team_b_avg }}</span>
+                <span class="pill">{{ match.created_at }}</span>
+            </div>
+            {% endfor %}
+        {% else %}
+        <div class="empty-box">시즌 경기 기록이 아직 없습니다.</div>
+        {% endif %}
+    </div>
+    {% endif %}
 </div>
 </body>
 </html>
@@ -453,7 +471,6 @@ GUIDE_HTML = """
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>명령어 / 프리미엄 소개</title>
     """ + BASE_STYLE + """
 </head>
@@ -469,88 +486,25 @@ GUIDE_HTML = """
 
     <div class="card">
         <h2 class="section-title">🆓 무료 명령어</h2>
-        <div class="guide-list">
-            <div class="guide-item">
-                <h3>/설정역할</h3>
-                <p>내전에 참여 가능한 인증 역할을 설정합니다.</p>
-            </div>
-            <div class="guide-item">
-                <h3>/설정카테고리</h3>
-                <p>대기방 / 팀 보이스 채널이 생성될 카테고리를 설정합니다.</p>
-            </div>
-            <div class="guide-item">
-                <h3>/내전생성</h3>
-                <p>현재 채널에서 내전 모집을 시작합니다.</p>
-            </div>
-            <div class="guide-item">
-                <h3>/밸런스팀</h3>
-                <p>참가자 기준으로 팀을 자동 분배합니다.</p>
-            </div>
-            <div class="guide-item">
-                <h3>/내전상태</h3>
-                <p>현재 모집 상태, 참가자, 현재 맵 등을 확인합니다.</p>
-            </div>
-            <div class="guide-item">
-                <h3>/내전종료</h3>
-                <p>내전을 종료하고 팀 채널을 정리합니다.</p>
-            </div>
-        </div>
+        <div class="feature-box">- /설정역할
+- /설정카테고리
+- /내전생성
+- /밸런스팀
+- /내전상태
+- /내전종료</div>
     </div>
 
     <div class="card">
         <h2 class="section-title">⭐ 프리미엄 명령어</h2>
-        <div class="guide-list">
-            <div class="guide-item">
-                <h3>/결과기록 A 또는 /결과기록 B</h3>
-                <p>승리팀을 기록하고 ELO / MMR, 승패 전적을 반영합니다.</p>
-            </div>
-            <div class="guide-item">
-                <h3>/시즌생성</h3>
-                <p>게임별 시즌을 생성하거나 기존 시즌을 다시 활성화합니다.</p>
-            </div>
-            <div class="guide-item">
-                <h3>/시즌종료</h3>
-                <p>현재 활성화된 시즌을 종료합니다.</p>
-            </div>
-            <div class="guide-item">
-                <h3>/시즌확인</h3>
-                <p>현재 진행 중인 시즌 정보를 확인합니다.</p>
-            </div>
-            <div class="guide-item">
-                <h3>/시즌목록</h3>
-                <p>해당 게임의 시즌 목록을 확인합니다.</p>
-            </div>
-            <div class="guide-item">
-                <h3>/시즌랭킹</h3>
-                <p>현재 활성 시즌 기준 시즌 랭킹을 확인합니다.</p>
-            </div>
-            <div class="guide-item">
-                <h3>/맵뽑기</h3>
-                <p>현재 로비 게임 기준으로 맵을 랜덤으로 뽑습니다.</p>
-            </div>
-            <div class="guide-item">
-                <h3>/맵뽑기상태</h3>
-                <p>현재 채널의 맵 뽑기 결과를 확인합니다.</p>
-            </div>
-            <div class="guide-item">
-                <h3>/맵뽑기초기화</h3>
-                <p>현재 채널의 맵 뽑기 결과를 초기화합니다.</p>
-            </div>
-        </div>
-    </div>
-
-    <div class="card">
-        <h2 class="section-title">🎁 프리미엄 혜택</h2>
-        <div class="feature-box">- 결과기록 / ELO 반영
-- 상세 전적
-- 게임별 시즌
-- 시즌 랭킹 / 시즌 경기 기록
-- 맵뽑기
-
-[추가예정]
-
-- 드래프트
-- 고급 통계</div>
+        <div class="feature-box">- /결과기록
+- /시즌생성
+- /시즌종료
+- /시즌확인
+- /시즌목록
+- /시즌랭킹
+- /맵뽑기
+- /맵뽑기상태
+- /맵뽑기초기화</div>
     </div>
 </div>
 </body>
@@ -562,7 +516,6 @@ SUPPORT_HTML = """
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>후원 / 프리미엄 신청</title>
     """ + BASE_STYLE + """
 </head>
@@ -576,77 +529,52 @@ SUPPORT_HTML = """
         <a href="/admin/premium" class="action-btn btn-admin">🔐 관리자 페이지</a>
     </div>
 
-    <div class="grid-2">
-        <div>
-            <div class="card">
-                <h2 class="section-title">📖 프리미엄 안내</h2>
-                <p style="line-height:1.8; margin:0;">
-                    프리미엄 가격은 <strong>{{ premium_price }}원 / {{ premium_days }}일</strong> 입니다.<br>
-                    입금 후 아래 신청 폼을 작성하면 관리자가 확인 후 프리미엄을 활성화합니다.
-                </p>
-            </div>
-
-            <div class="card">
-                <h2 class="section-title">🎁 프리미엄 혜택</h2>
-                <div class="feature-box">- 결과기록 / ELO 반영
+    <div class="card">
+        <h2 class="section-title">프리미엄 안내</h2>
+        <div class="feature-box">- 결과기록 / ELO 반영
 - 상세 전적
 - 게임별 시즌
 - 시즌 랭킹 / 시즌 경기 기록
-- 맵뽑기
+- 맵뽑기</div>
+    </div>
 
-[추가예정]
+    <div class="card">
+        <h2 class="section-title">후원 계좌</h2>
+        <div class="account-box">은행: {{ bank_name }}</div>
+        <div class="account-box">계좌번호: {{ account_number }}</div>
+        <div class="account-box">예금주: {{ account_holder }}</div>
+    </div>
 
-- 드래프트
-- 고급 통계</div>
-            </div>
+    <div class="card">
+        <h2 class="section-title">프리미엄 신청</h2>
+
+        <div class="form-group">
+            <label for="guildId">서버 ID</label>
+            <input type="number" id="guildId" placeholder="예: 123456789012345678">
         </div>
 
-        <div>
-            <div class="card">
-                <h2 class="section-title">💳 후원 계좌</h2>
-
-                <div style="margin-bottom:8px; font-weight:700;">은행</div>
-                <div class="account-box">{{ bank_name }}</div>
-
-                <div style="margin-bottom:8px; font-weight:700;">계좌번호</div>
-                <div class="account-box">{{ account_number }}</div>
-
-                <div style="margin-bottom:8px; font-weight:700;">예금주</div>
-                <div class="account-box">{{ account_holder }}</div>
-            </div>
-
-            <div class="card">
-                <h2 class="section-title">📝 프리미엄 신청</h2>
-
-                <div class="form-group">
-                    <label for="guildId">서버 ID</label>
-                    <input type="number" id="guildId" placeholder="예: 123456789012345678">
-                </div>
-
-                <div class="form-group">
-                    <label for="applicantName">입금자명</label>
-                    <input type="text" id="applicantName" placeholder="예: 홍길동">
-                </div>
-
-                <div class="form-group">
-                    <label for="discordTag">디스코드 아이디</label>
-                    <input type="text" id="discordTag" placeholder="예: user1234">
-                </div>
-
-                <div class="form-group">
-                    <label for="amount">입금 금액</label>
-                    <input type="number" id="amount" placeholder="예: 5000">
-                </div>
-
-                <div class="form-group">
-                    <label for="memo">메모</label>
-                    <textarea id="memo" placeholder="추가로 전달할 내용이 있으면 적어주세요."></textarea>
-                </div>
-
-                <button class="primary-btn" onclick="submitPremiumRequest()">프리미엄 신청하기</button>
-                <div id="statusText" class="status"></div>
-            </div>
+        <div class="form-group">
+            <label for="applicantName">입금자명</label>
+            <input type="text" id="applicantName" placeholder="예: 홍길동">
         </div>
+
+        <div class="form-group">
+            <label for="discordTag">디스코드 아이디</label>
+            <input type="text" id="discordTag" placeholder="예: user1234">
+        </div>
+
+        <div class="form-group">
+            <label for="amount">입금 금액</label>
+            <input type="number" id="amount" placeholder="예: 5000">
+        </div>
+
+        <div class="form-group">
+            <label for="memo">메모</label>
+            <textarea id="memo" placeholder="추가로 전달할 내용이 있으면 적어주세요."></textarea>
+        </div>
+
+        <button class="submit-btn" onclick="submitPremiumRequest()">프리미엄 신청하기</button>
+        <div id="statusText" class="status"></div>
     </div>
 </div>
 
@@ -714,117 +642,6 @@ async function submitPremiumRequest() {
     }
 }
 </script>
-</body>
-</html>
-"""
-
-SEASON_HTML = """
-<!DOCTYPE html>
-<html lang="ko">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>시즌 페이지</title>
-    """ + BASE_STYLE + """
-</head>
-<body>
-<div class="container">
-    <div class="page-title">🏆 시즌 페이지</div>
-
-    <div class="action-row">
-        <a href="/" class="action-btn btn-guide">🏠 홈으로</a>
-        <a href="/guide" class="action-btn btn-support">💿 명령어 / 프리미엄 소개</a>
-        <a href="/support" class="action-btn btn-season">💖 후원 / 프리미엄 신청</a>
-    </div>
-
-    <div class="card">
-        <form method="get" class="filters">
-            <input type="number" name="guild_id" placeholder="Guild ID 입력" value="{{ guild_id or '' }}" style="max-width:260px;">
-            <select name="game" style="max-width:240px;">
-                <option value="">게임 선택</option>
-                {% for g in games %}
-                    <option value="{{ g }}" {% if selected_game == g %}selected{% endif %}>{{ g }}</option>
-                {% endfor %}
-            </select>
-            <button type="submit" class="submit-btn">조회</button>
-        </form>
-    </div>
-
-    {% if error_message %}
-    <div class="card">
-        <p>{{ error_message }}</p>
-    </div>
-    {% endif %}
-
-    {% if season %}
-    <div class="card">
-        <h2 class="section-title">현재 시즌</h2>
-        <div class="pill">서버: {{ season.guild_id }}</div>
-        <div class="pill">게임: {{ season.game }}</div>
-        <div class="pill">시즌명: {{ season.season_name }}</div>
-        <div class="pill">시작일: {{ season.started_at }}</div>
-        <div class="pill">상태: {% if season.is_active %}진행 중{% else %}종료{% endif %}</div>
-    </div>
-
-    <div class="card">
-        <h2 class="section-title">시즌 요약</h2>
-        <div class="pill">참가자 수: {{ summary.player_count }}</div>
-        <div class="pill">평균 MMR: {{ summary.avg_mmr }}</div>
-        <div class="pill">최고 MMR: {{ summary.top_mmr }}</div>
-        <div class="pill">경기 수: {{ summary.match_count }}</div>
-    </div>
-
-    <div class="card">
-        <h2 class="section-title">시즌 랭킹</h2>
-        {% if ranking %}
-        <table>
-            <thead>
-                <tr>
-                    <th>#</th>
-                    <th>닉네임</th>
-                    <th>유저 ID</th>
-                    <th>MMR</th>
-                    <th>승</th>
-                    <th>패</th>
-                    <th>승률</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for row in ranking %}
-                <tr>
-                    <td>{{ loop.index }}</td>
-                    <td>{{ row.display_name or "-" }}</td>
-                    <td>{{ row.user_id }}</td>
-                    <td>{{ row.mmr }}</td>
-                    <td>{{ row.win }}</td>
-                    <td>{{ row.lose }}</td>
-                    <td>{{ row.winrate }}%</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-        {% else %}
-        <p class="muted">시즌 전적이 아직 없습니다.</p>
-        {% endif %}
-    </div>
-
-    <div class="card">
-        <h2 class="section-title">시즌 최근 경기</h2>
-        {% if matches %}
-            {% for match in matches %}
-            <div class="match-item">
-                <span class="pill">승리팀 {{ match.winner_team }}</span>
-                <span class="pill">A평균 {{ match.team_a_avg }}</span>
-                <span class="pill">B평균 {{ match.team_b_avg }}</span>
-                <span class="pill">{{ match.created_at }}</span>
-            </div>
-            {% endfor %}
-        {% else %}
-        <p class="muted">시즌 경기 기록이 아직 없습니다.</p>
-        {% endif %}
-    </div>
-    {% endif %}
-</div>
 </body>
 </html>
 """
@@ -897,7 +714,6 @@ LOCKED_HTML = """
     <div class="card">
         <h1>🔒 프리미엄 전용</h1>
         <p>상세 전적 페이지는 프리미엄 서버 전용입니다.</p>
-        <p>후원 후 프리미엄 신청을 완료하고 승인되면 사용할 수 있습니다.</p>
         <p><a href="/support">→ 프리미엄 신청하러 가기</a></p>
         <p><a href="/">← 홈으로 돌아가기</a></p>
     </div>
@@ -911,7 +727,6 @@ ADMIN_PREMIUM_HTML = """
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>프리미엄 관리자</title>
     """ + BASE_STYLE + """
 </head>
@@ -927,7 +742,6 @@ ADMIN_PREMIUM_HTML = """
 
     <div class="card">
         <h2 class="section-title">관리자 로그인</h2>
-        <p class="muted">PREMIUM_ADMIN_SECRET 값을 입력하면 신청 목록을 불러올 수 있습니다.</p>
         <div class="admin-login-row">
             <input type="password" id="adminSecret" placeholder="관리자 시크릿 입력" style="min-width:320px; max-width:360px;">
             <button class="submit-btn" onclick="loadRequests()">불러오기</button>
@@ -1077,11 +891,10 @@ def index():
     selected_game = request.args.get("game", "").strip()
     q = request.args.get("q", "").strip()
 
+    guilds = get_registered_guilds(active_only=True)
+
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT DISTINCT guild_id FROM players ORDER BY guild_id ASC")
-            guild_ids = [row["guild_id"] for row in cur.fetchall()]
-
             cur.execute("SELECT DISTINCT game FROM player_game_stats ORDER BY game ASC")
             games = [row["game"] for row in cur.fetchall()]
 
@@ -1191,7 +1004,7 @@ def index():
         INDEX_HTML,
         ranking=ranking,
         matches=matches,
-        guild_ids=guild_ids,
+        guilds=guilds,
         games=games,
         selected_guild_id=selected_guild_id,
         selected_game=selected_game,
@@ -1202,29 +1015,14 @@ def index():
     )
 
 
-@app.route("/guide")
-def guide_page():
-    return render_template_string(GUIDE_HTML)
-
-
-@app.route("/support")
-def support_page():
-    return render_template_string(
-        SUPPORT_HTML,
-        bank_name=BANK_NAME,
-        account_number=ACCOUNT_NUMBER,
-        account_holder=ACCOUNT_HOLDER,
-        premium_price=PREMIUM_PRICE,
-        premium_days=PREMIUM_DAYS,
-    )
-
-
 @app.route("/season")
 def season_page():
     cleanup_expired_premium_guilds()
 
     guild_id_raw = request.args.get("guild_id", "").strip()
     selected_game = request.args.get("game", "").strip()
+
+    guilds = get_registered_guilds(active_only=True)
 
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -1257,12 +1055,28 @@ def season_page():
         SEASON_HTML,
         guild_id=guild_id_raw,
         selected_game=selected_game,
+        guilds=guilds,
         games=games,
         season=season,
         ranking=ranking,
         matches=matches,
         summary=summary,
         error_message=error_message
+    )
+
+
+@app.route("/guide")
+def guide_page():
+    return render_template_string(GUIDE_HTML)
+
+
+@app.route("/support")
+def support_page():
+    return render_template_string(
+        SUPPORT_HTML,
+        bank_name=BANK_NAME,
+        account_number=ACCOUNT_NUMBER,
+        account_holder=ACCOUNT_HOLDER,
     )
 
 
@@ -1395,10 +1209,7 @@ def api_admin_premium_requests():
                 "approved_by": row.get("approved_by"),
             })
 
-        return jsonify({
-            "ok": True,
-            "requests": requests_data
-        })
+        return jsonify({"ok": True, "requests": requests_data})
 
     except Exception as e:
         return jsonify({

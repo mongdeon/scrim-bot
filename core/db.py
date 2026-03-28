@@ -53,6 +53,93 @@ def db_cursor(dict_cursor: bool = False):
 
 
 # -------------------------
+# guild registry (NEW)
+# -------------------------
+def init_guild_registry_table():
+    with db_cursor() as (_, cur):
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS guild_registry (
+                guild_id BIGINT PRIMARY KEY,
+                guild_name VARCHAR(200),
+                is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                joined_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        cur.execute("""ALTER TABLE guild_registry ADD COLUMN IF NOT EXISTS guild_name VARCHAR(200)""")
+        cur.execute("""ALTER TABLE guild_registry ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE""")
+        cur.execute("""ALTER TABLE guild_registry ADD COLUMN IF NOT EXISTS joined_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP""")
+        cur.execute("""ALTER TABLE guild_registry ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP""")
+
+
+def register_guild(guild_id: int, guild_name: Optional[str] = None):
+    init_guild_registry_table()
+
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("""
+            INSERT INTO guild_registry (guild_id, guild_name, is_active, joined_at, updated_at)
+            VALUES (%s, %s, TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            ON CONFLICT (guild_id)
+            DO UPDATE SET
+                guild_name = COALESCE(EXCLUDED.guild_name, guild_registry.guild_name),
+                is_active = TRUE,
+                updated_at = CURRENT_TIMESTAMP
+            RETURNING guild_id, guild_name, is_active, joined_at, updated_at
+        """, (guild_id, guild_name))
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def deactivate_guild(guild_id: int):
+    init_guild_registry_table()
+
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("""
+            UPDATE guild_registry
+            SET is_active = FALSE,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE guild_id = %s
+            RETURNING guild_id, guild_name, is_active, joined_at, updated_at
+        """, (guild_id,))
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def get_registered_guilds(active_only: bool = False):
+    init_guild_registry_table()
+
+    with db_cursor(dict_cursor=True) as (_, cur):
+        if active_only:
+            cur.execute("""
+                SELECT guild_id, guild_name, is_active, joined_at, updated_at
+                FROM guild_registry
+                WHERE is_active = TRUE
+                ORDER BY guild_name ASC NULLS LAST, guild_id ASC
+            """)
+        else:
+            cur.execute("""
+                SELECT guild_id, guild_name, is_active, joined_at, updated_at
+                FROM guild_registry
+                ORDER BY guild_name ASC NULLS LAST, guild_id ASC
+            """)
+        return [dict(row) for row in cur.fetchall()]
+
+
+def get_registered_guild(guild_id: int):
+    init_guild_registry_table()
+
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("""
+            SELECT guild_id, guild_name, is_active, joined_at, updated_at
+            FROM guild_registry
+            WHERE guild_id = %s
+        """, (guild_id,))
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+# -------------------------
 # support inquiries
 # -------------------------
 def init_support_inquiry_table():
@@ -667,6 +754,7 @@ def get_lobby(channel_id: int):
 
 def create_lobby(channel_id: int, guild_id: int, host_id: int, game: str, team_size: int):
     init_recruit_tables()
+    register_guild(guild_id)
 
     with db_cursor() as (_, cur):
         cur.execute("""
@@ -790,6 +878,7 @@ def get_team_members(channel_id: int, team: str):
 
 def ensure_player(guild_id: int, user_id: int, mmr: int = 1000, display_name: Optional[str] = None):
     init_recruit_tables()
+    register_guild(guild_id)
 
     with db_cursor() as (_, cur):
         cur.execute("""
@@ -803,6 +892,7 @@ def ensure_player(guild_id: int, user_id: int, mmr: int = 1000, display_name: Op
 
 def ensure_player_game(guild_id: int, user_id: int, game: str, mmr: int = 1000, display_name: Optional[str] = None):
     init_recruit_tables()
+    register_guild(guild_id)
 
     with db_cursor() as (_, cur):
         cur.execute("""
@@ -815,6 +905,8 @@ def ensure_player_game(guild_id: int, user_id: int, game: str, mmr: int = 1000, 
 
 
 def add_match(guild_id: int, channel_id: int, game: str, winner_team: str, team_a_avg: int, team_b_avg: int):
+    register_guild(guild_id)
+
     with db_cursor() as (_, cur):
         cur.execute("""
             INSERT INTO matches (guild_id, channel_id, game, winner_team, team_a_avg, team_b_avg)
@@ -823,6 +915,8 @@ def add_match(guild_id: int, channel_id: int, game: str, winner_team: str, team_
 
 
 def apply_match_result(guild_id: int, game: str, winners: list[int], losers: list[int], winner_delta: int, loser_delta: int, name_map: dict):
+    register_guild(guild_id)
+
     for uid in winners:
         display_name = name_map.get(uid)
         ensure_player(guild_id, uid, 1000, display_name)
@@ -880,7 +974,7 @@ def delete_lobby(channel_id: int):
 
 
 # -------------------------
-# seasons (NEW)
+# seasons
 # -------------------------
 def init_season_tables():
     with db_cursor() as (_, cur):
@@ -929,6 +1023,7 @@ def init_season_tables():
 
 def create_season(guild_id: int, game: str, season_name: str):
     init_season_tables()
+    register_guild(guild_id)
 
     with db_cursor(dict_cursor=True) as (_, cur):
         cur.execute("""
@@ -1030,6 +1125,7 @@ def get_latest_season_for_game(guild_id: int, game: str):
 
 def ensure_season_player(guild_id: int, game: str, season_id: int, user_id: int, display_name: Optional[str] = None):
     init_season_tables()
+    register_guild(guild_id)
 
     with db_cursor() as (_, cur):
         cur.execute("""
@@ -1046,6 +1142,7 @@ def ensure_season_player(guild_id: int, game: str, season_id: int, user_id: int,
 
 def apply_season_match_result(guild_id: int, game: str, season_id: int, winners: list[int], losers: list[int], winner_delta: int, loser_delta: int, name_map: dict):
     init_season_tables()
+    register_guild(guild_id)
 
     for uid in winners:
         display_name = name_map.get(uid)
@@ -1080,6 +1177,7 @@ def apply_season_match_result(guild_id: int, game: str, season_id: int, winners:
 
 def add_season_match(guild_id: int, game: str, season_id: int, channel_id: int, winner_team: str, team_a_avg: int, team_b_avg: int):
     init_season_tables()
+    register_guild(guild_id)
 
     with db_cursor() as (_, cur):
         cur.execute("""
@@ -1208,11 +1306,32 @@ class DB:
 
     @classmethod
     def init_tables(cls):
+        init_guild_registry_table()
         init_settings_tables()
         init_recruit_tables()
         init_premium_tables()
         init_support_inquiry_table()
         init_season_tables()
+
+    @staticmethod
+    def init_guild_registry_table():
+        return init_guild_registry_table()
+
+    @staticmethod
+    def register_guild(guild_id: int, guild_name: Optional[str] = None):
+        return register_guild(guild_id, guild_name)
+
+    @staticmethod
+    def deactivate_guild(guild_id: int):
+        return deactivate_guild(guild_id)
+
+    @staticmethod
+    def get_registered_guilds(active_only: bool = False):
+        return get_registered_guilds(active_only)
+
+    @staticmethod
+    def get_registered_guild(guild_id: int):
+        return get_registered_guild(guild_id)
 
     @staticmethod
     def init_support_inquiry_table():
@@ -1331,8 +1450,8 @@ class DB:
         return add_lobby_player(channel_id, user_id, display_name, mmr, position)
 
     @staticmethod
-    def has_lobby_player(channel_id: int) -> bool:
-        return has_lobby_player(channel_id)
+    def has_lobby_player(channel_id: int, user_id: int) -> bool:
+        return has_lobby_player(channel_id, user_id)
 
     @staticmethod
     def remove_lobby_player(channel_id: int, user_id: int):
@@ -1370,7 +1489,6 @@ class DB:
     def delete_lobby(channel_id: int):
         return delete_lobby(channel_id)
 
-    # season
     @staticmethod
     def init_season_tables():
         return init_season_tables()
