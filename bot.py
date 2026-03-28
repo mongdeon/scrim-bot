@@ -54,6 +54,8 @@ async def main():
         await bot.load_extension("cogs.settings_cog")
         await bot.load_extension("cogs.recruit_cog")
         await bot.load_extension("cogs.team_cog")
+        await bot.load_extension("cogs.season_cog")
+        await bot.load_extension("cogs.mapban_cog")
         await bot.load_extension("cogs.ranking_cog")
         await bot.load_extension("cogs.profile_cog")
         await bot.load_extension("cogs.help_cog")
@@ -61,7 +63,6 @@ async def main():
         await bot.load_extension("cogs.site_cog")
         await bot.load_extension("cogs.support_cog")
         await bot.load_extension("cogs.growth_cog")
-        await bot.load_extension("cogs.season_cog")
         await bot.start(TOKEN)
 
 
