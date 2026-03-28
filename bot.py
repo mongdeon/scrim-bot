@@ -11,17 +11,72 @@ intents.members = True
 intents.voice_states = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
+db = DB()
+
+
+async def try_send_welcome_message(guild: discord.Guild):
+    message = (
+        "안녕하세요. 내전봇이 서버에 추가되었습니다.\n\n"
+        "먼저 아래 순서대로 설정해주세요.\n"
+        "1. /설정역할\n"
+        "2. /설정카테고리\n"
+        "3. /내전생성\n\n"
+        "프리미엄 기능은 /사이트 또는 지원 페이지에서 확인할 수 있습니다."
+    )
+
+    target_channel = None
+
+    if guild.system_channel:
+        perms = guild.system_channel.permissions_for(guild.me)
+        if perms.view_channel and perms.send_messages:
+            target_channel = guild.system_channel
+
+    if target_channel is None:
+        for channel in guild.text_channels:
+            perms = channel.permissions_for(guild.me)
+            if perms.view_channel and perms.send_messages:
+                target_channel = channel
+                break
+
+    if target_channel is not None:
+        try:
+            await target_channel.send(message)
+        except Exception as e:
+            print(f"환영 메시지 전송 실패 ({guild.id}): {e}")
 
 
 @bot.event
 async def on_ready():
     try:
+        DB.init_tables()
         synced = await bot.tree.sync()
         print(f"글로벌 슬래시 동기화 완료: {len(synced)}개")
     except Exception as e:
         print(f"슬래시 동기화 오류: {e}")
 
     print(f"{bot.user} 온라인")
+
+
+@bot.event
+async def on_guild_join(guild: discord.Guild):
+    try:
+        print(f"새 서버 추가됨: {guild.name} ({guild.id})")
+
+        # 전체 테이블 보장
+        DB.init_tables()
+
+        # 서버 기본 설정 생성
+        db.ensure_guild_settings(guild.id)
+
+        # 프리미엄 기본값 생성
+        db.set_premium(guild.id, False)
+
+        print(f"서버 자동 초기화 완료: {guild.name} ({guild.id})")
+
+        await try_send_welcome_message(guild)
+
+    except Exception as e:
+        print(f"on_guild_join 자동 초기화 오류 ({guild.id}): {e}")
 
 
 @bot.event
