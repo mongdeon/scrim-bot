@@ -71,11 +71,23 @@ def init_premium_tables():
 
         cur.execute("""
             CREATE TABLE IF NOT EXISTS premium_guilds (
-                guild_id BIGINT PRIMARY KEY,
-                is_premium BOOLEAN NOT NULL DEFAULT FALSE,
-                premium_until TIMESTAMP,
-                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                guild_id BIGINT PRIMARY KEY
             );
+        """)
+
+        cur.execute("""
+            ALTER TABLE premium_guilds
+            ADD COLUMN IF NOT EXISTS is_premium BOOLEAN NOT NULL DEFAULT FALSE;
+        """)
+
+        cur.execute("""
+            ALTER TABLE premium_guilds
+            ADD COLUMN IF NOT EXISTS premium_until TIMESTAMP;
+        """)
+
+        cur.execute("""
+            ALTER TABLE premium_guilds
+            ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP;
         """)
 
 
@@ -124,24 +136,6 @@ def get_premium_requests(limit: int = 200):
         """, (limit,))
         rows = cur.fetchall()
         return [dict(row) for row in rows]
-
-
-def upsert_premium_guild(guild_id: int, days: int):
-    premium_until = utc_now_naive() + timedelta(days=days)
-
-    with db_cursor(dict_cursor=True) as (_, cur):
-        cur.execute("""
-            INSERT INTO premium_guilds (guild_id, is_premium, premium_until, updated_at)
-            VALUES (%s, TRUE, %s, CURRENT_TIMESTAMP)
-            ON CONFLICT (guild_id)
-            DO UPDATE SET
-                is_premium = TRUE,
-                premium_until = EXCLUDED.premium_until,
-                updated_at = CURRENT_TIMESTAMP
-            RETURNING guild_id, is_premium, premium_until, updated_at;
-        """, (guild_id, premium_until))
-        row = cur.fetchone()
-        return dict(row) if row else None
 
 
 def approve_premium_request(request_id: int, days: int, approved_by: str = "admin"):
