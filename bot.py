@@ -3,6 +3,7 @@ import discord
 from discord.ext import commands
 
 from core.config import TOKEN
+from core.db import DB
 
 intents = discord.Intents.default()
 intents.guilds = True
@@ -47,6 +48,8 @@ async def ping(interaction: discord.Interaction):
 
 
 async def main():
+    DB.init_tables()
+
     async with bot:
         await bot.load_extension("cogs.settings_cog")
         await bot.load_extension("cogs.recruit_cog")
