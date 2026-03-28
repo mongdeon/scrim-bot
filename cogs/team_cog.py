@@ -16,87 +16,9 @@ def format_team_block(team: list[dict]):
     )
 
 
-def ensure_matches_table():
-    db.execute("""
-        CREATE TABLE IF NOT EXISTS matches (
-            id BIGSERIAL PRIMARY KEY,
-            guild_id BIGINT NOT NULL,
-            channel_id BIGINT NOT NULL,
-            game VARCHAR(50) NOT NULL,
-            winner_team VARCHAR(1) NOT NULL,
-            team_a_avg INTEGER NOT NULL,
-            team_b_avg INTEGER NOT NULL,
-            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-
-
-def add_match(guild_id: int, channel_id: int, game: str, winner_team: str, team_a_avg: int, team_b_avg: int):
-    ensure_matches_table()
-    db.execute("""
-        INSERT INTO matches (guild_id, channel_id, game, winner_team, team_a_avg, team_b_avg)
-        VALUES (%s, %s, %s, %s, %s, %s)
-    """, (guild_id, channel_id, game, winner_team, team_a_avg, team_b_avg))
-
-
-def apply_match_result(guild_id: int, game: str, winners: list[int], losers: list[int], winner_delta: int, loser_delta: int, name_map: dict[int, str]):
-    for uid in winners:
-        display_name = name_map.get(uid)
-        db.ensure_player(guild_id, uid, 1000, display_name)
-        db.ensure_player_game(guild_id, uid, game, 1000, display_name)
-
-        db.execute("""
-            UPDATE players
-            SET
-                mmr = GREATEST(0, mmr + %s),
-                win = win + 1,
-                display_name = COALESCE(%s, display_name)
-            WHERE guild_id = %s AND user_id = %s
-        """, (winner_delta, display_name, guild_id, uid))
-
-        db.execute("""
-            UPDATE player_game_stats
-            SET
-                mmr = GREATEST(0, mmr + %s),
-                win = win + 1,
-                display_name = COALESCE(%s, display_name)
-            WHERE guild_id = %s AND user_id = %s AND game = %s
-        """, (winner_delta, display_name, guild_id, uid, game))
-
-    for uid in losers:
-        display_name = name_map.get(uid)
-        db.ensure_player(guild_id, uid, 1000, display_name)
-        db.ensure_player_game(guild_id, uid, game, 1000, display_name)
-
-        db.execute("""
-            UPDATE players
-            SET
-                mmr = GREATEST(0, mmr + %s),
-                lose = lose + 1,
-                display_name = COALESCE(%s, display_name)
-            WHERE guild_id = %s AND user_id = %s
-        """, (loser_delta, display_name, guild_id, uid))
-
-        db.execute("""
-            UPDATE player_game_stats
-            SET
-                mmr = GREATEST(0, mmr + %s),
-                lose = lose + 1,
-                display_name = COALESCE(%s, display_name)
-            WHERE guild_id = %s AND user_id = %s AND game = %s
-        """, (loser_delta, display_name, guild_id, uid, game))
-
-
-def delete_lobby(channel_id: int):
-    db.execute("DELETE FROM lobby_players WHERE channel_id = %s", (channel_id,))
-    db.execute("DELETE FROM lobby_teams WHERE channel_id = %s", (channel_id,))
-    db.execute("DELETE FROM lobbies WHERE channel_id = %s", (channel_id,))
-
-
 class Team(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        ensure_matches_table()
 
     async def refresh_message(self, channel: discord.TextChannel, channel_id: int):
         lobby = db.get_lobby(channel_id)
@@ -199,11 +121,11 @@ class Team(commands.Cog):
             delta_a, delta_b = calc_elo_delta(avg_a, avg_b, winner)
 
             if winner == "A":
-                apply_match_result(interaction.guild_id, lobby["game"], team_a_ids, team_b_ids, delta_a, delta_b, name_map)
+                db.apply_match_result(interaction.guild_id, lobby["game"], team_a_ids, team_b_ids, delta_a, delta_b, name_map)
             else:
-                apply_match_result(interaction.guild_id, lobby["game"], team_b_ids, team_a_ids, delta_b, delta_a, name_map)
+                db.apply_match_result(interaction.guild_id, lobby["game"], team_b_ids, team_a_ids, delta_b, delta_a, name_map)
 
-            add_match(interaction.guild_id, interaction.channel_id, lobby["game"], winner, avg_a, avg_b)
+            db.add_match(interaction.guild_id, interaction.channel_id, lobby["game"], winner, avg_a, avg_b)
             db.set_lobby_status(interaction.channel_id, "finished")
 
             lines = []
@@ -264,7 +186,7 @@ class Team(commands.Cog):
                     except Exception:
                         pass
 
-            delete_lobby(interaction.channel_id)
+            db.delete_lobby(interaction.channel_id)
 
             if waiting_ch and isinstance(waiting_ch, discord.VoiceChannel):
                 await interaction.response.send_message(

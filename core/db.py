@@ -825,3 +825,187 @@ class DB:
             cur.execute(query, params)
             rows = cur.fetchall()
             return [dict(row) for row in rows]
+def get_active_premium_guilds():
+    cleanup_expired_premium_guilds()
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("""
+            SELECT guild_id, is_premium, premium_until, updated_at
+            FROM premium_guilds
+            WHERE is_premium = TRUE
+            ORDER BY guild_id ASC
+        """)
+        rows = cur.fetchall()
+        return [dict(row) for row in rows]
+
+
+def count_active_premium_guilds() -> int:
+    cleanup_expired_premium_guilds()
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("""
+            SELECT COUNT(*) AS cnt
+            FROM premium_guilds
+            WHERE is_premium = TRUE
+        """)
+        row = cur.fetchone()
+        return int(row["cnt"]) if row else 0
+
+
+def is_guild_premium(guild_id: int) -> bool:
+    return is_premium_guild(guild_id)
+
+
+def get_premium_info(guild_id: int):
+    cleanup_expired_premium_guilds()
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("""
+            SELECT guild_id, is_premium, premium_until, updated_at
+            FROM premium_guilds
+            WHERE guild_id = %s
+        """, (guild_id,))
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def set_premium(guild_id: int, enabled: bool):
+    init_premium_tables()
+
+    if enabled:
+        with db_cursor() as (_, cur):
+            cur.execute("""
+                INSERT INTO premium_guilds (guild_id, is_premium, premium_until, updated_at)
+                VALUES (%s, TRUE, NULL, CURRENT_TIMESTAMP)
+                ON CONFLICT (guild_id)
+                DO UPDATE SET
+                    is_premium = TRUE,
+                    updated_at = CURRENT_TIMESTAMP
+            """, (guild_id,))
+    else:
+        with db_cursor() as (_, cur):
+            cur.execute("""
+                INSERT INTO premium_guilds (guild_id, is_premium, premium_until, updated_at)
+                VALUES (%s, FALSE, NULL, CURRENT_TIMESTAMP)
+                ON CONFLICT (guild_id)
+                DO UPDATE SET
+                    is_premium = FALSE,
+                    premium_until = NULL,
+                    updated_at = CURRENT_TIMESTAMP
+            """, (guild_id,))
+
+    return get_premium_info(guild_id)
+
+
+def set_premium_days(guild_id: int, days: int):
+    init_premium_tables()
+    current = get_premium_info(guild_id)
+
+    now = datetime.utcnow()
+    base_time = now
+
+    if current and current.get("is_premium") and current.get("premium_until"):
+        premium_until = current["premium_until"]
+        if premium_until > now:
+            base_time = premium_until
+
+    new_until = base_time + timedelta(days=days)
+
+    with db_cursor() as (_, cur):
+        cur.execute("""
+            INSERT INTO premium_guilds (guild_id, is_premium, premium_until, updated_at)
+            VALUES (%s, TRUE, %s, CURRENT_TIMESTAMP)
+            ON CONFLICT (guild_id)
+            DO UPDATE SET
+                is_premium = TRUE,
+                premium_until = %s,
+                updated_at = CURRENT_TIMESTAMP
+        """, (guild_id, new_until, new_until))
+
+    return get_premium_info(guild_id)
+
+
+def add_match(guild_id: int, channel_id: int, game: str, winner_team: str, team_a_avg: int, team_b_avg: int):
+    with db_cursor() as (_, cur):
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS matches (
+                id BIGSERIAL PRIMARY KEY,
+                guild_id BIGINT NOT NULL,
+                channel_id BIGINT NOT NULL,
+                game VARCHAR(50) NOT NULL,
+                winner_team VARCHAR(1) NOT NULL,
+                team_a_avg INTEGER NOT NULL,
+                team_b_avg INTEGER NOT NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        cur.execute("""
+            INSERT INTO matches (guild_id, channel_id, game, winner_team, team_a_avg, team_b_avg)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        """, (guild_id, channel_id, game, winner_team, team_a_avg, team_b_avg))
+
+
+def apply_match_result(guild_id: int, game: str, winners: list[int], losers: list[int], winner_delta: int, loser_delta: int, name_map: dict):
+    for uid in winners:
+        display_name = name_map.get(uid)
+        ensure_player(guild_id, uid, 1000, display_name)
+        ensure_player_game(guild_id, uid, game, 1000, display_name)
+
+        with db_cursor() as (_, cur):
+            cur.execute("""
+                UPDATE players
+                SET
+                    mmr = GREATEST(0, mmr + %s),
+                    win = win + 1,
+                    display_name = COALESCE(%s, display_name)
+                WHERE guild_id = %s AND user_id = %s
+            """, (winner_delta, display_name, guild_id, uid))
+
+            cur.execute("""
+                UPDATE player_game_stats
+                SET
+                    mmr = GREATEST(0, mmr + %s),
+                    win = win + 1,
+                    display_name = COALESCE(%s, display_name)
+                WHERE guild_id = %s AND user_id = %s AND game = %s
+            """, (winner_delta, display_name, guild_id, uid, game))
+
+    for uid in losers:
+        display_name = name_map.get(uid)
+        ensure_player(guild_id, uid, 1000, display_name)
+        ensure_player_game(guild_id, uid, game, 1000, display_name)
+
+        with db_cursor() as (_, cur):
+            cur.execute("""
+                UPDATE players
+                SET
+                    mmr = GREATEST(0, mmr + %s),
+                    lose = lose + 1,
+                    display_name = COALESCE(%s, display_name)
+                WHERE guild_id = %s AND user_id = %s
+            """, (loser_delta, display_name, guild_id, uid))
+
+            cur.execute("""
+                UPDATE player_game_stats
+                SET
+                    mmr = GREATEST(0, mmr + %s),
+                    lose = lose + 1,
+                    display_name = COALESCE(%s, display_name)
+                WHERE guild_id = %s AND user_id = %s AND game = %s
+            """, (loser_delta, display_name, guild_id, uid, game))
+
+
+def delete_lobby(channel_id: int):
+    with db_cursor() as (_, cur):
+        cur.execute("DELETE FROM lobby_players WHERE channel_id = %s", (channel_id,))
+        cur.execute("DELETE FROM lobby_teams WHERE channel_id = %s", (channel_id,))
+        cur.execute("DELETE FROM lobbies WHERE channel_id = %s", (channel_id,))
+
+
+DB.get_active_premium_guilds = staticmethod(get_active_premium_guilds)
+DB.count_active_premium_guilds = staticmethod(count_active_premium_guilds)
+DB.is_guild_premium = staticmethod(is_guild_premium)
+DB.get_premium_info = staticmethod(get_premium_info)
+DB.set_premium = staticmethod(set_premium)
+DB.set_premium_days = staticmethod(set_premium_days)
+DB.add_match = staticmethod(add_match)
+DB.apply_match_result = staticmethod(apply_match_result)
+DB.delete_lobby = staticmethod(delete_lobby)
