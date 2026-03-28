@@ -55,9 +55,14 @@ class Team(commands.Cog):
                 return
 
             selected = players[:need]
-            (team_a, team_b), mode_text = auto_balance_players(lobby["game"], selected, lobby["team_size"])
+            (team_a, team_b), mode_text = auto_balance_players(
+                lobby["game"],
+                selected,
+                lobby["team_size"]
+            )
 
             db.clear_teams(interaction.channel_id)
+
             for p in team_a:
                 db.add_team_member(interaction.channel_id, "A", p["user_id"])
             for p in team_b:
@@ -74,6 +79,7 @@ class Team(commands.Cog):
                 f"**B팀 총합:** {b_sum}\n{format_team_block(team_b)}\n\n"
                 f"차이: {abs(a_sum - b_sum)}"
             )
+
             await self.refresh_message(interaction.channel, interaction.channel_id)
 
         except Exception as e:
@@ -83,13 +89,13 @@ class Team(commands.Cog):
             else:
                 await interaction.response.send_message(f"오류 발생: {e}", ephemeral=True)
 
-    @app_commands.command(name="결과기록", description="경기 결과를 반영하고 ELO를 계산합니다.")
+    @app_commands.command(name="결과기록", description="경기 결과를 반영하고 ELO/MMR을 계산합니다. (프리미엄)")
     @app_commands.describe(승리팀="A 또는 B")
     async def record_result(self, interaction: discord.Interaction, 승리팀: str):
         try:
             if not db.is_premium_guild(interaction.guild_id):
                 await interaction.response.send_message(
-                    "⚠️ ELO 기능은 프리미엄 서버 전용입니다.",
+                    "⚠️ 결과기록 / ELO 기능은 프리미엄 서버 전용입니다.",
                     ephemeral=True
                 )
                 return
@@ -99,7 +105,7 @@ class Team(commands.Cog):
                 await interaction.response.send_message("이 채널에 로비가 없습니다.", ephemeral=True)
                 return
 
-            winner = 승리팀.upper()
+            winner = 승리팀.upper().strip()
             if winner not in ["A", "B"]:
                 await interaction.response.send_message("승리팀은 A 또는 B만 가능합니다.", ephemeral=True)
                 return
@@ -121,18 +127,79 @@ class Team(commands.Cog):
             delta_a, delta_b = calc_elo_delta(avg_a, avg_b, winner)
 
             if winner == "A":
-                db.apply_match_result(interaction.guild_id, lobby["game"], team_a_ids, team_b_ids, delta_a, delta_b, name_map)
+                winners = team_a_ids
+                losers = team_b_ids
+                winner_delta = delta_a
+                loser_delta = delta_b
             else:
-                db.apply_match_result(interaction.guild_id, lobby["game"], team_b_ids, team_a_ids, delta_b, delta_a, name_map)
+                winners = team_b_ids
+                losers = team_a_ids
+                winner_delta = delta_b
+                loser_delta = delta_a
 
-            db.add_match(interaction.guild_id, interaction.channel_id, lobby["game"], winner, avg_a, avg_b)
+            # 1) 기존 누적 전적 반영
+            db.apply_match_result(
+                interaction.guild_id,
+                lobby["game"],
+                winners,
+                losers,
+                winner_delta,
+                loser_delta,
+                name_map
+            )
+
+            db.add_match(
+                interaction.guild_id,
+                interaction.channel_id,
+                lobby["game"],
+                winner,
+                avg_a,
+                avg_b
+            )
+
+            # 2) 시즌 반영 (프리미엄 + 활성 시즌이 있을 때만)
+            season = db.get_active_season(interaction.guild_id, lobby["game"])
+            season_text = "\n현재 활성 시즌 없음"
+
+            if season:
+                db.apply_season_match_result(
+                    interaction.guild_id,
+                    lobby["game"],
+                    season["id"],
+                    winners,
+                    losers,
+                    winner_delta,
+                    loser_delta,
+                    name_map
+                )
+
+                db.add_season_match(
+                    interaction.guild_id,
+                    lobby["game"],
+                    season["id"],
+                    interaction.channel_id,
+                    winner,
+                    avg_a,
+                    avg_b
+                )
+
+                season_text = (
+                    f"\n시즌 반영 완료: {season['season_name']} "
+                    f"({season['game']})"
+                )
+
             db.set_lobby_status(interaction.channel_id, "finished")
 
             lines = []
+
+            lines.append("**A팀 변동**")
             for uid in team_a_ids:
                 delta = delta_a
                 sign = "+" if delta >= 0 else ""
                 lines.append(f"{name_map.get(uid, uid)}: {sign}{delta}")
+
+            lines.append("")
+            lines.append("**B팀 변동**")
             for uid in team_b_ids:
                 delta = delta_b
                 sign = "+" if delta >= 0 else ""
@@ -141,10 +208,13 @@ class Team(commands.Cog):
             await interaction.response.send_message(
                 f"결과 기록 완료\n"
                 f"승리팀: **{winner}팀**\n"
+                f"게임: **{lobby['game']}**\n"
                 f"A팀 평균: {avg_a}\n"
-                f"B팀 평균: {avg_b}\n\n"
-                f"**ELO/MMR 변동**\n" + "\n".join(lines)
+                f"B팀 평균: {avg_b}\n"
+                f"{season_text}\n\n"
+                + "\n".join(lines)
             )
+
             await self.refresh_message(interaction.channel, interaction.channel_id)
 
         except Exception as e:
