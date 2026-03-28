@@ -34,6 +34,14 @@ def member_has_access(member: discord.Member) -> bool:
     return any(role.id == settings["recruit_role_id"] for role in member.roles)
 
 
+def get_current_map_pick(channel_id: int):
+    return db.fetchone("""
+        SELECT selected_map, status, game, updated_at
+        FROM map_pick_sessions
+        WHERE channel_id = %s
+    """, (channel_id,))
+
+
 def build_lobby_embed(lobby: dict, players: list[dict], team_a=None, team_b=None) -> discord.Embed:
     game_name = {
         "valorant": "VALORANT",
@@ -56,6 +64,10 @@ def build_lobby_embed(lobby: dict, players: list[dict], team_a=None, team_b=None
     embed.add_field(name="상태", value=lobby["status"], inline=True)
     embed.add_field(name="팀 인원", value=f"{lobby['team_size']} vs {lobby['team_size']}", inline=True)
     embed.add_field(name="현재 인원", value=f"{len(players)} / {need}", inline=True)
+
+    map_pick = get_current_map_pick(lobby["channel_id"])
+    if map_pick and map_pick.get("selected_map"):
+        embed.add_field(name="현재 맵", value=map_pick["selected_map"], inline=False)
 
     if players:
         lines = []
@@ -292,7 +304,7 @@ class Recruit(commands.Cog):
                 overwrites=overwrites
             )
 
-        db.set_voice_channels(lobby["channel_id"], waiting.id, team_a_ch.id, team_b_ch.id)
+        db.set_voice_channels(channel_id=lobby["channel_id"], waiting_voice_id=waiting.id, team_a_voice_id=team_a_ch.id, team_b_voice_id=team_b_ch.id)
         return waiting, team_a_ch, team_b_ch
 
     async def move_members(self, guild: discord.Guild, user_ids, target_channel):
@@ -343,8 +355,11 @@ class Recruit(commands.Cog):
         a_sum = sum(p["mmr"] for p in team_a)
         b_sum = sum(p["mmr"] for p in team_b)
 
+        map_pick = get_current_map_pick(channel_id)
+        map_text = f"\n\n현재 맵: **{map_pick['selected_map']}**" if map_pick and map_pick.get("selected_map") else ""
+
         await channel.send(
-            f"정원이 차서 자동 팀 분배 + 자동 음성 이동이 완료되었습니다. ({mode_text})\n\n"
+            f"정원이 차서 자동 팀 분배 + 자동 음성 이동이 완료되었습니다. ({mode_text}){map_text}\n\n"
             f"**A팀 총합:** {a_sum}\n"
             + "\n".join(f"{p['display_name']} ({p['mmr']}, {p['position']})" for p in team_a)
             + f"\n\n**B팀 총합:** {b_sum}\n"

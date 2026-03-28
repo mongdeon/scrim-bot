@@ -88,6 +88,17 @@ class MapPick(commands.Cog):
             )
         """)
 
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS map_pick_history (
+                id BIGSERIAL PRIMARY KEY,
+                guild_id BIGINT NOT NULL,
+                game VARCHAR(50) NOT NULL,
+                channel_id BIGINT NOT NULL,
+                selected_map VARCHAR(100) NOT NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
     def _is_admin_or_host(self, interaction: discord.Interaction, lobby: dict | None) -> bool:
         if interaction.user.guild_permissions.administrator:
             return True
@@ -109,7 +120,33 @@ class MapPick(commands.Cog):
             WHERE channel_id = %s
         """, (channel_id,))
 
-    def _build_embed(self, session: dict, pool: list[str]) -> discord.Embed:
+    def _get_last_picked_map(self, guild_id: int, game: str):
+        row = db.fetchone("""
+            SELECT selected_map, created_at
+            FROM map_pick_history
+            WHERE guild_id = %s AND game = %s
+            ORDER BY id DESC
+            LIMIT 1
+        """, (guild_id, game))
+        return row
+
+    def _pick_random_map(self, guild_id: int, game: str) -> tuple[str, str | None]:
+        pool = get_map_pool(game)
+        if not pool:
+            raise ValueError("맵 풀이 비어 있습니다.")
+
+        last_row = self._get_last_picked_map(guild_id, game)
+        blocked_map = last_row["selected_map"] if last_row else None
+
+        candidate_pool = [m for m in pool if m != blocked_map] if blocked_map else pool[:]
+
+        if not candidate_pool:
+            candidate_pool = pool[:]
+
+        selected = random.choice(candidate_pool)
+        return selected, blocked_map
+
+    def _build_embed(self, session: dict, pool: list[str], blocked_map: str | None = None) -> discord.Embed:
         color = discord.Color.green() if session.get("selected_map") else discord.Color.blurple()
 
         embed = discord.Embed(
@@ -124,6 +161,9 @@ class MapPick(commands.Cog):
             embed.add_field(name="선택된 맵", value=session["selected_map"], inline=False)
         else:
             embed.add_field(name="선택된 맵", value="아직 없음", inline=False)
+
+        if blocked_map:
+            embed.add_field(name="연속 방지 제외 맵", value=blocked_map, inline=False)
 
         embed.add_field(
             name="맵 풀",
@@ -157,11 +197,7 @@ class MapPick(commands.Cog):
                 return
 
             pool = get_map_pool(lobby["game"])
-            if not pool:
-                await interaction.response.send_message("맵 풀이 비어 있습니다.", ephemeral=True)
-                return
-
-            selected_map = random.choice(pool)
+            selected_map, blocked_map = self._pick_random_map(interaction.guild_id, lobby["game"])
 
             existing = self._get_session(interaction.channel_id)
             if existing:
@@ -197,13 +233,28 @@ class MapPick(commands.Cog):
                     selected_map
                 ))
 
-            session = self._get_session(interaction.channel_id)
-            embed = self._build_embed(session, pool)
+            db.execute("""
+                INSERT INTO map_pick_history (guild_id, game, channel_id, selected_map)
+                VALUES (%s, %s, %s, %s)
+            """, (
+                interaction.guild_id,
+                lobby["game"],
+                interaction.channel_id,
+                selected_map
+            ))
 
-            await interaction.response.send_message(
-                f"🎯 랜덤 맵이 선택되었습니다: **{selected_map}**",
-                embed=embed
-            )
+            session = self._get_session(interaction.channel_id)
+            embed = self._build_embed(session, pool, blocked_map)
+
+            if blocked_map:
+                text = (
+                    f"🎯 랜덤 맵이 선택되었습니다: **{selected_map}**\n"
+                    f"(직전 맵 **{blocked_map}** 은 연속 방지를 위해 제외됨)"
+                )
+            else:
+                text = f"🎯 랜덤 맵이 선택되었습니다: **{selected_map}**"
+
+            await interaction.response.send_message(text, embed=embed)
 
         except Exception as e:
             print("맵뽑기 오류:", e)
@@ -221,8 +272,10 @@ class MapPick(commands.Cog):
                 return
 
             pool = get_map_pool(session["game"])
-            embed = self._build_embed(session, pool)
+            last_row = self._get_last_picked_map(session["guild_id"], session["game"])
+            blocked_map = last_row["selected_map"] if last_row else None
 
+            embed = self._build_embed(session, pool, blocked_map)
             await interaction.response.send_message(embed=embed, ephemeral=True)
 
         except Exception as e:
