@@ -459,7 +459,7 @@ GUIDE_HTML = """
 </head>
 <body>
 <div class="container">
-    <div class="page-title">🛟 명령어 / 프리미엄 소개</div>
+    <div class="page-title">💿 명령어 / 프리미엄 소개</div>
 
     <div class="action-row">
         <a href="/" class="action-btn btn-guide">🏠 홈으로</a>
@@ -468,7 +468,7 @@ GUIDE_HTML = """
     </div>
 
     <div class="card">
-        <h2 class="section-title">📘 기본 명령어</h2>
+        <h2 class="section-title">🆓 무료 명령어</h2>
         <div class="guide-list">
             <div class="guide-item">
                 <h3>/설정역할</h3>
@@ -498,12 +498,54 @@ GUIDE_HTML = """
     </div>
 
     <div class="card">
-        <h2 class="section-title">⭐ 프리미엄 기능</h2>
+        <h2 class="section-title">⭐ 프리미엄 명령어</h2>
+        <div class="guide-list">
+            <div class="guide-item">
+                <h3>/결과기록 A 또는 /결과기록 B</h3>
+                <p>승리팀을 기록하고 ELO / MMR, 승패 전적을 반영합니다.</p>
+            </div>
+            <div class="guide-item">
+                <h3>/시즌생성</h3>
+                <p>게임별 시즌을 생성하거나 기존 시즌을 다시 활성화합니다.</p>
+            </div>
+            <div class="guide-item">
+                <h3>/시즌종료</h3>
+                <p>현재 활성화된 시즌을 종료합니다.</p>
+            </div>
+            <div class="guide-item">
+                <h3>/시즌확인</h3>
+                <p>현재 진행 중인 시즌 정보를 확인합니다.</p>
+            </div>
+            <div class="guide-item">
+                <h3>/시즌목록</h3>
+                <p>해당 게임의 시즌 목록을 확인합니다.</p>
+            </div>
+            <div class="guide-item">
+                <h3>/시즌랭킹</h3>
+                <p>현재 활성 시즌 기준 시즌 랭킹을 확인합니다.</p>
+            </div>
+            <div class="guide-item">
+                <h3>/맵뽑기</h3>
+                <p>현재 로비 게임 기준으로 맵을 랜덤으로 뽑습니다.</p>
+            </div>
+            <div class="guide-item">
+                <h3>/맵뽑기상태</h3>
+                <p>현재 채널의 맵 뽑기 결과를 확인합니다.</p>
+            </div>
+            <div class="guide-item">
+                <h3>/맵뽑기초기화</h3>
+                <p>현재 채널의 맵 뽑기 결과를 초기화합니다.</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2 class="section-title">🎁 프리미엄 혜택</h2>
         <div class="feature-box">- 결과기록 / ELO 반영
 - 상세 전적
 - 게임별 시즌
 - 시즌 랭킹 / 시즌 경기 기록
-- 맵밴
+- 맵뽑기
 
 [추가예정]
 
@@ -530,7 +572,7 @@ SUPPORT_HTML = """
 
     <div class="action-row">
         <a href="/" class="action-btn btn-guide">🏠 홈으로</a>
-        <a href="/guide" class="action-btn btn-support">🛟 명령어 / 프리미엄 소개</a>
+        <a href="/guide" class="action-btn btn-support">💿 명령어 / 프리미엄 소개</a>
         <a href="/admin/premium" class="action-btn btn-admin">🔐 관리자 페이지</a>
     </div>
 
@@ -545,12 +587,12 @@ SUPPORT_HTML = """
             </div>
 
             <div class="card">
-                <h2 class="section-title">⭐ 프리미엄 기능</h2>
+                <h2 class="section-title">🎁 프리미엄 혜택</h2>
                 <div class="feature-box">- 결과기록 / ELO 반영
 - 상세 전적
 - 게임별 시즌
 - 시즌 랭킹 / 시즌 경기 기록
-- 맵밴
+- 맵뽑기
 
 [추가예정]
 
@@ -691,7 +733,7 @@ SEASON_HTML = """
 
     <div class="action-row">
         <a href="/" class="action-btn btn-guide">🏠 홈으로</a>
-        <a href="/guide" class="action-btn btn-support">🛟 명령어 / 프리미엄 소개</a>
+        <a href="/guide" class="action-btn btn-support">💿 명령어 / 프리미엄 소개</a>
         <a href="/support" class="action-btn btn-season">💖 후원 / 프리미엄 신청</a>
     </div>
 
@@ -879,7 +921,7 @@ ADMIN_PREMIUM_HTML = """
 
     <div class="action-row">
         <a href="/" class="action-btn btn-guide">🏠 홈으로</a>
-        <a href="/guide" class="action-btn btn-support">🛟 명령어 / 프리미엄 소개</a>
+        <a href="/guide" class="action-btn btn-support">💿 명령어 / 프리미엄 소개</a>
         <a href="/support" class="action-btn btn-admin">💖 프리미엄 신청 페이지</a>
     </div>
 
