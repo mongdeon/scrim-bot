@@ -1,5 +1,7 @@
 import os
 import json
+import random
+import string
 import urllib.request
 import urllib.error
 from contextlib import contextmanager
@@ -52,96 +54,11 @@ def db_cursor(dict_cursor: bool = False):
         conn.close()
 
 
-# -------------------------
-# guild registry (NEW)
-# -------------------------
-def init_guild_registry_table():
-    with db_cursor() as (_, cur):
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS guild_registry (
-                guild_id BIGINT PRIMARY KEY,
-                guild_name VARCHAR(200),
-                is_active BOOLEAN NOT NULL DEFAULT TRUE,
-                joined_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-
-        cur.execute("""ALTER TABLE guild_registry ADD COLUMN IF NOT EXISTS guild_name VARCHAR(200)""")
-        cur.execute("""ALTER TABLE guild_registry ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE""")
-        cur.execute("""ALTER TABLE guild_registry ADD COLUMN IF NOT EXISTS joined_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP""")
-        cur.execute("""ALTER TABLE guild_registry ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP""")
+def generate_party_code(length: int = 6) -> str:
+    chars = string.ascii_uppercase + string.digits
+    return "".join(random.choice(chars) for _ in range(length))
 
 
-def register_guild(guild_id: int, guild_name: Optional[str] = None):
-    init_guild_registry_table()
-
-    with db_cursor(dict_cursor=True) as (_, cur):
-        cur.execute("""
-            INSERT INTO guild_registry (guild_id, guild_name, is_active, joined_at, updated_at)
-            VALUES (%s, %s, TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-            ON CONFLICT (guild_id)
-            DO UPDATE SET
-                guild_name = COALESCE(EXCLUDED.guild_name, guild_registry.guild_name),
-                is_active = TRUE,
-                updated_at = CURRENT_TIMESTAMP
-            RETURNING guild_id, guild_name, is_active, joined_at, updated_at
-        """, (guild_id, guild_name))
-        row = cur.fetchone()
-        return dict(row) if row else None
-
-
-def deactivate_guild(guild_id: int):
-    init_guild_registry_table()
-
-    with db_cursor(dict_cursor=True) as (_, cur):
-        cur.execute("""
-            UPDATE guild_registry
-            SET is_active = FALSE,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE guild_id = %s
-            RETURNING guild_id, guild_name, is_active, joined_at, updated_at
-        """, (guild_id,))
-        row = cur.fetchone()
-        return dict(row) if row else None
-
-
-def get_registered_guilds(active_only: bool = False):
-    init_guild_registry_table()
-
-    with db_cursor(dict_cursor=True) as (_, cur):
-        if active_only:
-            cur.execute("""
-                SELECT guild_id, guild_name, is_active, joined_at, updated_at
-                FROM guild_registry
-                WHERE is_active = TRUE
-                ORDER BY guild_name ASC NULLS LAST, guild_id ASC
-            """)
-        else:
-            cur.execute("""
-                SELECT guild_id, guild_name, is_active, joined_at, updated_at
-                FROM guild_registry
-                ORDER BY guild_name ASC NULLS LAST, guild_id ASC
-            """)
-        return [dict(row) for row in cur.fetchall()]
-
-
-def get_registered_guild(guild_id: int):
-    init_guild_registry_table()
-
-    with db_cursor(dict_cursor=True) as (_, cur):
-        cur.execute("""
-            SELECT guild_id, guild_name, is_active, joined_at, updated_at
-            FROM guild_registry
-            WHERE guild_id = %s
-        """, (guild_id,))
-        row = cur.fetchone()
-        return dict(row) if row else None
-
-
-# -------------------------
-# support inquiries
-# -------------------------
 def init_support_inquiry_table():
     with db_cursor() as (_, cur):
         cur.execute("""
@@ -236,9 +153,6 @@ def send_discord_support_webhook(inquiry: dict):
         return {"ok": False, "message": f"디스코드 웹훅 전송 실패: {str(e)}"}
 
 
-# -------------------------
-# premium
-# -------------------------
 def init_premium_tables():
     with db_cursor() as (_, cur):
         cur.execute("""
@@ -264,9 +178,6 @@ def init_premium_tables():
                 updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
         """)
-
-        cur.execute("""ALTER TABLE premium_guilds ADD COLUMN IF NOT EXISTS premium_until TIMESTAMP""")
-        cur.execute("""ALTER TABLE premium_guilds ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP""")
 
 
 def cleanup_expired_premium_guilds():
@@ -379,130 +290,6 @@ def reject_premium_request(request_id: int, rejected_by: str = "rejected"):
         return dict(row) if row else None
 
 
-def get_active_premium_guilds():
-    cleanup_expired_premium_guilds()
-    with db_cursor(dict_cursor=True) as (_, cur):
-        cur.execute("""
-            SELECT guild_id, is_premium, premium_until, updated_at
-            FROM premium_guilds
-            WHERE is_premium = TRUE
-            ORDER BY guild_id ASC
-        """)
-        rows = cur.fetchall()
-        return [dict(row) for row in rows]
-
-
-def count_active_premium_guilds() -> int:
-    cleanup_expired_premium_guilds()
-    with db_cursor(dict_cursor=True) as (_, cur):
-        cur.execute("""
-            SELECT COUNT(*) AS cnt
-            FROM premium_guilds
-            WHERE is_premium = TRUE
-        """)
-        row = cur.fetchone()
-        return int(row["cnt"]) if row else 0
-
-
-def is_premium_guild(guild_id: int) -> bool:
-    cleanup_expired_premium_guilds()
-
-    with db_cursor(dict_cursor=True) as (_, cur):
-        cur.execute("""
-            SELECT is_premium, premium_until
-            FROM premium_guilds
-            WHERE guild_id = %s
-        """, (guild_id,))
-        row = cur.fetchone()
-
-    if not row:
-        return False
-
-    if not row["is_premium"]:
-        return False
-
-    premium_until = row["premium_until"]
-    if premium_until is not None and premium_until < datetime.utcnow():
-        return False
-
-    return True
-
-
-def is_guild_premium(guild_id: int) -> bool:
-    return is_premium_guild(guild_id)
-
-
-def get_premium_info(guild_id: int):
-    cleanup_expired_premium_guilds()
-    with db_cursor(dict_cursor=True) as (_, cur):
-        cur.execute("""
-            SELECT guild_id, is_premium, premium_until, updated_at
-            FROM premium_guilds
-            WHERE guild_id = %s
-        """, (guild_id,))
-        row = cur.fetchone()
-        return dict(row) if row else None
-
-
-def set_premium(guild_id: int, enabled: bool):
-    init_premium_tables()
-
-    if enabled:
-        with db_cursor() as (_, cur):
-            cur.execute("""
-                INSERT INTO premium_guilds (guild_id, is_premium, premium_until, updated_at)
-                VALUES (%s, TRUE, NULL, CURRENT_TIMESTAMP)
-                ON CONFLICT (guild_id)
-                DO UPDATE SET
-                    is_premium = TRUE,
-                    updated_at = CURRENT_TIMESTAMP
-            """, (guild_id,))
-    else:
-        with db_cursor() as (_, cur):
-            cur.execute("""
-                INSERT INTO premium_guilds (guild_id, is_premium, premium_until, updated_at)
-                VALUES (%s, FALSE, NULL, CURRENT_TIMESTAMP)
-                ON CONFLICT (guild_id)
-                DO UPDATE SET
-                    is_premium = FALSE,
-                    premium_until = NULL,
-                    updated_at = CURRENT_TIMESTAMP
-            """, (guild_id,))
-
-    return get_premium_info(guild_id)
-
-
-def set_premium_days(guild_id: int, days: int):
-    init_premium_tables()
-    current = get_premium_info(guild_id)
-
-    now = datetime.utcnow()
-    base_time = now
-
-    if current and current.get("is_premium") and current.get("premium_until"):
-        premium_until = current["premium_until"]
-        if premium_until > now:
-            base_time = premium_until
-
-    new_until = base_time + timedelta(days=days)
-
-    with db_cursor() as (_, cur):
-        cur.execute("""
-            INSERT INTO premium_guilds (guild_id, is_premium, premium_until, updated_at)
-            VALUES (%s, TRUE, %s, CURRENT_TIMESTAMP)
-            ON CONFLICT (guild_id)
-            DO UPDATE SET
-                is_premium = TRUE,
-                premium_until = %s,
-                updated_at = CURRENT_TIMESTAMP
-        """, (guild_id, new_until, new_until))
-
-    return get_premium_info(guild_id)
-
-
-# -------------------------
-# settings
-# -------------------------
 def init_settings_tables():
     with db_cursor() as (_, cur):
         cur.execute("""
@@ -521,16 +308,94 @@ def init_settings_tables():
             );
         """)
 
-        cur.execute("""ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS category_id BIGINT""")
-        cur.execute("""ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS recruit_role_id BIGINT""")
-        cur.execute("""ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS log_channel_id BIGINT""")
-        cur.execute("""ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS announcement_channel_id BIGINT""")
-        cur.execute("""ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS result_channel_id BIGINT""")
-        cur.execute("""ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS voice_category_id BIGINT""")
-        cur.execute("""ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS queue_channel_id BIGINT""")
-        cur.execute("""ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS manager_role_id BIGINT""")
-        cur.execute("""ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS premium_role_id BIGINT""")
-        cur.execute("""ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP""")
+
+def init_recruit_tables():
+    with db_cursor() as (_, cur):
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS lobbies (
+                channel_id BIGINT PRIMARY KEY,
+                guild_id BIGINT NOT NULL,
+                host_id BIGINT NOT NULL,
+                game VARCHAR(50) NOT NULL,
+                team_size INTEGER NOT NULL,
+                status VARCHAR(30) NOT NULL DEFAULT 'open',
+                message_id BIGINT,
+                waiting_voice_id BIGINT,
+                team_a_voice_id BIGINT,
+                team_b_voice_id BIGINT,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS lobby_players (
+                channel_id BIGINT NOT NULL,
+                user_id BIGINT NOT NULL,
+                display_name VARCHAR(100) NOT NULL,
+                mmr INTEGER NOT NULL,
+                position VARCHAR(50) NOT NULL,
+                party_id BIGINT,
+                joined_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (channel_id, user_id)
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS lobby_teams (
+                channel_id BIGINT NOT NULL,
+                team VARCHAR(1) NOT NULL,
+                user_id BIGINT NOT NULL,
+                PRIMARY KEY (channel_id, team, user_id)
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS players (
+                guild_id BIGINT NOT NULL,
+                user_id BIGINT NOT NULL,
+                display_name VARCHAR(100),
+                mmr INTEGER NOT NULL DEFAULT 1000,
+                win INTEGER NOT NULL DEFAULT 0,
+                lose INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (guild_id, user_id)
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS player_game_stats (
+                guild_id BIGINT NOT NULL,
+                user_id BIGINT NOT NULL,
+                game VARCHAR(50) NOT NULL,
+                display_name VARCHAR(100),
+                mmr INTEGER NOT NULL DEFAULT 1000,
+                win INTEGER NOT NULL DEFAULT 0,
+                lose INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (guild_id, user_id, game)
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS lobby_parties (
+                id BIGSERIAL PRIMARY KEY,
+                channel_id BIGINT NOT NULL,
+                leader_user_id BIGINT NOT NULL,
+                party_code VARCHAR(12) NOT NULL,
+                mode_size INTEGER NOT NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(channel_id, party_code)
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS lobby_party_members (
+                channel_id BIGINT NOT NULL,
+                party_id BIGINT NOT NULL,
+                user_id BIGINT NOT NULL,
+                display_name VARCHAR(100) NOT NULL,
+                joined_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY(channel_id, user_id)
+            )
+        """)
 
 
 def ensure_guild_settings(guild_id: int):
@@ -631,101 +496,28 @@ def set_category(guild_id: int, category_id: int):
     return update_settings(guild_id, category_id=category_id)
 
 
-# -------------------------
-# recruit / lobby / ranking
-# -------------------------
-def init_recruit_tables():
-    with db_cursor() as (_, cur):
+def is_premium_guild(guild_id: int) -> bool:
+    cleanup_expired_premium_guilds()
+
+    with db_cursor(dict_cursor=True) as (_, cur):
         cur.execute("""
-            CREATE TABLE IF NOT EXISTS lobbies (
-                channel_id BIGINT PRIMARY KEY,
-                guild_id BIGINT NOT NULL,
-                host_id BIGINT NOT NULL,
-                game VARCHAR(50) NOT NULL,
-                team_size INTEGER NOT NULL,
-                status VARCHAR(30) NOT NULL DEFAULT 'open',
-                message_id BIGINT,
-                waiting_voice_id BIGINT,
-                team_a_voice_id BIGINT,
-                team_b_voice_id BIGINT,
-                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
+            SELECT is_premium, premium_until
+            FROM premium_guilds
+            WHERE guild_id = %s
+        """, (guild_id,))
+        row = cur.fetchone()
 
-        cur.execute("""ALTER TABLE lobbies ADD COLUMN IF NOT EXISTS guild_id BIGINT""")
-        cur.execute("""ALTER TABLE lobbies ADD COLUMN IF NOT EXISTS host_id BIGINT""")
-        cur.execute("""ALTER TABLE lobbies ADD COLUMN IF NOT EXISTS game VARCHAR(50)""")
-        cur.execute("""ALTER TABLE lobbies ADD COLUMN IF NOT EXISTS team_size INTEGER""")
-        cur.execute("""ALTER TABLE lobbies ADD COLUMN IF NOT EXISTS status VARCHAR(30) DEFAULT 'open'""")
-        cur.execute("""ALTER TABLE lobbies ADD COLUMN IF NOT EXISTS message_id BIGINT""")
-        cur.execute("""ALTER TABLE lobbies ADD COLUMN IF NOT EXISTS waiting_voice_id BIGINT""")
-        cur.execute("""ALTER TABLE lobbies ADD COLUMN IF NOT EXISTS team_a_voice_id BIGINT""")
-        cur.execute("""ALTER TABLE lobbies ADD COLUMN IF NOT EXISTS team_b_voice_id BIGINT""")
-        cur.execute("""ALTER TABLE lobbies ADD COLUMN IF NOT EXISTS created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP""")
+    if not row:
+        return False
 
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS lobby_players (
-                channel_id BIGINT NOT NULL,
-                user_id BIGINT NOT NULL,
-                display_name VARCHAR(100) NOT NULL,
-                mmr INTEGER NOT NULL,
-                position VARCHAR(50) NOT NULL,
-                joined_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (channel_id, user_id)
-            )
-        """)
+    if not row["is_premium"]:
+        return False
 
-        cur.execute("""ALTER TABLE lobby_players ADD COLUMN IF NOT EXISTS display_name VARCHAR(100)""")
-        cur.execute("""ALTER TABLE lobby_players ADD COLUMN IF NOT EXISTS mmr INTEGER""")
-        cur.execute("""ALTER TABLE lobby_players ADD COLUMN IF NOT EXISTS position VARCHAR(50)""")
-        cur.execute("""ALTER TABLE lobby_players ADD COLUMN IF NOT EXISTS joined_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP""")
+    premium_until = row["premium_until"]
+    if premium_until is not None and premium_until < datetime.utcnow():
+        return False
 
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS lobby_teams (
-                channel_id BIGINT NOT NULL,
-                team VARCHAR(1) NOT NULL,
-                user_id BIGINT NOT NULL,
-                PRIMARY KEY (channel_id, team, user_id)
-            )
-        """)
-
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS players (
-                guild_id BIGINT NOT NULL,
-                user_id BIGINT NOT NULL,
-                display_name VARCHAR(100),
-                mmr INTEGER NOT NULL DEFAULT 1000,
-                win INTEGER NOT NULL DEFAULT 0,
-                lose INTEGER NOT NULL DEFAULT 0,
-                PRIMARY KEY (guild_id, user_id)
-            )
-        """)
-
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS player_game_stats (
-                guild_id BIGINT NOT NULL,
-                user_id BIGINT NOT NULL,
-                game VARCHAR(50) NOT NULL,
-                display_name VARCHAR(100),
-                mmr INTEGER NOT NULL DEFAULT 1000,
-                win INTEGER NOT NULL DEFAULT 0,
-                lose INTEGER NOT NULL DEFAULT 0,
-                PRIMARY KEY (guild_id, user_id, game)
-            )
-        """)
-
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS matches (
-                id BIGSERIAL PRIMARY KEY,
-                guild_id BIGINT NOT NULL,
-                channel_id BIGINT NOT NULL,
-                game VARCHAR(50) NOT NULL,
-                winner_team VARCHAR(1) NOT NULL,
-                team_a_avg INTEGER NOT NULL,
-                team_b_avg INTEGER NOT NULL,
-                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
+    return True
 
 
 def get_lobby(channel_id: int):
@@ -754,7 +546,6 @@ def get_lobby(channel_id: int):
 
 def create_lobby(channel_id: int, guild_id: int, host_id: int, game: str, team_size: int):
     init_recruit_tables()
-    register_guild(guild_id)
 
     with db_cursor() as (_, cur):
         cur.execute("""
@@ -773,6 +564,11 @@ def create_lobby(channel_id: int, guild_id: int, host_id: int, game: str, team_s
                 team_a_voice_id = NULL,
                 team_b_voice_id = NULL
         """, (channel_id, guild_id, host_id, game, team_size))
+
+        cur.execute("DELETE FROM lobby_players WHERE channel_id = %s", (channel_id,))
+        cur.execute("DELETE FROM lobby_teams WHERE channel_id = %s", (channel_id,))
+        cur.execute("DELETE FROM lobby_party_members WHERE channel_id = %s", (channel_id,))
+        cur.execute("DELETE FROM lobby_parties WHERE channel_id = %s", (channel_id,))
 
 
 def set_lobby_message(channel_id: int, message_id: int):
@@ -809,7 +605,7 @@ def get_lobby_players(channel_id: int):
 
     with db_cursor(dict_cursor=True) as (_, cur):
         cur.execute("""
-            SELECT channel_id, user_id, display_name, mmr, position, joined_at
+            SELECT channel_id, user_id, display_name, mmr, position, party_id, joined_at
             FROM lobby_players
             WHERE channel_id = %s
             ORDER BY joined_at ASC
@@ -817,17 +613,18 @@ def get_lobby_players(channel_id: int):
         return [dict(row) for row in cur.fetchall()]
 
 
-def add_lobby_player(channel_id: int, user_id: int, display_name: str, mmr: int, position: str):
+def add_lobby_player(channel_id: int, user_id: int, display_name: str, mmr: int, position: str, party_id: Optional[int] = None):
     with db_cursor() as (_, cur):
         cur.execute("""
-            INSERT INTO lobby_players (channel_id, user_id, display_name, mmr, position)
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO lobby_players (channel_id, user_id, display_name, mmr, position, party_id)
+            VALUES (%s, %s, %s, %s, %s, %s)
             ON CONFLICT (channel_id, user_id)
             DO UPDATE SET
                 display_name = EXCLUDED.display_name,
                 mmr = EXCLUDED.mmr,
-                position = EXCLUDED.position
-        """, (channel_id, user_id, display_name, mmr, position))
+                position = EXCLUDED.position,
+                party_id = EXCLUDED.party_id
+        """, (channel_id, user_id, display_name, mmr, position, party_id))
 
 
 def has_lobby_player(channel_id: int, user_id: int) -> bool:
@@ -878,7 +675,6 @@ def get_team_members(channel_id: int, team: str):
 
 def ensure_player(guild_id: int, user_id: int, mmr: int = 1000, display_name: Optional[str] = None):
     init_recruit_tables()
-    register_guild(guild_id)
 
     with db_cursor() as (_, cur):
         cur.execute("""
@@ -892,7 +688,6 @@ def ensure_player(guild_id: int, user_id: int, mmr: int = 1000, display_name: Op
 
 def ensure_player_game(guild_id: int, user_id: int, game: str, mmr: int = 1000, display_name: Optional[str] = None):
     init_recruit_tables()
-    register_guild(guild_id)
 
     with db_cursor() as (_, cur):
         cur.execute("""
@@ -904,388 +699,215 @@ def ensure_player_game(guild_id: int, user_id: int, game: str, mmr: int = 1000, 
         """, (guild_id, user_id, game, display_name, mmr))
 
 
-def add_match(guild_id: int, channel_id: int, game: str, winner_team: str, team_a_avg: int, team_b_avg: int):
-    register_guild(guild_id)
-
-    with db_cursor() as (_, cur):
-        cur.execute("""
-            INSERT INTO matches (guild_id, channel_id, game, winner_team, team_a_avg, team_b_avg)
-            VALUES (%s, %s, %s, %s, %s, %s)
-        """, (guild_id, channel_id, game, winner_team, team_a_avg, team_b_avg))
-
-
-def apply_match_result(guild_id: int, game: str, winners: list[int], losers: list[int], winner_delta: int, loser_delta: int, name_map: dict):
-    register_guild(guild_id)
-
-    for uid in winners:
-        display_name = name_map.get(uid)
-        ensure_player(guild_id, uid, 1000, display_name)
-        ensure_player_game(guild_id, uid, game, 1000, display_name)
-
-        with db_cursor() as (_, cur):
-            cur.execute("""
-                UPDATE players
-                SET
-                    mmr = GREATEST(0, mmr + %s),
-                    win = win + 1,
-                    display_name = COALESCE(%s, display_name)
-                WHERE guild_id = %s AND user_id = %s
-            """, (winner_delta, display_name, guild_id, uid))
-
-            cur.execute("""
-                UPDATE player_game_stats
-                SET
-                    mmr = GREATEST(0, mmr + %s),
-                    win = win + 1,
-                    display_name = COALESCE(%s, display_name)
-                WHERE guild_id = %s AND user_id = %s AND game = %s
-            """, (winner_delta, display_name, guild_id, uid, game))
-
-    for uid in losers:
-        display_name = name_map.get(uid)
-        ensure_player(guild_id, uid, 1000, display_name)
-        ensure_player_game(guild_id, uid, game, 1000, display_name)
-
-        with db_cursor() as (_, cur):
-            cur.execute("""
-                UPDATE players
-                SET
-                    mmr = GREATEST(0, mmr + %s),
-                    lose = lose + 1,
-                    display_name = COALESCE(%s, display_name)
-                WHERE guild_id = %s AND user_id = %s
-            """, (loser_delta, display_name, guild_id, uid))
-
-            cur.execute("""
-                UPDATE player_game_stats
-                SET
-                    mmr = GREATEST(0, mmr + %s),
-                    lose = lose + 1,
-                    display_name = COALESCE(%s, display_name)
-                WHERE guild_id = %s AND user_id = %s AND game = %s
-            """, (loser_delta, display_name, guild_id, uid, game))
-
-
-def delete_lobby(channel_id: int):
-    with db_cursor() as (_, cur):
-        cur.execute("DELETE FROM lobby_players WHERE channel_id = %s", (channel_id,))
-        cur.execute("DELETE FROM lobby_teams WHERE channel_id = %s", (channel_id,))
-        cur.execute("DELETE FROM lobbies WHERE channel_id = %s", (channel_id,))
-
-
-# -------------------------
-# seasons
-# -------------------------
-def init_season_tables():
-    with db_cursor() as (_, cur):
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS seasons (
-                id BIGSERIAL PRIMARY KEY,
-                guild_id BIGINT NOT NULL,
-                game VARCHAR(50) NOT NULL,
-                season_name VARCHAR(100) NOT NULL,
-                is_active BOOLEAN NOT NULL DEFAULT TRUE,
-                started_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                ended_at TIMESTAMP,
-                UNIQUE (guild_id, game, season_name)
-            )
-        """)
-
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS season_player_stats (
-                guild_id BIGINT NOT NULL,
-                game VARCHAR(50) NOT NULL,
-                season_id BIGINT NOT NULL,
-                user_id BIGINT NOT NULL,
-                display_name VARCHAR(100),
-                mmr INTEGER NOT NULL DEFAULT 1000,
-                win INTEGER NOT NULL DEFAULT 0,
-                lose INTEGER NOT NULL DEFAULT 0,
-                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (guild_id, game, season_id, user_id)
-            )
-        """)
-
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS season_matches (
-                id BIGSERIAL PRIMARY KEY,
-                guild_id BIGINT NOT NULL,
-                game VARCHAR(50) NOT NULL,
-                season_id BIGINT NOT NULL,
-                channel_id BIGINT NOT NULL,
-                winner_team VARCHAR(1) NOT NULL,
-                team_a_avg INTEGER NOT NULL,
-                team_b_avg INTEGER NOT NULL,
-                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-
-
-def create_season(guild_id: int, game: str, season_name: str):
-    init_season_tables()
-    register_guild(guild_id)
+def create_lobby_party(channel_id: int, leader_user_id: int, leader_name: str, mode_size: int):
+    init_recruit_tables()
 
     with db_cursor(dict_cursor=True) as (_, cur):
         cur.execute("""
-            UPDATE seasons
-            SET is_active = FALSE,
-                ended_at = CURRENT_TIMESTAMP
-            WHERE guild_id = %s AND game = %s AND is_active = TRUE
-        """, (guild_id, game))
+            SELECT party_id
+            FROM lobby_party_members
+            WHERE channel_id = %s AND user_id = %s
+        """, (channel_id, leader_user_id))
+        if cur.fetchone():
+            raise ValueError("이미 파티에 속해 있습니다.")
+
+        party_code = None
+        for _ in range(10):
+            test_code = generate_party_code()
+            cur.execute("""
+                SELECT id
+                FROM lobby_parties
+                WHERE channel_id = %s AND party_code = %s
+            """, (channel_id, test_code))
+            if cur.fetchone() is None:
+                party_code = test_code
+                break
+
+        if not party_code:
+            raise ValueError("파티 코드 생성에 실패했습니다.")
 
         cur.execute("""
-            INSERT INTO seasons (guild_id, game, season_name, is_active)
-            VALUES (%s, %s, %s, TRUE)
-            RETURNING id, guild_id, game, season_name, is_active, started_at, ended_at
-        """, (guild_id, game, season_name))
+            INSERT INTO lobby_parties (channel_id, leader_user_id, party_code, mode_size)
+            VALUES (%s, %s, %s, %s)
+            RETURNING id, channel_id, leader_user_id, party_code, mode_size, created_at
+        """, (channel_id, leader_user_id, party_code, mode_size))
+        party_row = cur.fetchone()
+
+        cur.execute("""
+            INSERT INTO lobby_party_members (channel_id, party_id, user_id, display_name)
+            VALUES (%s, %s, %s, %s)
+        """, (channel_id, party_row["id"], leader_user_id, leader_name))
+
+        return dict(party_row)
+
+
+def get_party_by_code(channel_id: int, party_code: str):
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("""
+            SELECT id, channel_id, leader_user_id, party_code, mode_size, created_at
+            FROM lobby_parties
+            WHERE channel_id = %s AND party_code = %s
+        """, (channel_id, party_code.upper()))
         row = cur.fetchone()
         return dict(row) if row else None
 
 
-def end_active_season(guild_id: int, game: str):
-    init_season_tables()
-
+def get_user_party(channel_id: int, user_id: int):
     with db_cursor(dict_cursor=True) as (_, cur):
         cur.execute("""
-            UPDATE seasons
-            SET is_active = FALSE,
-                ended_at = CURRENT_TIMESTAMP
-            WHERE guild_id = %s AND game = %s AND is_active = TRUE
-            RETURNING id, guild_id, game, season_name, is_active, started_at, ended_at
-        """, (guild_id, game))
+            SELECT
+                p.id,
+                p.channel_id,
+                p.leader_user_id,
+                p.party_code,
+                p.mode_size,
+                p.created_at
+            FROM lobby_parties p
+            JOIN lobby_party_members m
+              ON p.id = m.party_id
+            WHERE m.channel_id = %s AND m.user_id = %s
+        """, (channel_id, user_id))
         row = cur.fetchone()
         return dict(row) if row else None
 
 
-def get_active_season(guild_id: int, game: str):
-    init_season_tables()
-
+def get_party_members(channel_id: int, party_id: int):
     with db_cursor(dict_cursor=True) as (_, cur):
         cur.execute("""
-            SELECT id, guild_id, game, season_name, is_active, started_at, ended_at
-            FROM seasons
-            WHERE guild_id = %s AND game = %s AND is_active = TRUE
-            ORDER BY id DESC
-            LIMIT 1
-        """, (guild_id, game))
-        row = cur.fetchone()
-        return dict(row) if row else None
-
-
-def get_seasons(guild_id: int, game: Optional[str] = None, limit: int = 50):
-    init_season_tables()
-
-    with db_cursor(dict_cursor=True) as (_, cur):
-        if game:
-            cur.execute("""
-                SELECT id, guild_id, game, season_name, is_active, started_at, ended_at
-                FROM seasons
-                WHERE guild_id = %s AND game = %s
-                ORDER BY id DESC
-                LIMIT %s
-            """, (guild_id, game, limit))
-        else:
-            cur.execute("""
-                SELECT id, guild_id, game, season_name, is_active, started_at, ended_at
-                FROM seasons
-                WHERE guild_id = %s
-                ORDER BY id DESC
-                LIMIT %s
-            """, (guild_id, limit))
+            SELECT channel_id, party_id, user_id, display_name, joined_at
+            FROM lobby_party_members
+            WHERE channel_id = %s AND party_id = %s
+            ORDER BY joined_at ASC
+        """, (channel_id, party_id))
         return [dict(row) for row in cur.fetchall()]
 
 
-def get_season_by_id(season_id: int):
-    init_season_tables()
+def join_lobby_party(channel_id: int, party_code: str, user_id: int, display_name: str):
+    init_recruit_tables()
 
     with db_cursor(dict_cursor=True) as (_, cur):
         cur.execute("""
-            SELECT id, guild_id, game, season_name, is_active, started_at, ended_at
-            FROM seasons
-            WHERE id = %s
-        """, (season_id,))
-        row = cur.fetchone()
-        return dict(row) if row else None
+            SELECT party_id
+            FROM lobby_party_members
+            WHERE channel_id = %s AND user_id = %s
+        """, (channel_id, user_id))
+        if cur.fetchone():
+            raise ValueError("이미 다른 파티에 속해 있습니다.")
 
-
-def get_latest_season_for_game(guild_id: int, game: str):
-    init_season_tables()
-
-    with db_cursor(dict_cursor=True) as (_, cur):
         cur.execute("""
-            SELECT id, guild_id, game, season_name, is_active, started_at, ended_at
-            FROM seasons
-            WHERE guild_id = %s AND game = %s
-            ORDER BY id DESC
-            LIMIT 1
-        """, (guild_id, game))
-        row = cur.fetchone()
-        return dict(row) if row else None
+            SELECT id, channel_id, leader_user_id, party_code, mode_size, created_at
+            FROM lobby_parties
+            WHERE channel_id = %s AND party_code = %s
+        """, (channel_id, party_code.upper()))
+        party = cur.fetchone()
 
+        if not party:
+            raise ValueError("파티 코드를 찾을 수 없습니다.")
 
-def ensure_season_player(guild_id: int, game: str, season_id: int, user_id: int, display_name: Optional[str] = None):
-    init_season_tables()
-    register_guild(guild_id)
-
-    with db_cursor() as (_, cur):
         cur.execute("""
-            INSERT INTO season_player_stats (
-                guild_id, game, season_id, user_id, display_name, mmr, win, lose
-            )
-            VALUES (%s, %s, %s, %s, %s, 1000, 0, 0)
-            ON CONFLICT (guild_id, game, season_id, user_id)
-            DO UPDATE SET
-                display_name = COALESCE(EXCLUDED.display_name, season_player_stats.display_name),
-                updated_at = CURRENT_TIMESTAMP
-        """, (guild_id, game, season_id, user_id, display_name))
+            SELECT COUNT(*) AS cnt
+            FROM lobby_party_members
+            WHERE channel_id = %s AND party_id = %s
+        """, (channel_id, party["id"]))
+        member_count = cur.fetchone()["cnt"]
 
+        if member_count >= party["mode_size"]:
+            raise ValueError("해당 파티는 이미 정원이 찼습니다.")
 
-def apply_season_match_result(guild_id: int, game: str, season_id: int, winners: list[int], losers: list[int], winner_delta: int, loser_delta: int, name_map: dict):
-    init_season_tables()
-    register_guild(guild_id)
-
-    for uid in winners:
-        display_name = name_map.get(uid)
-        ensure_season_player(guild_id, game, season_id, uid, display_name)
-
-        with db_cursor() as (_, cur):
-            cur.execute("""
-                UPDATE season_player_stats
-                SET
-                    mmr = GREATEST(0, mmr + %s),
-                    win = win + 1,
-                    display_name = COALESCE(%s, display_name),
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE guild_id = %s AND game = %s AND season_id = %s AND user_id = %s
-            """, (winner_delta, display_name, guild_id, game, season_id, uid))
-
-    for uid in losers:
-        display_name = name_map.get(uid)
-        ensure_season_player(guild_id, game, season_id, uid, display_name)
-
-        with db_cursor() as (_, cur):
-            cur.execute("""
-                UPDATE season_player_stats
-                SET
-                    mmr = GREATEST(0, mmr + %s),
-                    lose = lose + 1,
-                    display_name = COALESCE(%s, display_name),
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE guild_id = %s AND game = %s AND season_id = %s AND user_id = %s
-            """, (loser_delta, display_name, guild_id, game, season_id, uid))
-
-
-def add_season_match(guild_id: int, game: str, season_id: int, channel_id: int, winner_team: str, team_a_avg: int, team_b_avg: int):
-    init_season_tables()
-    register_guild(guild_id)
-
-    with db_cursor() as (_, cur):
         cur.execute("""
-            INSERT INTO season_matches (
-                guild_id, game, season_id, channel_id, winner_team, team_a_avg, team_b_avg
-            )
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-        """, (guild_id, game, season_id, channel_id, winner_team, team_a_avg, team_b_avg))
+            INSERT INTO lobby_party_members (channel_id, party_id, user_id, display_name)
+            VALUES (%s, %s, %s, %s)
+        """, (channel_id, party["id"], user_id, display_name))
+
+        return dict(party)
 
 
-def get_season_ranking(guild_id: int, game: str, season_id: int, limit: int = 50):
-    init_season_tables()
+def leave_lobby_party(channel_id: int, user_id: int):
+    init_recruit_tables()
 
     with db_cursor(dict_cursor=True) as (_, cur):
         cur.execute("""
             SELECT
-                guild_id,
-                game,
-                season_id,
-                user_id,
-                display_name,
-                mmr,
-                win,
-                lose,
-                CASE
-                    WHEN (win + lose) = 0 THEN 0
-                    ELSE ROUND((CAST(win AS NUMERIC) / (win + lose)) * 100, 1)
-                END AS winrate
-            FROM season_player_stats
-            WHERE guild_id = %s AND game = %s AND season_id = %s
-            ORDER BY mmr DESC, win DESC, user_id ASC
-            LIMIT %s
-        """, (guild_id, game, season_id, limit))
-        return [dict(row) for row in cur.fetchall()]
+                p.id,
+                p.channel_id,
+                p.leader_user_id,
+                p.party_code,
+                p.mode_size
+            FROM lobby_parties p
+            JOIN lobby_party_members m
+              ON p.id = m.party_id
+            WHERE m.channel_id = %s AND m.user_id = %s
+        """, (channel_id, user_id))
+        party = cur.fetchone()
+
+        if not party:
+            return {"action": "none"}
+
+        if party["leader_user_id"] == user_id:
+            cur.execute("""
+                SELECT user_id
+                FROM lobby_party_members
+                WHERE channel_id = %s AND party_id = %s
+            """, (channel_id, party["id"]))
+            member_ids = [row["user_id"] for row in cur.fetchall()]
+
+            cur.execute("""
+                DELETE FROM lobby_players
+                WHERE channel_id = %s AND party_id = %s
+            """, (channel_id, party["id"]))
+
+            cur.execute("""
+                DELETE FROM lobby_party_members
+                WHERE channel_id = %s AND party_id = %s
+            """, (channel_id, party["id"]))
+
+            cur.execute("""
+                DELETE FROM lobby_parties
+                WHERE id = %s
+            """, (party["id"],))
+
+            return {
+                "action": "disbanded",
+                "party_code": party["party_code"],
+                "member_ids": member_ids,
+            }
+
+        cur.execute("""
+            DELETE FROM lobby_players
+            WHERE channel_id = %s AND user_id = %s
+        """, (channel_id, user_id))
+
+        cur.execute("""
+            DELETE FROM lobby_party_members
+            WHERE channel_id = %s AND user_id = %s
+        """, (channel_id, user_id))
+
+        return {
+            "action": "left",
+            "party_code": party["party_code"],
+        }
 
 
-def get_season_matches(guild_id: int, game: str, season_id: int, limit: int = 20):
-    init_season_tables()
-
+def get_lobby_parties(channel_id: int):
     with db_cursor(dict_cursor=True) as (_, cur):
         cur.execute("""
-            SELECT id, guild_id, game, season_id, channel_id, winner_team, team_a_avg, team_b_avg, created_at
-            FROM season_matches
-            WHERE guild_id = %s AND game = %s AND season_id = %s
-            ORDER BY id DESC
-            LIMIT %s
-        """, (guild_id, game, season_id, limit))
-        return [dict(row) for row in cur.fetchall()]
+            SELECT id, channel_id, leader_user_id, party_code, mode_size, created_at
+            FROM lobby_parties
+            WHERE channel_id = %s
+            ORDER BY id ASC
+        """, (channel_id,))
+        parties = [dict(row) for row in cur.fetchall()]
+
+    result = []
+    for party in parties:
+        members = get_party_members(channel_id, party["id"])
+        result.append({
+            **party,
+            "members": members,
+        })
+    return result
 
 
-def get_season_player_detail(guild_id: int, game: str, season_id: int, user_id: int):
-    init_season_tables()
-
-    with db_cursor(dict_cursor=True) as (_, cur):
-        cur.execute("""
-            SELECT
-                guild_id,
-                game,
-                season_id,
-                user_id,
-                display_name,
-                mmr,
-                win,
-                lose,
-                CASE
-                    WHEN (win + lose) = 0 THEN 0
-                    ELSE ROUND((CAST(win AS NUMERIC) / (win + lose)) * 100, 1)
-                END AS winrate,
-                updated_at
-            FROM season_player_stats
-            WHERE guild_id = %s AND game = %s AND season_id = %s AND user_id = %s
-        """, (guild_id, game, season_id, user_id))
-        row = cur.fetchone()
-        return dict(row) if row else None
-
-
-def get_season_stats_summary(guild_id: int, game: str, season_id: int):
-    init_season_tables()
-
-    with db_cursor(dict_cursor=True) as (_, cur):
-        cur.execute("""
-            SELECT
-                COUNT(*) AS player_count,
-                COALESCE(AVG(mmr), 0) AS avg_mmr,
-                COALESCE(MAX(mmr), 0) AS top_mmr
-            FROM season_player_stats
-            WHERE guild_id = %s AND game = %s AND season_id = %s
-        """, (guild_id, game, season_id))
-        player_row = cur.fetchone()
-
-        cur.execute("""
-            SELECT COUNT(*) AS match_count
-            FROM season_matches
-            WHERE guild_id = %s AND game = %s AND season_id = %s
-        """, (guild_id, game, season_id))
-        match_row = cur.fetchone()
-
-    return {
-        "player_count": int(player_row["player_count"]) if player_row else 0,
-        "avg_mmr": round(float(player_row["avg_mmr"])) if player_row else 0,
-        "top_mmr": int(player_row["top_mmr"]) if player_row else 0,
-        "match_count": int(match_row["match_count"]) if match_row else 0,
-    }
-
-
-# -------------------------
-# DB wrapper
-# -------------------------
 class DB:
     def __init__(self):
         self.init_tables()
@@ -1306,32 +928,10 @@ class DB:
 
     @classmethod
     def init_tables(cls):
-        init_guild_registry_table()
         init_settings_tables()
         init_recruit_tables()
         init_premium_tables()
         init_support_inquiry_table()
-        init_season_tables()
-
-    @staticmethod
-    def init_guild_registry_table():
-        return init_guild_registry_table()
-
-    @staticmethod
-    def register_guild(guild_id: int, guild_name: Optional[str] = None):
-        return register_guild(guild_id, guild_name)
-
-    @staticmethod
-    def deactivate_guild(guild_id: int):
-        return deactivate_guild(guild_id)
-
-    @staticmethod
-    def get_registered_guilds(active_only: bool = False):
-        return get_registered_guilds(active_only)
-
-    @staticmethod
-    def get_registered_guild(guild_id: int):
-        return get_registered_guild(guild_id)
 
     @staticmethod
     def init_support_inquiry_table():
@@ -1394,30 +994,6 @@ class DB:
         return is_premium_guild(guild_id)
 
     @staticmethod
-    def get_active_premium_guilds():
-        return get_active_premium_guilds()
-
-    @staticmethod
-    def count_active_premium_guilds():
-        return count_active_premium_guilds()
-
-    @staticmethod
-    def is_guild_premium(guild_id: int):
-        return is_guild_premium(guild_id)
-
-    @staticmethod
-    def get_premium_info(guild_id: int):
-        return get_premium_info(guild_id)
-
-    @staticmethod
-    def set_premium(guild_id: int, enabled: bool):
-        return set_premium(guild_id, enabled)
-
-    @staticmethod
-    def set_premium_days(guild_id: int, days: int):
-        return set_premium_days(guild_id, days)
-
-    @staticmethod
     def init_recruit_tables():
         return init_recruit_tables()
 
@@ -1446,8 +1022,8 @@ class DB:
         return get_lobby_players(channel_id)
 
     @staticmethod
-    def add_lobby_player(channel_id: int, user_id: int, display_name: str, mmr: int, position: str):
-        return add_lobby_player(channel_id, user_id, display_name, mmr, position)
+    def add_lobby_player(channel_id: int, user_id: int, display_name: str, mmr: int, position: str, party_id: Optional[int] = None):
+        return add_lobby_player(channel_id, user_id, display_name, mmr, position, party_id)
 
     @staticmethod
     def has_lobby_player(channel_id: int, user_id: int) -> bool:
@@ -1478,72 +1054,32 @@ class DB:
         return ensure_player_game(guild_id, user_id, game, mmr, display_name)
 
     @staticmethod
-    def add_match(guild_id: int, channel_id: int, game: str, winner_team: str, team_a_avg: int, team_b_avg: int):
-        return add_match(guild_id, channel_id, game, winner_team, team_a_avg, team_b_avg)
+    def create_lobby_party(channel_id: int, leader_user_id: int, leader_name: str, mode_size: int):
+        return create_lobby_party(channel_id, leader_user_id, leader_name, mode_size)
 
     @staticmethod
-    def apply_match_result(guild_id: int, game: str, winners: list[int], losers: list[int], winner_delta: int, loser_delta: int, name_map: dict):
-        return apply_match_result(guild_id, game, winners, losers, winner_delta, loser_delta, name_map)
+    def get_party_by_code(channel_id: int, party_code: str):
+        return get_party_by_code(channel_id, party_code)
 
     @staticmethod
-    def delete_lobby(channel_id: int):
-        return delete_lobby(channel_id)
+    def get_user_party(channel_id: int, user_id: int):
+        return get_user_party(channel_id, user_id)
 
     @staticmethod
-    def init_season_tables():
-        return init_season_tables()
+    def get_party_members(channel_id: int, party_id: int):
+        return get_party_members(channel_id, party_id)
 
     @staticmethod
-    def create_season(guild_id: int, game: str, season_name: str):
-        return create_season(guild_id, game, season_name)
+    def join_lobby_party(channel_id: int, party_code: str, user_id: int, display_name: str):
+        return join_lobby_party(channel_id, party_code, user_id, display_name)
 
     @staticmethod
-    def end_active_season(guild_id: int, game: str):
-        return end_active_season(guild_id, game)
+    def leave_lobby_party(channel_id: int, user_id: int):
+        return leave_lobby_party(channel_id, user_id)
 
     @staticmethod
-    def get_active_season(guild_id: int, game: str):
-        return get_active_season(guild_id, game)
-
-    @staticmethod
-    def get_seasons(guild_id: int, game: Optional[str] = None, limit: int = 50):
-        return get_seasons(guild_id, game, limit)
-
-    @staticmethod
-    def get_season_by_id(season_id: int):
-        return get_season_by_id(season_id)
-
-    @staticmethod
-    def get_latest_season_for_game(guild_id: int, game: str):
-        return get_latest_season_for_game(guild_id, game)
-
-    @staticmethod
-    def ensure_season_player(guild_id: int, game: str, season_id: int, user_id: int, display_name: Optional[str] = None):
-        return ensure_season_player(guild_id, game, season_id, user_id, display_name)
-
-    @staticmethod
-    def apply_season_match_result(guild_id: int, game: str, season_id: int, winners: list[int], losers: list[int], winner_delta: int, loser_delta: int, name_map: dict):
-        return apply_season_match_result(guild_id, game, season_id, winners, losers, winner_delta, loser_delta, name_map)
-
-    @staticmethod
-    def add_season_match(guild_id: int, game: str, season_id: int, channel_id: int, winner_team: str, team_a_avg: int, team_b_avg: int):
-        return add_season_match(guild_id, game, season_id, channel_id, winner_team, team_a_avg, team_b_avg)
-
-    @staticmethod
-    def get_season_ranking(guild_id: int, game: str, season_id: int, limit: int = 50):
-        return get_season_ranking(guild_id, game, season_id, limit)
-
-    @staticmethod
-    def get_season_matches(guild_id: int, game: str, season_id: int, limit: int = 20):
-        return get_season_matches(guild_id, game, season_id, limit)
-
-    @staticmethod
-    def get_season_player_detail(guild_id: int, game: str, season_id: int, user_id: int):
-        return get_season_player_detail(guild_id, game, season_id, user_id)
-
-    @staticmethod
-    def get_season_stats_summary(guild_id: int, game: str, season_id: int):
-        return get_season_stats_summary(guild_id, game, season_id)
+    def get_lobby_parties(channel_id: int):
+        return get_lobby_parties(channel_id)
 
     @staticmethod
     def execute(query: str, params: tuple = ()):

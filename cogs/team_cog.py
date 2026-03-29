@@ -3,11 +3,7 @@ from discord.ext import commands
 from discord import app_commands
 
 from core.db import DB
-from cogs.recruit_cog import (
-    build_lobby_embed,
-    get_pubg_mode_label,
-    get_game_display_name,
-)
+from cogs.recruit_cog import build_lobby_embed
 from core.matchmaking import auto_balance_players, calc_elo_delta
 
 db = DB()
@@ -20,16 +16,75 @@ def format_team_block(team: list[dict]):
     )
 
 
-def get_mode_prefix_text(lobby: dict) -> str:
-    if lobby["game"] == "pubg":
-        return f"배그 형식: **{get_pubg_mode_label(lobby['team_size'])}**\n"
-    return ""
+def ensure_matches_table():
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS matches (
+            id BIGSERIAL PRIMARY KEY,
+            guild_id BIGINT NOT NULL,
+            channel_id BIGINT NOT NULL,
+            game VARCHAR(50) NOT NULL,
+            winner_team VARCHAR(1) NOT NULL,
+            team_a_avg INTEGER NOT NULL,
+            team_b_avg INTEGER NOT NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
 
 
-def get_result_game_text(lobby: dict) -> str:
-    if lobby["game"] == "pubg":
-        return f"PUBG ({get_pubg_mode_label(lobby['team_size'])})"
-    return get_game_display_name(lobby)
+def add_match(guild_id: int, channel_id: int, game: str, winner_team: str, team_a_avg: int, team_b_avg: int):
+    ensure_matches_table()
+    db.execute("""
+        INSERT INTO matches (guild_id, channel_id, game, winner_team, team_a_avg, team_b_avg)
+        VALUES (%s, %s, %s, %s, %s, %s)
+    """, (guild_id, channel_id, game, winner_team, team_a_avg, team_b_avg))
+
+
+def apply_match_result(guild_id: int, game: str, winners: list[int], losers: list[int], winner_delta: int, loser_delta: int, name_map: dict[int, str]):
+    for uid in winners:
+        display_name = name_map.get(uid)
+        db.ensure_player(guild_id, uid, 1000, display_name)
+        db.ensure_player_game(guild_id, uid, game, 1000, display_name)
+
+        db.execute("""
+            UPDATE players
+            SET
+                mmr = GREATEST(0, mmr + %s),
+                win = win + 1,
+                display_name = COALESCE(%s, display_name)
+            WHERE guild_id = %s AND user_id = %s
+        """, (winner_delta, display_name, guild_id, uid))
+
+        db.execute("""
+            UPDATE player_game_stats
+            SET
+                mmr = GREATEST(0, mmr + %s),
+                win = win + 1,
+                display_name = COALESCE(%s, display_name)
+            WHERE guild_id = %s AND user_id = %s AND game = %s
+        """, (winner_delta, display_name, guild_id, uid, game))
+
+    for uid in losers:
+        display_name = name_map.get(uid)
+        db.ensure_player(guild_id, uid, 1000, display_name)
+        db.ensure_player_game(guild_id, uid, game, 1000, display_name)
+
+        db.execute("""
+            UPDATE players
+            SET
+                mmr = GREATEST(0, mmr + %s),
+                lose = lose + 1,
+                display_name = COALESCE(%s, display_name)
+            WHERE guild_id = %s AND user_id = %s
+        """, (loser_delta, display_name, guild_id, uid))
+
+        db.execute("""
+            UPDATE player_game_stats
+            SET
+                mmr = GREATEST(0, mmr + %s),
+                lose = lose + 1,
+                display_name = COALESCE(%s, display_name)
+            WHERE guild_id = %s AND user_id = %s AND game = %s
+        """, (loser_delta, display_name, guild_id, uid, game))
 
 
 class Team(commands.Cog):
@@ -60,6 +115,13 @@ class Team(commands.Cog):
                 await interaction.response.send_message("이 채널에 로비가 없습니다.", ephemeral=True)
                 return
 
+            if lobby["game"] == "pubg":
+                await interaction.response.send_message(
+                    "배그는 배틀로얄 모집형이라 `/밸런스팀`을 사용하지 않습니다.\n정원이 차면 자동으로 모집 완료 처리됩니다.",
+                    ephemeral=True
+                )
+                return
+
             players = db.get_lobby_players(interaction.channel_id)
             need = lobby["team_size"] * 2
 
@@ -71,14 +133,9 @@ class Team(commands.Cog):
                 return
 
             selected = players[:need]
-            (team_a, team_b), mode_text = auto_balance_players(
-                lobby["game"],
-                selected,
-                lobby["team_size"]
-            )
+            (team_a, team_b), mode_text = auto_balance_players(lobby["game"], selected, lobby["team_size"])
 
             db.clear_teams(interaction.channel_id)
-
             for p in team_a:
                 db.add_team_member(interaction.channel_id, "A", p["user_id"])
             for p in team_b:
@@ -89,18 +146,12 @@ class Team(commands.Cog):
             a_sum = sum(p["mmr"] for p in team_a)
             b_sum = sum(p["mmr"] for p in team_b)
 
-            mode_prefix = get_mode_prefix_text(lobby)
-            game_text = get_result_game_text(lobby)
-
             await interaction.response.send_message(
-                f"팀 분배 완료 ({mode_text})\n"
-                f"게임: **{game_text}**\n"
-                f"{mode_prefix}\n"
+                f"팀 분배 완료 ({mode_text})\n\n"
                 f"**A팀 총합:** {a_sum}\n{format_team_block(team_a)}\n\n"
                 f"**B팀 총합:** {b_sum}\n{format_team_block(team_b)}\n\n"
                 f"차이: {abs(a_sum - b_sum)}"
             )
-
             await self.refresh_message(interaction.channel, interaction.channel_id)
 
         except Exception as e:
@@ -110,7 +161,7 @@ class Team(commands.Cog):
             else:
                 await interaction.response.send_message(f"오류 발생: {e}", ephemeral=True)
 
-    @app_commands.command(name="결과기록", description="경기 결과를 반영하고 ELO/MMR을 계산합니다.")
+    @app_commands.command(name="결과기록", description="경기 결과를 반영하고 ELO를 계산합니다.")
     @app_commands.describe(승리팀="A 또는 B")
     async def record_result(self, interaction: discord.Interaction, 승리팀: str):
         try:
@@ -126,7 +177,14 @@ class Team(commands.Cog):
                 await interaction.response.send_message("이 채널에 로비가 없습니다.", ephemeral=True)
                 return
 
-            winner = 승리팀.upper().strip()
+            if lobby["game"] == "pubg":
+                await interaction.response.send_message(
+                    "배그 배틀로얄 모집형은 현재 `/결과기록`을 지원하지 않습니다.",
+                    ephemeral=True
+                )
+                return
+
+            winner = 승리팀.upper()
             if winner not in ["A", "B"]:
                 await interaction.response.send_message("승리팀은 A 또는 B만 가능합니다.", ephemeral=True)
                 return
@@ -148,48 +206,18 @@ class Team(commands.Cog):
             delta_a, delta_b = calc_elo_delta(avg_a, avg_b, winner)
 
             if winner == "A":
-                db.apply_match_result(
-                    interaction.guild_id,
-                    lobby["game"],
-                    team_a_ids,
-                    team_b_ids,
-                    delta_a,
-                    delta_b,
-                    name_map
-                )
+                apply_match_result(interaction.guild_id, lobby["game"], team_a_ids, team_b_ids, delta_a, delta_b, name_map)
             else:
-                db.apply_match_result(
-                    interaction.guild_id,
-                    lobby["game"],
-                    team_b_ids,
-                    team_a_ids,
-                    delta_b,
-                    delta_a,
-                    name_map
-                )
+                apply_match_result(interaction.guild_id, lobby["game"], team_b_ids, team_a_ids, delta_b, delta_a, name_map)
 
-            db.add_match(
-                interaction.guild_id,
-                interaction.channel_id,
-                lobby["game"],
-                winner,
-                avg_a,
-                avg_b
-            )
+            add_match(interaction.guild_id, interaction.channel_id, lobby["game"], winner, avg_a, avg_b)
             db.set_lobby_status(interaction.channel_id, "finished")
 
-            game_text = get_result_game_text(lobby)
-            mode_prefix = get_mode_prefix_text(lobby)
-
             lines = []
-            lines.append("**A팀 변동**")
             for uid in team_a_ids:
                 delta = delta_a
                 sign = "+" if delta >= 0 else ""
                 lines.append(f"{name_map.get(uid, uid)}: {sign}{delta}")
-
-            lines.append("")
-            lines.append("**B팀 변동**")
             for uid in team_b_ids:
                 delta = delta_b
                 sign = "+" if delta >= 0 else ""
@@ -197,14 +225,11 @@ class Team(commands.Cog):
 
             await interaction.response.send_message(
                 f"결과 기록 완료\n"
-                f"게임: **{game_text}**\n"
-                f"{mode_prefix}"
                 f"승리팀: **{winner}팀**\n"
                 f"A팀 평균: {avg_a}\n"
                 f"B팀 평균: {avg_b}\n\n"
-                + "\n".join(lines)
+                f"**ELO/MMR 변동**\n" + "\n".join(lines)
             )
-
             await self.refresh_message(interaction.channel, interaction.channel_id)
 
         except Exception as e:
@@ -246,12 +271,16 @@ class Team(commands.Cog):
                     except Exception:
                         pass
 
-            db.delete_lobby(interaction.channel_id)
+            db.execute("DELETE FROM lobby_players WHERE channel_id = %s", (interaction.channel_id,))
+            db.execute("DELETE FROM lobby_teams WHERE channel_id = %s", (interaction.channel_id,))
+            db.execute("DELETE FROM lobby_party_members WHERE channel_id = %s", (interaction.channel_id,))
+            db.execute("DELETE FROM lobby_parties WHERE channel_id = %s", (interaction.channel_id,))
+            db.execute("DELETE FROM lobbies WHERE channel_id = %s", (interaction.channel_id,))
 
             if waiting_ch and isinstance(waiting_ch, discord.VoiceChannel):
                 await interaction.response.send_message(
                     f"내전 종료 완료\n"
-                    f"A팀/B팀 채널을 정리했고, 남은 인원은 {waiting_ch.mention} 으로 이동했습니다.\n"
+                    f"남은 인원은 {waiting_ch.mention} 에 남아 있습니다.\n"
                     f"대기방 인원이 0명이 되면 자동으로 삭제됩니다."
                 )
             else:
