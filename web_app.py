@@ -31,10 +31,6 @@ ACCOUNT_HOLDER = "김태용"
 PREMIUM_PRICE = 5000
 PREMIUM_DAYS = 30
 
-# 사이트에서 숨길 서버 이름
-HIDDEN_GUILD_NAMES = {"한디리 심사"}
-
-
 init_premium_tables()
 cleanup_expired_premium_guilds()
 
@@ -43,16 +39,6 @@ def get_conn():
     if not DATABASE_URL:
         raise RuntimeError("DATABASE_URL 환경변수가 설정되지 않았습니다.")
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
-
-
-def filter_visible_guilds(guilds):
-    visible = []
-    for guild in guilds:
-        guild_name = (guild.get("guild_name") or "").strip()
-        if guild_name in HIDDEN_GUILD_NAMES:
-            continue
-        visible.append(guild)
-    return visible
 
 
 BASE_STYLE = """
@@ -1108,7 +1094,6 @@ def index():
     q = request.args.get("q", "").strip()
 
     guilds = get_registered_guilds(active_only=True)
-    guilds = filter_visible_guilds(guilds)
 
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -1257,7 +1242,6 @@ def season_page():
     selected_game = request.args.get("game", "").strip()
 
     guilds = get_registered_guilds(active_only=True)
-    guilds = filter_visible_guilds(guilds)
 
     with get_conn() as conn:
         with conn.cursor() as cur:
