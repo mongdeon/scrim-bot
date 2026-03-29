@@ -15,6 +15,12 @@ GAME_OPTIONS = [
     app_commands.Choice(name="Overwatch 2", value="overwatch"),
 ]
 
+PUBG_MODE_OPTIONS = [
+    app_commands.Choice(name="솔로", value="solo"),
+    app_commands.Choice(name="듀오", value="duo"),
+    app_commands.Choice(name="스쿼드", value="squad"),
+]
+
 POSITION_MAP = {
     "valorant": ["타격대", "척후대", "감시자", "전략가", "상관없음"],
     "lol": ["탑", "정글", "미드", "원딜", "서폿", "상관없음"],
@@ -42,14 +48,36 @@ def get_current_map_pick(channel_id: int):
     """, (channel_id,))
 
 
-def build_lobby_embed(lobby: dict, players: list[dict], team_a=None, team_b=None) -> discord.Embed:
-    game_name = {
+def get_pubg_mode_label(team_size: int) -> str:
+    if team_size == 1:
+        return "솔로"
+    if team_size == 2:
+        return "듀오"
+    if team_size == 4:
+        return "스쿼드"
+    return f"{team_size}인"
+
+
+def get_game_display_name(lobby: dict) -> str:
+    if lobby["game"] == "pubg":
+        return f"PUBG ({get_pubg_mode_label(lobby['team_size'])})"
+
+    return {
         "valorant": "VALORANT",
         "lol": "League of Legends",
         "pubg": "PUBG",
         "overwatch": "Overwatch 2"
     }.get(lobby["game"], lobby["game"])
 
+
+def get_team_size_text(lobby: dict) -> str:
+    if lobby["game"] == "pubg":
+        return f"{get_pubg_mode_label(lobby['team_size'])} ({lobby['team_size']} vs {lobby['team_size']})"
+    return f"{lobby['team_size']} vs {lobby['team_size']}"
+
+
+def build_lobby_embed(lobby: dict, players: list[dict], team_a=None, team_b=None) -> discord.Embed:
+    game_name = get_game_display_name(lobby)
     need = lobby["team_size"] * 2
 
     color = discord.Color.green()
@@ -62,8 +90,11 @@ def build_lobby_embed(lobby: dict, players: list[dict], team_a=None, team_b=None
 
     embed = discord.Embed(title=f"{game_name} 내전 모집", color=color)
     embed.add_field(name="상태", value=lobby["status"], inline=True)
-    embed.add_field(name="팀 인원", value=f"{lobby['team_size']} vs {lobby['team_size']}", inline=True)
+    embed.add_field(name="팀 인원", value=get_team_size_text(lobby), inline=True)
     embed.add_field(name="현재 인원", value=f"{len(players)} / {need}", inline=True)
+
+    if lobby["game"] == "pubg":
+        embed.add_field(name="배그 형식", value=get_pubg_mode_label(lobby["team_size"]), inline=True)
 
     map_pick = get_current_map_pick(lobby["channel_id"])
     if map_pick and map_pick.get("selected_map"):
@@ -83,7 +114,10 @@ def build_lobby_embed(lobby: dict, players: list[dict], team_a=None, team_b=None
         embed.add_field(name="B팀", value="\n".join(f"<@{uid}>" for uid in team_b), inline=True)
 
     if lobby["status"] == "open":
-        embed.set_footer(text="참가 버튼을 눌러 포지션과 MMR을 입력하세요.")
+        if lobby["game"] == "pubg":
+            embed.set_footer(text="참가 버튼을 눌러 역할과 MMR을 입력하세요. 배그는 솔로/듀오/스쿼드 형식으로 생성됩니다.")
+        else:
+            embed.set_footer(text="참가 버튼을 눌러 포지션과 MMR을 입력하세요.")
     elif lobby["status"] == "started":
         embed.set_footer(text="정원이 차서 자동 팀 분배 + 자동 음성 이동이 완료되었습니다.")
     else:
@@ -271,6 +305,10 @@ class Recruit(commands.Cog):
         if not category or not role or not me:
             return None, None, None
 
+        game_channel_prefix = lobby["game"]
+        if lobby["game"] == "pubg":
+            game_channel_prefix = f"pubg-{get_pubg_mode_label(lobby['team_size'])}"
+
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(view_channel=False, connect=False),
             role: discord.PermissionOverwrite(view_channel=True, connect=True, speak=True),
@@ -287,24 +325,29 @@ class Recruit(commands.Cog):
 
         if waiting is None:
             waiting = await guild.create_voice_channel(
-                name=f"{lobby['game']}-대기방",
+                name=f"{game_channel_prefix}-대기방",
                 category=category,
                 overwrites=overwrites
             )
         if team_a_ch is None:
             team_a_ch = await guild.create_voice_channel(
-                name=f"{lobby['game']}-A팀",
+                name=f"{game_channel_prefix}-A팀",
                 category=category,
                 overwrites=overwrites
             )
         if team_b_ch is None:
             team_b_ch = await guild.create_voice_channel(
-                name=f"{lobby['game']}-B팀",
+                name=f"{game_channel_prefix}-B팀",
                 category=category,
                 overwrites=overwrites
             )
 
-        db.set_voice_channels(channel_id=lobby["channel_id"], waiting_voice_id=waiting.id, team_a_voice_id=team_a_ch.id, team_b_voice_id=team_b_ch.id)
+        db.set_voice_channels(
+            channel_id=lobby["channel_id"],
+            waiting_voice_id=waiting.id,
+            team_a_voice_id=team_a_ch.id,
+            team_b_voice_id=team_b_ch.id
+        )
         return waiting, team_a_ch, team_b_ch
 
     async def move_members(self, guild: discord.Guild, user_ids, target_channel):
@@ -358,8 +401,12 @@ class Recruit(commands.Cog):
         map_pick = get_current_map_pick(channel_id)
         map_text = f"\n\n현재 맵: **{map_pick['selected_map']}**" if map_pick and map_pick.get("selected_map") else ""
 
+        pubg_mode_text = ""
+        if lobby["game"] == "pubg":
+            pubg_mode_text = f"\n배그 형식: **{get_pubg_mode_label(lobby['team_size'])}**"
+
         await channel.send(
-            f"정원이 차서 자동 팀 분배 + 자동 음성 이동이 완료되었습니다. ({mode_text}){map_text}\n\n"
+            f"정원이 차서 자동 팀 분배 + 자동 음성 이동이 완료되었습니다. ({mode_text}){pubg_mode_text}{map_text}\n\n"
             f"**A팀 총합:** {a_sum}\n"
             + "\n".join(f"{p['display_name']} ({p['mmr']}, {p['position']})" for p in team_a)
             + f"\n\n**B팀 총합:** {b_sum}\n"
@@ -368,9 +415,19 @@ class Recruit(commands.Cog):
         )
 
     @app_commands.command(name="내전생성", description="내전 모집 메시지를 생성합니다.")
-    @app_commands.describe(게임="게임 선택", 팀인원="한 팀 인원 수")
-    @app_commands.choices(게임=GAME_OPTIONS)
-    async def create(self, interaction: discord.Interaction, 게임: app_commands.Choice[str], 팀인원: int):
+    @app_commands.describe(
+        게임="게임 선택",
+        팀인원="한 팀 인원 수 (배그는 비워두고 배그형식 사용 권장)",
+        배그형식="PUBG일 때 솔로 / 듀오 / 스쿼드 선택"
+    )
+    @app_commands.choices(게임=GAME_OPTIONS, 배그형식=PUBG_MODE_OPTIONS)
+    async def create(
+        self,
+        interaction: discord.Interaction,
+        게임: app_commands.Choice[str],
+        팀인원: int | None = None,
+        배그형식: app_commands.Choice[str] | None = None
+    ):
         try:
             if not member_has_access(interaction.user):
                 await interaction.response.send_message("설정된 인증 역할이 있어야 내전을 만들 수 있습니다.", ephemeral=True)
@@ -381,20 +438,49 @@ class Recruit(commands.Cog):
                 await interaction.response.send_message("먼저 /설정역할 과 /설정카테고리 를 해주세요.", ephemeral=True)
                 return
 
-            if 팀인원 < 2 or 팀인원 > 10:
-                await interaction.response.send_message("팀 인원은 2~10 사이로 입력해주세요.", ephemeral=True)
-                return
-
             if db.get_lobby(interaction.channel_id):
                 await interaction.response.send_message("이미 이 채널에 로비가 있습니다.", ephemeral=True)
                 return
+
+            final_team_size: int | None = 팀인원
+
+            if 게임.value == "pubg":
+                if 배그형식 is not None:
+                    if 배그형식.value == "solo":
+                        final_team_size = 1
+                    elif 배그형식.value == "duo":
+                        final_team_size = 2
+                    elif 배그형식.value == "squad":
+                        final_team_size = 4
+
+                if final_team_size is None:
+                    await interaction.response.send_message(
+                        "배그 내전은 `배그형식`을 선택해주세요. (솔로 / 듀오 / 스쿼드)",
+                        ephemeral=True
+                    )
+                    return
+
+                if final_team_size not in [1, 2, 4]:
+                    await interaction.response.send_message(
+                        "배그 내전은 솔로(1), 듀오(2), 스쿼드(4)만 가능합니다.",
+                        ephemeral=True
+                    )
+                    return
+            else:
+                if final_team_size is None:
+                    await interaction.response.send_message("팀 인원을 입력해주세요.", ephemeral=True)
+                    return
+
+                if final_team_size < 2 or final_team_size > 10:
+                    await interaction.response.send_message("팀 인원은 2~10 사이로 입력해주세요.", ephemeral=True)
+                    return
 
             db.create_lobby(
                 interaction.channel_id,
                 interaction.guild_id,
                 interaction.user.id,
                 게임.value,
-                팀인원
+                final_team_size
             )
 
             lobby = db.get_lobby(interaction.channel_id)
