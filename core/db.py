@@ -36,13 +36,11 @@ def get_db_connection():
 def db_cursor(dict_cursor: bool = False):
     conn = get_db_connection()
     cur = None
-
     try:
         if dict_cursor:
             cur = conn.cursor(cursor_factory=RealDictCursor)
         else:
             cur = conn.cursor()
-
         yield conn, cur
         conn.commit()
     except Exception:
@@ -57,6 +55,72 @@ def db_cursor(dict_cursor: bool = False):
 def generate_party_code(length: int = 6) -> str:
     chars = string.ascii_uppercase + string.digits
     return "".join(random.choice(chars) for _ in range(length))
+
+
+# -------------------------
+# Guild registry
+# -------------------------
+def init_guild_registry_table():
+    with db_cursor() as (_, cur):
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS guild_registry (
+                guild_id BIGINT PRIMARY KEY,
+                guild_name VARCHAR(200),
+                is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                joined_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+
+def register_guild(guild_id: int, guild_name: Optional[str] = None):
+    init_guild_registry_table()
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("""
+            INSERT INTO guild_registry (guild_id, guild_name, is_active, joined_at, updated_at)
+            VALUES (%s, %s, TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            ON CONFLICT (guild_id)
+            DO UPDATE SET
+                guild_name = COALESCE(EXCLUDED.guild_name, guild_registry.guild_name),
+                is_active = TRUE,
+                updated_at = CURRENT_TIMESTAMP
+            RETURNING guild_id, guild_name, is_active, joined_at, updated_at
+        """, (guild_id, guild_name))
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def deactivate_guild(guild_id: int):
+    init_guild_registry_table()
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("""
+            UPDATE guild_registry
+            SET is_active = FALSE,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE guild_id = %s
+            RETURNING guild_id, guild_name, is_active, joined_at, updated_at
+        """, (guild_id,))
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def get_registered_guilds(active_only: bool = False):
+    init_guild_registry_table()
+    with db_cursor(dict_cursor=True) as (_, cur):
+        if active_only:
+            cur.execute("""
+                SELECT guild_id, guild_name, is_active, joined_at, updated_at
+                FROM guild_registry
+                WHERE is_active = TRUE
+                ORDER BY guild_name ASC NULLS LAST, guild_id ASC
+            """)
+        else:
+            cur.execute("""
+                SELECT guild_id, guild_name, is_active, joined_at, updated_at
+                FROM guild_registry
+                ORDER BY guild_name ASC NULLS LAST, guild_id ASC
+            """)
+        return [dict(row) for row in cur.fetchall()]
 
 
 # -------------------------
@@ -81,7 +145,6 @@ def init_support_inquiry_table():
 
 def insert_support_inquiry(name, email, category, subject, message, discord_tag=None):
     init_support_inquiry_table()
-
     with db_cursor(dict_cursor=True) as (_, cur):
         cur.execute("""
             INSERT INTO support_inquiries (name, email, category, subject, message, discord_tag)
@@ -94,12 +157,8 @@ def insert_support_inquiry(name, email, category, subject, message, discord_tag=
 
 def send_discord_support_webhook(inquiry: dict):
     webhook_url = os.getenv("DISCORD_SUPPORT_WEBHOOK_URL", "").strip()
-
     if not webhook_url:
-        return {
-            "ok": False,
-            "message": "DISCORD_SUPPORT_WEBHOOK_URL 환경변수가 설정되지 않았습니다."
-        }
+        return {"ok": False, "message": "DISCORD_SUPPORT_WEBHOOK_URL 환경변수가 설정되지 않았습니다."}
 
     created_at = inquiry.get("created_at")
     if hasattr(created_at, "strftime"):
@@ -109,29 +168,26 @@ def send_discord_support_webhook(inquiry: dict):
 
     discord_tag = inquiry.get("discord_tag") or "-"
     message_text = inquiry.get("message") or ""
-
     if len(message_text) > 1000:
         message_text = message_text[:1000] + "\n...(생략)"
 
     payload = {
         "username": "SCRIM BOT SUPPORT",
-        "embeds": [
-            {
-                "title": "새 문의가 접수되었습니다",
-                "description": f"문의번호: **#{inquiry.get('id')}**",
-                "color": 5793266,
-                "fields": [
-                    {"name": "문의 유형", "value": str(inquiry.get("category") or "-"), "inline": True},
-                    {"name": "상태", "value": str(inquiry.get("status") or "pending"), "inline": True},
-                    {"name": "접수 시간", "value": created_at_text, "inline": False},
-                    {"name": "이름", "value": str(inquiry.get("name") or "-"), "inline": True},
-                    {"name": "이메일", "value": str(inquiry.get("email") or "-"), "inline": True},
-                    {"name": "디스코드 아이디", "value": str(discord_tag), "inline": True},
-                    {"name": "문의 제목", "value": str(inquiry.get("subject") or "-"), "inline": False},
-                    {"name": "문의 내용", "value": message_text, "inline": False},
-                ]
-            }
-        ]
+        "embeds": [{
+            "title": "새 문의가 접수되었습니다",
+            "description": f"문의번호: **#{inquiry.get('id')}**",
+            "color": 5793266,
+            "fields": [
+                {"name": "문의 유형", "value": str(inquiry.get("category") or "-"), "inline": True},
+                {"name": "상태", "value": str(inquiry.get("status") or "pending"), "inline": True},
+                {"name": "접수 시간", "value": created_at_text, "inline": False},
+                {"name": "이름", "value": str(inquiry.get("name") or "-"), "inline": True},
+                {"name": "이메일", "value": str(inquiry.get("email") or "-"), "inline": True},
+                {"name": "디스코드 아이디", "value": str(discord_tag), "inline": True},
+                {"name": "문의 제목", "value": str(inquiry.get("subject") or "-"), "inline": False},
+                {"name": "문의 내용", "value": message_text, "inline": False},
+            ]
+        }]
     }
 
     data = json.dumps(payload).encode("utf-8")
@@ -188,7 +244,6 @@ def init_premium_tables():
 
 def cleanup_expired_premium_guilds():
     init_premium_tables()
-
     with db_cursor() as (_, cur):
         cur.execute("""
             UPDATE premium_guilds
@@ -208,7 +263,6 @@ def create_premium_request(
     memo: Optional[str] = None
 ):
     init_premium_tables()
-
     with db_cursor(dict_cursor=True) as (_, cur):
         cur.execute("""
             INSERT INTO premium_requests (
@@ -223,20 +277,11 @@ def create_premium_request(
 
 def get_premium_requests(limit: int = 200):
     init_premium_tables()
-
     with db_cursor(dict_cursor=True) as (_, cur):
         cur.execute("""
             SELECT
-                id,
-                guild_id,
-                applicant_name,
-                discord_tag,
-                amount,
-                memo,
-                status,
-                created_at,
-                approved_at,
-                approved_by
+                id, guild_id, applicant_name, discord_tag, amount, memo,
+                status, created_at, approved_at, approved_by
             FROM premium_requests
             ORDER BY id DESC
             LIMIT %s
@@ -258,7 +303,6 @@ def approve_premium_request(request_id: int, days: int = 30, approved_by: str = 
 
         if not req_row:
             raise ValueError("신청 내역을 찾을 수 없습니다.")
-
         if req_row["status"] == "approved":
             raise ValueError("이미 승인된 신청입니다.")
 
@@ -270,7 +314,7 @@ def approve_premium_request(request_id: int, days: int = 30, approved_by: str = 
                 is_premium = TRUE,
                 premium_until = EXCLUDED.premium_until,
                 updated_at = CURRENT_TIMESTAMP
-            RETURNING guild_id, is_premium, premium_until
+            RETURNING guild_id, is_premium, premium_until, updated_at
         """, (req_row["guild_id"], premium_until))
         premium_row = cur.fetchone()
 
@@ -287,7 +331,6 @@ def approve_premium_request(request_id: int, days: int = 30, approved_by: str = 
 
 def reject_premium_request(request_id: int, rejected_by: str = "rejected"):
     init_premium_tables()
-
     with db_cursor(dict_cursor=True) as (_, cur):
         cur.execute("""
             UPDATE premium_requests
@@ -303,7 +346,6 @@ def reject_premium_request(request_id: int, rejected_by: str = "rejected"):
 
 def is_premium_guild(guild_id: int) -> bool:
     cleanup_expired_premium_guilds()
-
     with db_cursor(dict_cursor=True) as (_, cur):
         cur.execute("""
             SELECT is_premium, premium_until
@@ -320,13 +362,78 @@ def is_premium_guild(guild_id: int) -> bool:
     premium_until = row["premium_until"]
     if premium_until is not None and premium_until < datetime.utcnow():
         return False
-
     return True
+
+
+def is_guild_premium(guild_id: int) -> bool:
+    return is_premium_guild(guild_id)
+
+
+def get_premium_info(guild_id: int):
+    cleanup_expired_premium_guilds()
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("""
+            SELECT guild_id, is_premium, premium_until, updated_at
+            FROM premium_guilds
+            WHERE guild_id = %s
+        """, (guild_id,))
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def set_premium(guild_id: int, enabled: bool):
+    init_premium_tables()
+    with db_cursor() as (_, cur):
+        if enabled:
+            cur.execute("""
+                INSERT INTO premium_guilds (guild_id, is_premium, premium_until, updated_at)
+                VALUES (%s, TRUE, NULL, CURRENT_TIMESTAMP)
+                ON CONFLICT (guild_id)
+                DO UPDATE SET
+                    is_premium = TRUE,
+                    updated_at = CURRENT_TIMESTAMP
+            """, (guild_id,))
+        else:
+            cur.execute("""
+                INSERT INTO premium_guilds (guild_id, is_premium, premium_until, updated_at)
+                VALUES (%s, FALSE, NULL, CURRENT_TIMESTAMP)
+                ON CONFLICT (guild_id)
+                DO UPDATE SET
+                    is_premium = FALSE,
+                    premium_until = NULL,
+                    updated_at = CURRENT_TIMESTAMP
+            """, (guild_id,))
+    return get_premium_info(guild_id)
+
+
+def set_premium_days(guild_id: int, days: int):
+    init_premium_tables()
+    current = get_premium_info(guild_id)
+    now = datetime.utcnow()
+    base_time = now
+
+    if current and current.get("is_premium") and current.get("premium_until"):
+        if current["premium_until"] > now:
+            base_time = current["premium_until"]
+
+    new_until = base_time + timedelta(days=days)
+
+    with db_cursor() as (_, cur):
+        cur.execute("""
+            INSERT INTO premium_guilds (guild_id, is_premium, premium_until, updated_at)
+            VALUES (%s, TRUE, %s, CURRENT_TIMESTAMP)
+            ON CONFLICT (guild_id)
+            DO UPDATE SET
+                is_premium = TRUE,
+                premium_until = %s,
+                updated_at = CURRENT_TIMESTAMP
+        """, (guild_id, new_until, new_until))
+
+    return get_premium_info(guild_id)
 
 
 def get_active_premium_guilds():
     cleanup_expired_premium_guilds()
-
     with db_cursor(dict_cursor=True) as (_, cur):
         cur.execute("""
             SELECT guild_id, is_premium, premium_until, updated_at
@@ -339,7 +446,6 @@ def get_active_premium_guilds():
 
 def count_active_premium_guilds() -> int:
     cleanup_expired_premium_guilds()
-
     with db_cursor(dict_cursor=True) as (_, cur):
         cur.execute("""
             SELECT COUNT(*) AS cnt
@@ -374,7 +480,6 @@ def init_settings_tables():
 
 def ensure_guild_settings(guild_id: int):
     init_settings_tables()
-
     with db_cursor() as (_, cur):
         cur.execute("""
             INSERT INTO guild_settings (guild_id)
@@ -385,21 +490,12 @@ def ensure_guild_settings(guild_id: int):
 
 def get_settings(guild_id: int):
     ensure_guild_settings(guild_id)
-
     with db_cursor(dict_cursor=True) as (_, cur):
         cur.execute("""
             SELECT
-                guild_id,
-                category_id,
-                recruit_role_id,
-                log_channel_id,
-                announcement_channel_id,
-                result_channel_id,
-                voice_category_id,
-                queue_channel_id,
-                manager_role_id,
-                premium_role_id,
-                updated_at
+                guild_id, category_id, recruit_role_id, log_channel_id,
+                announcement_channel_id, result_channel_id, voice_category_id,
+                queue_channel_id, manager_role_id, premium_role_id, updated_at
             FROM guild_settings
             WHERE guild_id = %s
         """, (guild_id,))
@@ -419,7 +515,6 @@ def get_settings(guild_id: int):
             "premium_role_id": None,
             "updated_at": None,
         }
-
     return dict(row)
 
 
@@ -504,6 +599,9 @@ def init_recruit_tables():
             )
         """)
 
+        cur.execute("""ALTER TABLE lobby_players ADD COLUMN IF NOT EXISTS party_id BIGINT""")
+        cur.execute("""ALTER TABLE lobby_players ADD COLUMN IF NOT EXISTS joined_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP""")
+
         cur.execute("""
             CREATE TABLE IF NOT EXISTS lobby_teams (
                 channel_id BIGINT NOT NULL,
@@ -564,21 +662,11 @@ def init_recruit_tables():
 
 def get_lobby(channel_id: int):
     init_recruit_tables()
-
     with db_cursor(dict_cursor=True) as (_, cur):
         cur.execute("""
             SELECT
-                channel_id,
-                guild_id,
-                host_id,
-                game,
-                team_size,
-                status,
-                message_id,
-                waiting_voice_id,
-                team_a_voice_id,
-                team_b_voice_id,
-                created_at
+                channel_id, guild_id, host_id, game, team_size, status,
+                message_id, waiting_voice_id, team_a_voice_id, team_b_voice_id, created_at
             FROM lobbies
             WHERE channel_id = %s
         """, (channel_id,))
@@ -588,6 +676,7 @@ def get_lobby(channel_id: int):
 
 def create_lobby(channel_id: int, guild_id: int, host_id: int, game: str, team_size: int):
     init_recruit_tables()
+    register_guild(guild_id)
 
     with db_cursor() as (_, cur):
         cur.execute("""
@@ -644,7 +733,6 @@ def set_voice_channels(channel_id: int, waiting_voice_id: int, team_a_voice_id: 
 
 def get_lobby_players(channel_id: int):
     init_recruit_tables()
-
     with db_cursor(dict_cursor=True) as (_, cur):
         cur.execute("""
             SELECT channel_id, user_id, display_name, mmr, position, party_id, joined_at
@@ -724,6 +812,7 @@ def get_team_members(channel_id: int, team: str):
 
 def ensure_player(guild_id: int, user_id: int, mmr: int = 1000, display_name: Optional[str] = None):
     init_recruit_tables()
+    register_guild(guild_id)
 
     with db_cursor() as (_, cur):
         cur.execute("""
@@ -737,6 +826,7 @@ def ensure_player(guild_id: int, user_id: int, mmr: int = 1000, display_name: Op
 
 def ensure_player_game(guild_id: int, user_id: int, game: str, mmr: int = 1000, display_name: Optional[str] = None):
     init_recruit_tables()
+    register_guild(guild_id)
 
     with db_cursor() as (_, cur):
         cur.execute("""
@@ -750,7 +840,6 @@ def ensure_player_game(guild_id: int, user_id: int, game: str, mmr: int = 1000, 
 
 def create_lobby_party(channel_id: int, leader_user_id: int, leader_name: str, mode_size: int):
     init_recruit_tables()
-
     with db_cursor(dict_cursor=True) as (_, cur):
         cur.execute("""
             SELECT party_id
@@ -805,15 +894,10 @@ def get_user_party(channel_id: int, user_id: int):
     with db_cursor(dict_cursor=True) as (_, cur):
         cur.execute("""
             SELECT
-                p.id,
-                p.channel_id,
-                p.leader_user_id,
-                p.party_code,
-                p.mode_size,
-                p.created_at
+                p.id, p.channel_id, p.leader_user_id, p.party_code,
+                p.mode_size, p.created_at
             FROM lobby_parties p
-            JOIN lobby_party_members m
-              ON p.id = m.party_id
+            JOIN lobby_party_members m ON p.id = m.party_id
             WHERE m.channel_id = %s AND m.user_id = %s
         """, (channel_id, user_id))
         row = cur.fetchone()
@@ -833,7 +917,6 @@ def get_party_members(channel_id: int, party_id: int):
 
 def join_lobby_party(channel_id: int, party_code: str, user_id: int, display_name: str):
     init_recruit_tables()
-
     with db_cursor(dict_cursor=True) as (_, cur):
         cur.execute("""
             SELECT party_id
@@ -873,18 +956,12 @@ def join_lobby_party(channel_id: int, party_code: str, user_id: int, display_nam
 
 def leave_lobby_party(channel_id: int, user_id: int):
     init_recruit_tables()
-
     with db_cursor(dict_cursor=True) as (_, cur):
         cur.execute("""
             SELECT
-                p.id,
-                p.channel_id,
-                p.leader_user_id,
-                p.party_code,
-                p.mode_size
+                p.id, p.channel_id, p.leader_user_id, p.party_code, p.mode_size
             FROM lobby_parties p
-            JOIN lobby_party_members m
-              ON p.id = m.party_id
+            JOIN lobby_party_members m ON p.id = m.party_id
             WHERE m.channel_id = %s AND m.user_id = %s
         """, (channel_id, user_id))
         party = cur.fetchone()
@@ -931,10 +1008,7 @@ def leave_lobby_party(channel_id: int, user_id: int):
             WHERE channel_id = %s AND user_id = %s
         """, (channel_id, user_id))
 
-        return {
-            "action": "left",
-            "party_code": party["party_code"],
-        }
+        return {"action": "left", "party_code": party["party_code"]}
 
 
 def get_lobby_parties(channel_id: int):
@@ -950,10 +1024,7 @@ def get_lobby_parties(channel_id: int):
     result = []
     for party in parties:
         members = get_party_members(channel_id, party["id"])
-        result.append({
-            **party,
-            "members": members,
-        })
+        result.append({**party, "members": members})
     return result
 
 
@@ -1007,6 +1078,7 @@ def init_season_tables():
 
 def create_season(guild_id: int, game: str, season_name: str):
     init_season_tables()
+    register_guild(guild_id)
 
     with db_cursor(dict_cursor=True) as (_, cur):
         cur.execute("""
@@ -1027,7 +1099,6 @@ def create_season(guild_id: int, game: str, season_name: str):
 
 def end_active_season(guild_id: int, game: str):
     init_season_tables()
-
     with db_cursor(dict_cursor=True) as (_, cur):
         cur.execute("""
             UPDATE seasons
@@ -1042,7 +1113,6 @@ def end_active_season(guild_id: int, game: str):
 
 def get_active_season(guild_id: int, game: str):
     init_season_tables()
-
     with db_cursor(dict_cursor=True) as (_, cur):
         cur.execute("""
             SELECT id, guild_id, game, season_name, is_active, started_at, ended_at
@@ -1057,7 +1127,6 @@ def get_active_season(guild_id: int, game: str):
 
 def get_seasons(guild_id: int, game: Optional[str] = None, limit: int = 50):
     init_season_tables()
-
     with db_cursor(dict_cursor=True) as (_, cur):
         if game:
             cur.execute("""
@@ -1080,7 +1149,6 @@ def get_seasons(guild_id: int, game: Optional[str] = None, limit: int = 50):
 
 def get_season_by_id(season_id: int):
     init_season_tables()
-
     with db_cursor(dict_cursor=True) as (_, cur):
         cur.execute("""
             SELECT id, guild_id, game, season_name, is_active, started_at, ended_at
@@ -1093,7 +1161,6 @@ def get_season_by_id(season_id: int):
 
 def get_latest_season_for_game(guild_id: int, game: str):
     init_season_tables()
-
     with db_cursor(dict_cursor=True) as (_, cur):
         cur.execute("""
             SELECT id, guild_id, game, season_name, is_active, started_at, ended_at
@@ -1114,6 +1181,7 @@ def ensure_season_player(
     display_name: Optional[str] = None
 ):
     init_season_tables()
+    register_guild(guild_id)
 
     with db_cursor() as (_, cur):
         cur.execute("""
@@ -1143,7 +1211,6 @@ def apply_season_match_result(
     for uid in winners:
         display_name = name_map.get(uid)
         ensure_season_player(guild_id, game, season_id, uid, display_name)
-
         with db_cursor() as (_, cur):
             cur.execute("""
                 UPDATE season_player_stats
@@ -1158,7 +1225,6 @@ def apply_season_match_result(
     for uid in losers:
         display_name = name_map.get(uid)
         ensure_season_player(guild_id, game, season_id, uid, display_name)
-
         with db_cursor() as (_, cur):
             cur.execute("""
                 UPDATE season_player_stats
@@ -1181,7 +1247,6 @@ def add_season_match(
     team_b_avg: int
 ):
     init_season_tables()
-
     with db_cursor() as (_, cur):
         cur.execute("""
             INSERT INTO season_matches (
@@ -1193,18 +1258,10 @@ def add_season_match(
 
 def get_season_ranking(guild_id: int, game: str, season_id: int, limit: int = 50):
     init_season_tables()
-
     with db_cursor(dict_cursor=True) as (_, cur):
         cur.execute("""
             SELECT
-                guild_id,
-                game,
-                season_id,
-                user_id,
-                display_name,
-                mmr,
-                win,
-                lose,
+                guild_id, game, season_id, user_id, display_name, mmr, win, lose,
                 CASE
                     WHEN (win + lose) = 0 THEN 0
                     ELSE ROUND((CAST(win AS NUMERIC) / (win + lose)) * 100, 1)
@@ -1219,10 +1276,10 @@ def get_season_ranking(guild_id: int, game: str, season_id: int, limit: int = 50
 
 def get_season_matches(guild_id: int, game: str, season_id: int, limit: int = 20):
     init_season_tables()
-
     with db_cursor(dict_cursor=True) as (_, cur):
         cur.execute("""
-            SELECT id, guild_id, game, season_id, channel_id, winner_team, team_a_avg, team_b_avg, created_at
+            SELECT id, guild_id, game, season_id, channel_id, winner_team,
+                   team_a_avg, team_b_avg, created_at
             FROM season_matches
             WHERE guild_id = %s AND game = %s AND season_id = %s
             ORDER BY id DESC
@@ -1233,18 +1290,10 @@ def get_season_matches(guild_id: int, game: str, season_id: int, limit: int = 20
 
 def get_season_player_detail(guild_id: int, game: str, season_id: int, user_id: int):
     init_season_tables()
-
     with db_cursor(dict_cursor=True) as (_, cur):
         cur.execute("""
             SELECT
-                guild_id,
-                game,
-                season_id,
-                user_id,
-                display_name,
-                mmr,
-                win,
-                lose,
+                guild_id, game, season_id, user_id, display_name, mmr, win, lose,
                 CASE
                     WHEN (win + lose) = 0 THEN 0
                     ELSE ROUND((CAST(win AS NUMERIC) / (win + lose)) * 100, 1)
@@ -1259,7 +1308,6 @@ def get_season_player_detail(guild_id: int, game: str, season_id: int, user_id: 
 
 def get_season_stats_summary(guild_id: int, game: str, season_id: int):
     init_season_tables()
-
     with db_cursor(dict_cursor=True) as (_, cur):
         cur.execute("""
             SELECT
@@ -1286,9 +1334,6 @@ def get_season_stats_summary(guild_id: int, game: str, season_id: int):
     }
 
 
-# -------------------------
-# DB Wrapper
-# -------------------------
 class DB:
     def __init__(self):
         self.init_tables()
@@ -1309,11 +1354,28 @@ class DB:
 
     @classmethod
     def init_tables(cls):
+        init_guild_registry_table()
         init_settings_tables()
         init_recruit_tables()
         init_premium_tables()
         init_support_inquiry_table()
         init_season_tables()
+
+    @staticmethod
+    def init_guild_registry_table():
+        return init_guild_registry_table()
+
+    @staticmethod
+    def register_guild(guild_id: int, guild_name: Optional[str] = None):
+        return register_guild(guild_id, guild_name)
+
+    @staticmethod
+    def deactivate_guild(guild_id: int):
+        return deactivate_guild(guild_id)
+
+    @staticmethod
+    def get_registered_guilds(active_only: bool = False):
+        return get_registered_guilds(active_only)
 
     @staticmethod
     def init_support_inquiry_table():
@@ -1354,6 +1416,22 @@ class DB:
     @staticmethod
     def is_premium_guild(guild_id: int) -> bool:
         return is_premium_guild(guild_id)
+
+    @staticmethod
+    def is_guild_premium(guild_id: int) -> bool:
+        return is_guild_premium(guild_id)
+
+    @staticmethod
+    def get_premium_info(guild_id: int):
+        return get_premium_info(guild_id)
+
+    @staticmethod
+    def set_premium(guild_id: int, enabled: bool):
+        return set_premium(guild_id, enabled)
+
+    @staticmethod
+    def set_premium_days(guild_id: int, days: int):
+        return set_premium_days(guild_id, days)
 
     @staticmethod
     def get_active_premium_guilds():
