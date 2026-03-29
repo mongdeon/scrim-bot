@@ -324,6 +324,32 @@ def is_premium_guild(guild_id: int) -> bool:
     return True
 
 
+def get_active_premium_guilds():
+    cleanup_expired_premium_guilds()
+
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("""
+            SELECT guild_id, is_premium, premium_until, updated_at
+            FROM premium_guilds
+            WHERE is_premium = TRUE
+            ORDER BY guild_id ASC
+        """)
+        return [dict(row) for row in cur.fetchall()]
+
+
+def count_active_premium_guilds() -> int:
+    cleanup_expired_premium_guilds()
+
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("""
+            SELECT COUNT(*) AS cnt
+            FROM premium_guilds
+            WHERE is_premium = TRUE
+        """)
+        row = cur.fetchone()
+        return int(row["cnt"]) if row else 0
+
+
 # -------------------------
 # Settings
 # -------------------------
@@ -1326,6 +1352,18 @@ class DB:
         return reject_premium_request(request_id, rejected_by)
 
     @staticmethod
+    def is_premium_guild(guild_id: int) -> bool:
+        return is_premium_guild(guild_id)
+
+    @staticmethod
+    def get_active_premium_guilds():
+        return get_active_premium_guilds()
+
+    @staticmethod
+    def count_active_premium_guilds():
+        return count_active_premium_guilds()
+
+    @staticmethod
     def ensure_guild_settings(guild_id: int):
         return ensure_guild_settings(guild_id)
 
@@ -1344,10 +1382,6 @@ class DB:
     @staticmethod
     def set_category(guild_id: int, category_id: int):
         return set_category(guild_id, category_id)
-
-    @staticmethod
-    def is_premium_guild(guild_id: int) -> bool:
-        return is_premium_guild(guild_id)
 
     @staticmethod
     def init_recruit_tables():
