@@ -3,7 +3,11 @@ from discord.ext import commands
 from discord import app_commands
 
 from core.db import DB
-from cogs.recruit_cog import build_lobby_embed
+from cogs.recruit_cog import (
+    build_lobby_embed,
+    get_pubg_mode_label,
+    get_game_display_name,
+)
 from core.matchmaking import auto_balance_players, calc_elo_delta
 
 db = DB()
@@ -14,6 +18,18 @@ def format_team_block(team: list[dict]):
         f"{p['display_name']} ({p['mmr']}, {p['position']})"
         for p in team
     )
+
+
+def get_mode_prefix_text(lobby: dict) -> str:
+    if lobby["game"] == "pubg":
+        return f"배그 형식: **{get_pubg_mode_label(lobby['team_size'])}**\n"
+    return ""
+
+
+def get_result_game_text(lobby: dict) -> str:
+    if lobby["game"] == "pubg":
+        return f"PUBG ({get_pubg_mode_label(lobby['team_size'])})"
+    return get_game_display_name(lobby)
 
 
 class Team(commands.Cog):
@@ -73,8 +89,13 @@ class Team(commands.Cog):
             a_sum = sum(p["mmr"] for p in team_a)
             b_sum = sum(p["mmr"] for p in team_b)
 
+            mode_prefix = get_mode_prefix_text(lobby)
+            game_text = get_result_game_text(lobby)
+
             await interaction.response.send_message(
-                f"팀 분배 완료 ({mode_text})\n\n"
+                f"팀 분배 완료 ({mode_text})\n"
+                f"게임: **{game_text}**\n"
+                f"{mode_prefix}\n"
                 f"**A팀 총합:** {a_sum}\n{format_team_block(team_a)}\n\n"
                 f"**B팀 총합:** {b_sum}\n{format_team_block(team_b)}\n\n"
                 f"차이: {abs(a_sum - b_sum)}"
@@ -89,13 +110,13 @@ class Team(commands.Cog):
             else:
                 await interaction.response.send_message(f"오류 발생: {e}", ephemeral=True)
 
-    @app_commands.command(name="결과기록", description="경기 결과를 반영하고 ELO/MMR을 계산합니다. (프리미엄)")
+    @app_commands.command(name="결과기록", description="경기 결과를 반영하고 ELO/MMR을 계산합니다.")
     @app_commands.describe(승리팀="A 또는 B")
     async def record_result(self, interaction: discord.Interaction, 승리팀: str):
         try:
             if not db.is_premium_guild(interaction.guild_id):
                 await interaction.response.send_message(
-                    "⚠️ 결과기록 / ELO 기능은 프리미엄 서버 전용입니다.",
+                    "⚠️ ELO 기능은 프리미엄 서버 전용입니다.",
                     ephemeral=True
                 )
                 return
@@ -127,26 +148,25 @@ class Team(commands.Cog):
             delta_a, delta_b = calc_elo_delta(avg_a, avg_b, winner)
 
             if winner == "A":
-                winners = team_a_ids
-                losers = team_b_ids
-                winner_delta = delta_a
-                loser_delta = delta_b
+                db.apply_match_result(
+                    interaction.guild_id,
+                    lobby["game"],
+                    team_a_ids,
+                    team_b_ids,
+                    delta_a,
+                    delta_b,
+                    name_map
+                )
             else:
-                winners = team_b_ids
-                losers = team_a_ids
-                winner_delta = delta_b
-                loser_delta = delta_a
-
-            # 1) 기존 누적 전적 반영
-            db.apply_match_result(
-                interaction.guild_id,
-                lobby["game"],
-                winners,
-                losers,
-                winner_delta,
-                loser_delta,
-                name_map
-            )
+                db.apply_match_result(
+                    interaction.guild_id,
+                    lobby["game"],
+                    team_b_ids,
+                    team_a_ids,
+                    delta_b,
+                    delta_a,
+                    name_map
+                )
 
             db.add_match(
                 interaction.guild_id,
@@ -156,42 +176,12 @@ class Team(commands.Cog):
                 avg_a,
                 avg_b
             )
-
-            # 2) 시즌 반영 (프리미엄 + 활성 시즌이 있을 때만)
-            season = db.get_active_season(interaction.guild_id, lobby["game"])
-            season_text = "\n현재 활성 시즌 없음"
-
-            if season:
-                db.apply_season_match_result(
-                    interaction.guild_id,
-                    lobby["game"],
-                    season["id"],
-                    winners,
-                    losers,
-                    winner_delta,
-                    loser_delta,
-                    name_map
-                )
-
-                db.add_season_match(
-                    interaction.guild_id,
-                    lobby["game"],
-                    season["id"],
-                    interaction.channel_id,
-                    winner,
-                    avg_a,
-                    avg_b
-                )
-
-                season_text = (
-                    f"\n시즌 반영 완료: {season['season_name']} "
-                    f"({season['game']})"
-                )
-
             db.set_lobby_status(interaction.channel_id, "finished")
 
-            lines = []
+            game_text = get_result_game_text(lobby)
+            mode_prefix = get_mode_prefix_text(lobby)
 
+            lines = []
             lines.append("**A팀 변동**")
             for uid in team_a_ids:
                 delta = delta_a
@@ -207,11 +197,11 @@ class Team(commands.Cog):
 
             await interaction.response.send_message(
                 f"결과 기록 완료\n"
+                f"게임: **{game_text}**\n"
+                f"{mode_prefix}"
                 f"승리팀: **{winner}팀**\n"
-                f"게임: **{lobby['game']}**\n"
                 f"A팀 평균: {avg_a}\n"
-                f"B팀 평균: {avg_b}\n"
-                f"{season_text}\n\n"
+                f"B팀 평균: {avg_b}\n\n"
                 + "\n".join(lines)
             )
 
