@@ -54,19 +54,18 @@ def get_pubg_mode_label(team_size: int) -> str:
     return f"{team_size}인"
 
 
-def get_pubg_total_slots(team_size: int) -> int:
-    if team_size == 1:
-        return 8
-    if team_size == 2:
-        return 8
-    if team_size == 4:
-        return 16
-    return 8
-
-
 def get_lobby_need_count(lobby: dict) -> int:
     if is_pubg_lobby(lobby):
-        return get_pubg_total_slots(lobby["team_size"])
+        if lobby.get("total_slots") is not None:
+            return int(lobby["total_slots"])
+
+        if lobby["team_size"] == 1:
+            return 8
+        if lobby["team_size"] == 2:
+            return 8
+        if lobby["team_size"] == 4:
+            return 16
+
     return lobby["team_size"] * 2
 
 
@@ -92,6 +91,7 @@ def build_party_lines(channel_id: int) -> list[str]:
         lines.append(
             f"{idx}. 코드 `{party['party_code']}` | {len(members)}/{party['mode_size']}명 | {member_names}"
         )
+
     return lines
 
 
@@ -121,23 +121,24 @@ def build_lobby_embed(lobby: dict, players: list[dict], team_a=None, team_b=None
     if players:
         if is_pubg_lobby(lobby) and lobby["team_size"] in [2, 4]:
             grouped = {}
-            solo_rows = []
+            no_party_rows = []
 
             for player in players:
                 party_id = player.get("party_id")
                 if party_id:
                     grouped.setdefault(party_id, []).append(player)
                 else:
-                    solo_rows.append(player)
+                    no_party_rows.append(player)
 
             lines = []
             group_idx = 1
+
             for _, members in grouped.items():
                 member_text = " / ".join(f"{m['display_name']} ({m['mmr']})" for m in members)
                 lines.append(f"[파티 {group_idx}] {member_text}")
                 group_idx += 1
 
-            for player in solo_rows:
+            for player in no_party_rows:
                 lines.append(f"{player['display_name']} | MMR {player['mmr']} | {player['position']}")
 
             embed.add_field(name="참가자", value="\n".join(lines[:25]), inline=False)
@@ -484,6 +485,7 @@ class Recruit(commands.Cog):
                         return
 
             waiting = await self.ensure_pubg_waiting_channel(channel.guild, {**lobby, "channel_id": channel_id})
+
             db.set_lobby_status(channel_id, "started")
             await self.refresh_lobby_message(channel, channel_id)
 
@@ -550,7 +552,8 @@ class Recruit(commands.Cog):
     @app_commands.describe(
         게임="게임 선택",
         팀인원="한 팀 인원 수 (배그는 입력하지 않음)",
-        배그형식="배그일 때 솔로 / 듀오 / 스쿼드"
+        배그형식="배그일 때 솔로 / 듀오 / 스쿼드",
+        모집인원="배그 총 모집 인원"
     )
     @app_commands.choices(게임=GAME_OPTIONS, 배그형식=PUBG_MODE_OPTIONS)
     async def create(
@@ -558,7 +561,8 @@ class Recruit(commands.Cog):
         interaction: discord.Interaction,
         게임: app_commands.Choice[str],
         팀인원: int | None = None,
-        배그형식: app_commands.Choice[str] | None = None
+        배그형식: app_commands.Choice[str] | None = None,
+        모집인원: int | None = None
     ):
         try:
             if not member_has_access(interaction.user):
@@ -575,6 +579,7 @@ class Recruit(commands.Cog):
                 return
 
             final_team_size: int | None = 팀인원
+            final_total_slots: int | None = None
 
             if 게임.value == "pubg":
                 if 배그형식 is None:
@@ -584,12 +589,39 @@ class Recruit(commands.Cog):
                     )
                     return
 
+                if 모집인원 is None:
+                    await interaction.response.send_message(
+                        "배그는 `모집인원`을 입력해야 합니다.",
+                        ephemeral=True
+                    )
+                    return
+
                 if 배그형식.value == "solo":
                     final_team_size = 1
+                    if 모집인원 < 2 or 모집인원 > 100:
+                        await interaction.response.send_message("배그 솔로 모집인원은 2 ~ 100 사이만 가능합니다.", ephemeral=True)
+                        return
+
                 elif 배그형식.value == "duo":
                     final_team_size = 2
+                    if 모집인원 < 4 or 모집인원 > 100:
+                        await interaction.response.send_message("배그 듀오 모집인원은 4 ~ 100 사이만 가능합니다.", ephemeral=True)
+                        return
+                    if 모집인원 % 2 != 0:
+                        await interaction.response.send_message("배그 듀오 모집인원은 2의 배수만 가능합니다.", ephemeral=True)
+                        return
+
                 elif 배그형식.value == "squad":
                     final_team_size = 4
+                    if 모집인원 < 8 or 모집인원 > 100:
+                        await interaction.response.send_message("배그 스쿼드 모집인원은 8 ~ 100 사이만 가능합니다.", ephemeral=True)
+                        return
+                    if 모집인원 % 4 != 0:
+                        await interaction.response.send_message("배그 스쿼드 모집인원은 4의 배수만 가능합니다.", ephemeral=True)
+                        return
+
+                final_total_slots = 모집인원
+
             else:
                 if final_team_size is None:
                     await interaction.response.send_message("팀 인원을 입력해주세요.", ephemeral=True)
@@ -604,7 +636,8 @@ class Recruit(commands.Cog):
                 interaction.guild_id,
                 interaction.user.id,
                 게임.value,
-                final_team_size
+                final_team_size,
+                total_slots=final_total_slots
             )
 
             lobby = db.get_lobby(interaction.channel_id)

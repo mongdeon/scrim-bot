@@ -11,7 +11,7 @@ class HelpCog(commands.Cog):
     async def help_cmd(self, interaction: discord.Interaction):
         embed = discord.Embed(
             title="🎮 내전봇 도움말",
-            description="사용 가능한 명령어와 배그 파티 시스템 설명입니다.",
+            description="사용 가능한 명령어와 배그 모집 규칙 / 파티 시스템 설명입니다.",
             color=discord.Color.green()
         )
 
@@ -37,14 +37,24 @@ class HelpCog(commands.Cog):
         )
 
         embed.add_field(
-            name="🔥 배그 배틀로얄",
+            name="🔥 배그 배틀로얄 생성 예시",
             value=(
-                "`/내전생성 게임:PUBG 배그형식:솔로`\n"
-                "`/내전생성 게임:PUBG 배그형식:듀오`\n"
-                "`/내전생성 게임:PUBG 배그형식:스쿼드`\n\n"
-                "- 솔로: 8명 개인 참가\n"
-                "- 듀오: 8명, 2인 파티 필요\n"
-                "- 스쿼드: 16명, 4인 파티 필요"
+                "`/내전생성 게임:PUBG 배그형식:솔로 모집인원:20`\n"
+                "`/내전생성 게임:PUBG 배그형식:듀오 모집인원:10`\n"
+                "`/내전생성 게임:PUBG 배그형식:스쿼드 모집인원:20`"
+            ),
+            inline=False
+        )
+
+        embed.add_field(
+            name="🧾 배그 모집인원 규칙",
+            value=(
+                "- 솔로 : 2 ~ 100\n"
+                "- 듀오 : 4 ~ 100\n"
+                "- 스쿼드 : 8 ~ 100\n\n"
+                "추가 규칙:\n"
+                "- 듀오 모집인원은 2의 배수만 가능\n"
+                "- 스쿼드 모집인원은 4의 배수만 가능"
             ),
             inline=False
         )
@@ -86,7 +96,7 @@ class HelpCog(commands.Cog):
             inline=False
         )
 
-        embed.set_footer(text="배그 듀오/스쿼드는 실제 파티 단위로 참가할 수 있습니다.")
+        embed.set_footer(text="배그는 모집인원을 직접 입력할 수 있습니다.")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 

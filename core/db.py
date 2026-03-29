@@ -41,6 +41,7 @@ def db_cursor(dict_cursor: bool = False):
             cur = conn.cursor(cursor_factory=RealDictCursor)
         else:
             cur = conn.cursor()
+
         yield conn, cur
         conn.commit()
     except Exception:
@@ -139,7 +140,7 @@ def init_support_inquiry_table():
                 discord_tag VARCHAR(100),
                 status VARCHAR(30) NOT NULL DEFAULT 'pending',
                 created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
+            )
         """)
 
 
@@ -149,7 +150,7 @@ def insert_support_inquiry(name, email, category, subject, message, discord_tag=
         cur.execute("""
             INSERT INTO support_inquiries (name, email, category, subject, message, discord_tag)
             VALUES (%s, %s, %s, %s, %s, %s)
-            RETURNING id, name, email, category, subject, message, discord_tag, status, created_at;
+            RETURNING id, name, email, category, subject, message, discord_tag, status, created_at
         """, (name, email, category, subject, message, discord_tag))
         row = cur.fetchone()
         return dict(row) if row else None
@@ -229,7 +230,7 @@ def init_premium_tables():
                 created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 approved_at TIMESTAMP,
                 approved_by VARCHAR(100)
-            );
+            )
         """)
 
         cur.execute("""
@@ -238,7 +239,7 @@ def init_premium_tables():
                 is_premium BOOLEAN NOT NULL DEFAULT FALSE,
                 premium_until TIMESTAMP,
                 updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
+            )
         """)
 
 
@@ -269,7 +270,7 @@ def create_premium_request(
                 guild_id, applicant_name, discord_tag, amount, memo, status
             )
             VALUES (%s, %s, %s, %s, %s, 'pending')
-            RETURNING id, guild_id, applicant_name, discord_tag, amount, memo, status, created_at;
+            RETURNING id, guild_id, applicant_name, discord_tag, amount, memo, status, created_at
         """, (guild_id, applicant_name, discord_tag, amount, memo))
         row = cur.fetchone()
         return dict(row) if row else None
@@ -474,7 +475,7 @@ def init_settings_tables():
                 manager_role_id BIGINT,
                 premium_role_id BIGINT,
                 updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
+            )
         """)
 
 
@@ -577,6 +578,7 @@ def init_recruit_tables():
                 host_id BIGINT NOT NULL,
                 game VARCHAR(50) NOT NULL,
                 team_size INTEGER NOT NULL,
+                total_slots INTEGER,
                 status VARCHAR(30) NOT NULL DEFAULT 'open',
                 message_id BIGINT,
                 waiting_voice_id BIGINT,
@@ -585,6 +587,8 @@ def init_recruit_tables():
                 created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
         """)
+
+        cur.execute("""ALTER TABLE lobbies ADD COLUMN IF NOT EXISTS total_slots INTEGER""")
 
         cur.execute("""
             CREATE TABLE IF NOT EXISTS lobby_players (
@@ -665,7 +669,7 @@ def get_lobby(channel_id: int):
     with db_cursor(dict_cursor=True) as (_, cur):
         cur.execute("""
             SELECT
-                channel_id, guild_id, host_id, game, team_size, status,
+                channel_id, guild_id, host_id, game, team_size, total_slots, status,
                 message_id, waiting_voice_id, team_a_voice_id, team_b_voice_id, created_at
             FROM lobbies
             WHERE channel_id = %s
@@ -674,27 +678,35 @@ def get_lobby(channel_id: int):
         return dict(row) if row else None
 
 
-def create_lobby(channel_id: int, guild_id: int, host_id: int, game: str, team_size: int):
+def create_lobby(
+    channel_id: int,
+    guild_id: int,
+    host_id: int,
+    game: str,
+    team_size: int,
+    total_slots: Optional[int] = None
+):
     init_recruit_tables()
     register_guild(guild_id)
 
     with db_cursor() as (_, cur):
         cur.execute("""
             INSERT INTO lobbies (
-                channel_id, guild_id, host_id, game, team_size, status
+                channel_id, guild_id, host_id, game, team_size, total_slots, status
             )
-            VALUES (%s, %s, %s, %s, %s, 'open')
+            VALUES (%s, %s, %s, %s, %s, %s, 'open')
             ON CONFLICT (channel_id) DO UPDATE SET
                 guild_id = EXCLUDED.guild_id,
                 host_id = EXCLUDED.host_id,
                 game = EXCLUDED.game,
                 team_size = EXCLUDED.team_size,
+                total_slots = EXCLUDED.total_slots,
                 status = 'open',
                 message_id = NULL,
                 waiting_voice_id = NULL,
                 team_a_voice_id = NULL,
                 team_b_voice_id = NULL
-        """, (channel_id, guild_id, host_id, game, team_size))
+        """, (channel_id, guild_id, host_id, game, team_size, total_slots))
 
         cur.execute("DELETE FROM lobby_players WHERE channel_id = %s", (channel_id,))
         cur.execute("DELETE FROM lobby_teams WHERE channel_id = %s", (channel_id,))
@@ -1470,8 +1482,15 @@ class DB:
         return get_lobby(channel_id)
 
     @staticmethod
-    def create_lobby(channel_id: int, guild_id: int, host_id: int, game: str, team_size: int):
-        return create_lobby(channel_id, guild_id, host_id, game, team_size)
+    def create_lobby(
+        channel_id: int,
+        guild_id: int,
+        host_id: int,
+        game: str,
+        team_size: int,
+        total_slots: Optional[int] = None
+    ):
+        return create_lobby(channel_id, guild_id, host_id, game, team_size, total_slots)
 
     @staticmethod
     def set_lobby_message(channel_id: int, message_id: int):
