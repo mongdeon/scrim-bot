@@ -23,6 +23,12 @@ class Settings(commands.Cog):
         db.update_settings(interaction.guild_id, category_id=카테고리.id)
         await interaction.response.send_message("내전 카테고리 설정 완료", ephemeral=True)
 
+    @app_commands.command(name="설정팀결과채널", description="예약된 내전 팀 분배 결과를 보낼 채널을 설정합니다.")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def result_channel(self, interaction: discord.Interaction, 채널: discord.TextChannel):
+        db.update_settings(interaction.guild_id, result_channel_id=채널.id)
+        await interaction.response.send_message(f"팀 결과 채널 설정 완료: {채널.mention}", ephemeral=True)
+
     @app_commands.command(name="설정보기", description="현재 서버 설정을 확인합니다.")
     async def show(self, interaction: discord.Interaction):
         data = db.get_settings(interaction.guild_id)
@@ -32,10 +38,12 @@ class Settings(commands.Cog):
 
         role = interaction.guild.get_role(data["recruit_role_id"]) if data["recruit_role_id"] else None
         category = interaction.guild.get_channel(data["category_id"]) if data["category_id"] else None
+        result_channel = interaction.guild.get_channel(data["result_channel_id"]) if data["result_channel_id"] else None
 
         await interaction.response.send_message(
             f"인증 역할: {role.mention if role else '미설정'}\n"
-            f"내전 카테고리: {category.mention if category else '미설정'}",
+            f"내전 카테고리: {category.mention if category else '미설정'}\n"
+            f"팀 결과 채널: {result_channel.mention if result_channel else '미설정'}",
             ephemeral=True
         )
 

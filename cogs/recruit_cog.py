@@ -1,6 +1,8 @@
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 from discord import app_commands
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from core.db import DB
 from core.matchmaking import auto_balance_players
@@ -20,6 +22,8 @@ PUBG_MODE_OPTIONS = [
     app_commands.Choice(name="듀오", value="duo"),
     app_commands.Choice(name="스쿼드", value="squad"),
 ]
+
+KST = ZoneInfo("Asia/Seoul")
 
 POSITION_MAP = {
     "valorant": ["타격대", "척후대", "감시자", "전략가", "상관없음"],
@@ -118,6 +122,15 @@ def build_lobby_embed(lobby: dict, players: list[dict], team_a=None, team_b=None
         embed.add_field(name="팀 인원", value=f"{lobby['team_size']} vs {lobby['team_size']}", inline=True)
         embed.add_field(name="현재 인원", value=f"{len(players)} / {need}", inline=True)
 
+    scheduled_text = "미설정"
+    if lobby.get("scheduled_at"):
+        try:
+            scheduled_text = lobby["scheduled_at"].strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            scheduled_text = str(lobby["scheduled_at"])
+
+    embed.add_field(name="내전 시간", value=scheduled_text, inline=False)
+
     if players:
         if is_pubg_lobby(lobby) and lobby["team_size"] in [2, 4]:
             grouped = {}
@@ -166,16 +179,16 @@ def build_lobby_embed(lobby: dict, players: list[dict], team_a=None, team_b=None
     if lobby["status"] == "open":
         if is_pubg_lobby(lobby):
             if lobby["team_size"] == 1:
-                embed.set_footer(text="배그 솔로는 개인 참가형입니다. 정원이 차면 대기방으로 자동 이동합니다.")
+                embed.set_footer(text="배그 솔로는 개인 참가형입니다. 예약된 내전 시간에 자동 진행됩니다.")
             else:
-                embed.set_footer(text="배그 듀오/스쿼드는 먼저 파티를 만든 뒤 참가하세요. 정원이 차면 대기방으로 자동 이동합니다.")
+                embed.set_footer(text="배그 듀오/스쿼드는 먼저 파티를 만든 뒤 참가하세요. 예약된 내전 시간에 자동 진행됩니다.")
         else:
-            embed.set_footer(text="참가 버튼을 눌러 포지션과 MMR을 입력하세요.")
+            embed.set_footer(text="참가 버튼을 눌러 포지션과 MMR을 입력하세요. 정원이 차도 예약된 내전 시간에 자동 팀분배됩니다.")
     elif lobby["status"] == "started":
         if is_pubg_lobby(lobby):
             embed.set_footer(text="배그 모집이 완료되어 대기방으로 이동되었습니다.")
         else:
-            embed.set_footer(text="정원이 차서 자동 팀 분배 + 자동 음성 이동이 완료되었습니다.")
+            embed.set_footer(text="예약된 내전 시간에 자동 팀 분배 + 자동 음성 이동이 완료되었습니다.")
     else:
         embed.set_footer(text="내전 상태를 확인하세요.")
 
@@ -270,7 +283,6 @@ class JoinModal(discord.ui.Modal, title="내전 참가"):
         await interaction.response.send_message("참가 완료", ephemeral=True)
 
         await self.cog.refresh_lobby_message(interaction.channel, self.channel_id)
-        await self.cog.try_auto_balance_and_start(interaction.channel, self.channel_id)
 
 
 class JoinButton(discord.ui.Button):
@@ -348,6 +360,56 @@ class RecruitView(discord.ui.View):
 class Recruit(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self.scheduled_start_loop.start()
+
+    def cog_unload(self):
+        self.scheduled_start_loop.cancel()
+
+    def format_scheduled_at(self, scheduled_at):
+        if not scheduled_at:
+            return "미설정"
+        try:
+            return scheduled_at.strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            return str(scheduled_at)
+
+    def parse_schedule_datetime(self, date_text: str, time_text: str):
+        dt = datetime.strptime(f"{date_text} {time_text}", "%Y-%m-%d %H:%M")
+        return dt.replace(tzinfo=KST).replace(tzinfo=None)
+
+    async def get_result_channel(self, guild: discord.Guild, fallback_channel: discord.TextChannel | None = None):
+        settings = db.get_settings(guild.id)
+        channel_id = settings.get("result_channel_id") if settings else None
+        if channel_id:
+            channel = guild.get_channel(channel_id)
+            if isinstance(channel, discord.TextChannel):
+                return channel
+        return fallback_channel
+
+
+    @tasks.loop(seconds=30)
+    async def scheduled_start_loop(self):
+        try:
+            due_lobbies = db.get_due_lobbies()
+            for lobby in due_lobbies:
+                guild = self.bot.get_guild(lobby["guild_id"])
+                if guild is None:
+                    continue
+
+                channel = guild.get_channel(lobby["channel_id"])
+                if channel is None or not isinstance(channel, discord.TextChannel):
+                    continue
+
+                try:
+                    await self.try_auto_balance_and_start(channel, lobby["channel_id"], force_time=True)
+                except Exception as e:
+                    print(f"예약 자동 분배 오류 ({lobby['channel_id']}): {e}")
+        except Exception as e:
+            print(f"scheduled_start_loop 오류: {e}")
+
+    @scheduled_start_loop.before_loop
+    async def before_scheduled_start_loop(self):
+        await self.bot.wait_until_ready()
 
     async def refresh_lobby_message(self, channel: discord.TextChannel, channel_id: int):
         lobby = db.get_lobby(channel_id)
@@ -460,7 +522,7 @@ class Recruit(commands.Cog):
                 except Exception:
                     pass
 
-    async def try_auto_balance_and_start(self, channel: discord.TextChannel, channel_id: int):
+    async def try_auto_balance_and_start(self, channel: discord.TextChannel, channel_id: int, force_time: bool = False):
         lobby = db.get_lobby(channel_id)
         if not lobby or lobby["status"] != "open":
             return
@@ -469,6 +531,9 @@ class Recruit(commands.Cog):
         need = get_lobby_need_count(lobby)
 
         if len(players) < need:
+            return
+
+        if not force_time:
             return
 
         if is_pubg_lobby(lobby):
@@ -553,7 +618,9 @@ class Recruit(commands.Cog):
         게임="게임 선택",
         팀인원="한 팀 인원 수 (배그는 입력하지 않음)",
         배그형식="배그일 때 솔로 / 듀오 / 스쿼드",
-        모집인원="배그 총 모집 인원"
+        모집인원="배그 총 모집 인원",
+        날짜="내전 날짜 (YYYY-MM-DD)",
+        시간="내전 시간 (HH:MM, 24시간제)"
     )
     @app_commands.choices(게임=GAME_OPTIONS, 배그형식=PUBG_MODE_OPTIONS)
     async def create(
@@ -562,7 +629,9 @@ class Recruit(commands.Cog):
         게임: app_commands.Choice[str],
         팀인원: int | None = None,
         배그형식: app_commands.Choice[str] | None = None,
-        모집인원: int | None = None
+        모집인원: int | None = None,
+        날짜: str | None = None,
+        시간: str | None = None
     ):
         try:
             if not member_has_access(interaction.user):
@@ -576,6 +645,20 @@ class Recruit(commands.Cog):
 
             if db.get_lobby(interaction.channel_id):
                 await interaction.response.send_message("이미 이 채널에 로비가 있습니다.", ephemeral=True)
+                return
+
+            if not 날짜 or not 시간:
+                await interaction.response.send_message("내전 날짜와 시간을 입력해주세요. 예: 날짜=2026-04-03, 시간=21:30", ephemeral=True)
+                return
+
+            try:
+                scheduled_at = self.parse_schedule_datetime(날짜.strip(), 시간.strip())
+            except Exception:
+                await interaction.response.send_message("날짜/시간 형식이 잘못되었습니다. 날짜는 YYYY-MM-DD, 시간은 HH:MM 형식으로 입력해주세요.", ephemeral=True)
+                return
+
+            if scheduled_at <= datetime.now().replace(microsecond=0):
+                await interaction.response.send_message("내전 날짜/시간은 현재 시각보다 미래여야 합니다.", ephemeral=True)
                 return
 
             final_team_size: int | None = 팀인원
@@ -637,7 +720,8 @@ class Recruit(commands.Cog):
                 interaction.user.id,
                 게임.value,
                 final_team_size,
-                total_slots=final_total_slots
+                total_slots=final_total_slots,
+                scheduled_at=scheduled_at
             )
 
             lobby = db.get_lobby(interaction.channel_id)
