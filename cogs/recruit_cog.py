@@ -1,6 +1,8 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from core.db import DB
 from core.matchmaking import auto_balance_players
@@ -20,6 +22,8 @@ PUBG_MODE_OPTIONS = [
     app_commands.Choice(name="듀오", value="duo"),
     app_commands.Choice(name="스쿼드", value="squad"),
 ]
+
+KST = ZoneInfo("Asia/Seoul")
 
 POSITION_MAP = {
     "valorant": ["타격대", "척후대", "감시자", "전략가", "상관없음"],
@@ -47,6 +51,11 @@ async def send_operation_log(guild: discord.Guild, title: str, description: str,
     except Exception:
         pass
 
+
+
+def parse_schedule_datetime(date_text: str, time_text: str):
+    dt = datetime.strptime(f"{date_text} {time_text}", "%Y-%m-%d %H:%M")
+    return dt.replace(tzinfo=KST).replace(tzinfo=None)
 
 
 def member_has_access(member: discord.Member) -> bool:
@@ -137,6 +146,14 @@ def build_lobby_embed(lobby: dict, players: list[dict], team_a=None, team_b=None
     else:
         embed.add_field(name="팀 인원", value=f"{lobby['team_size']} vs {lobby['team_size']}", inline=True)
         embed.add_field(name="현재 인원", value=f"{len(players)} / {need}", inline=True)
+
+    scheduled_text = "미설정"
+    if lobby.get("scheduled_at"):
+        try:
+            scheduled_text = lobby["scheduled_at"].strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            scheduled_text = str(lobby["scheduled_at"])
+    embed.add_field(name="내전 시간", value=scheduled_text, inline=False)
 
     if players:
         if is_pubg_lobby(lobby) and lobby["team_size"] in [2, 4]:
@@ -573,7 +590,9 @@ class Recruit(commands.Cog):
         게임="게임 선택",
         팀인원="한 팀 인원 수 (배그는 입력하지 않음)",
         배그형식="배그일 때 솔로 / 듀오 / 스쿼드",
-        모집인원="배그 총 모집 인원"
+        모집인원="배그 총 모집 인원",
+        날짜="내전 날짜 (YYYY-MM-DD)",
+        시간="내전 시간 (HH:MM, 24시간제)"
     )
     @app_commands.choices(게임=GAME_OPTIONS, 배그형식=PUBG_MODE_OPTIONS)
     async def create(
@@ -582,7 +601,9 @@ class Recruit(commands.Cog):
         게임: app_commands.Choice[str],
         팀인원: int | None = None,
         배그형식: app_commands.Choice[str] | None = None,
-        모집인원: int | None = None
+        모집인원: int | None = None,
+        날짜: str | None = None,
+        시간: str | None = None
     ):
         try:
             if not member_has_access(interaction.user):
@@ -597,6 +618,17 @@ class Recruit(commands.Cog):
             if db.get_lobby(interaction.channel_id):
                 await interaction.response.send_message("이미 이 채널에 로비가 있습니다.", ephemeral=True)
                 return
+
+            scheduled_at = None
+            if 날짜 and 시간:
+                try:
+                    scheduled_at = parse_schedule_datetime(날짜, 시간)
+                except Exception:
+                    await interaction.response.send_message(
+                        "날짜/시간 형식이 잘못되었습니다. 예: 날짜 `2026-04-05`, 시간 `21:30`",
+                        ephemeral=True
+                    )
+                    return
 
             final_team_size: int | None = 팀인원
             final_total_slots: int | None = None
@@ -657,7 +689,8 @@ class Recruit(commands.Cog):
                 interaction.user.id,
                 게임.value,
                 final_team_size,
-                total_slots=final_total_slots
+                total_slots=final_total_slots,
+                scheduled_at=scheduled_at
             )
 
             lobby = db.get_lobby(interaction.channel_id)
@@ -672,12 +705,14 @@ class Recruit(commands.Cog):
             if 게임.value == "pubg":
                 log_desc = (
                     f"생성자: {interaction.user.mention}\n채널: {interaction.channel.mention}\n"
-                    f"게임: PUBG\n형식: {배그형식.name if 배그형식 else '-'}\n총 모집 인원: {final_total_slots}"
+                    f"게임: PUBG\n형식: {배그형식.name if 배그형식 else '-'}\n총 모집 인원: {final_total_slots}\n"
+                    f"내전 시간: {날짜 or '-'} {시간 or '-'}"
                 )
             else:
                 log_desc = (
                     f"생성자: {interaction.user.mention}\n채널: {interaction.channel.mention}\n"
-                    f"게임: {게임.name}\n팀 인원: {final_team_size} vs {final_team_size}"
+                    f"게임: {게임.name}\n팀 인원: {final_team_size} vs {final_team_size}\n"
+                    f"내전 시간: {날짜 or '-'} {시간 or '-'}"
                 )
 
             await send_operation_log(

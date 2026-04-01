@@ -739,6 +739,7 @@ def init_recruit_tables():
                 game VARCHAR(50) NOT NULL,
                 team_size INTEGER NOT NULL,
                 total_slots INTEGER,
+                scheduled_at TIMESTAMP,
                 status VARCHAR(30) NOT NULL DEFAULT 'open',
                 message_id BIGINT,
                 waiting_voice_id BIGINT,
@@ -749,6 +750,7 @@ def init_recruit_tables():
         """)
 
         cur.execute("""ALTER TABLE lobbies ADD COLUMN IF NOT EXISTS total_slots INTEGER""")
+        cur.execute("""ALTER TABLE lobbies ADD COLUMN IF NOT EXISTS scheduled_at TIMESTAMP""")
 
         cur.execute("""
             CREATE TABLE IF NOT EXISTS lobby_players (
@@ -829,7 +831,7 @@ def get_lobby(channel_id: int):
     with db_cursor(dict_cursor=True) as (_, cur):
         cur.execute("""
             SELECT
-                channel_id, guild_id, host_id, game, team_size, total_slots, status,
+                channel_id, guild_id, host_id, game, team_size, total_slots, scheduled_at, status,
                 message_id, waiting_voice_id, team_a_voice_id, team_b_voice_id, created_at
             FROM lobbies
             WHERE channel_id = %s
@@ -844,7 +846,8 @@ def create_lobby(
     host_id: int,
     game: str,
     team_size: int,
-    total_slots: Optional[int] = None
+    total_slots: Optional[int] = None,
+    scheduled_at: Optional[datetime] = None
 ):
     init_recruit_tables()
     register_guild(guild_id)
@@ -852,26 +855,44 @@ def create_lobby(
     with db_cursor() as (_, cur):
         cur.execute("""
             INSERT INTO lobbies (
-                channel_id, guild_id, host_id, game, team_size, total_slots, status
+                channel_id, guild_id, host_id, game, team_size, total_slots, scheduled_at, status
             )
-            VALUES (%s, %s, %s, %s, %s, %s, 'open')
+            VALUES (%s, %s, %s, %s, %s, %s, %s, 'open')
             ON CONFLICT (channel_id) DO UPDATE SET
                 guild_id = EXCLUDED.guild_id,
                 host_id = EXCLUDED.host_id,
                 game = EXCLUDED.game,
                 team_size = EXCLUDED.team_size,
                 total_slots = EXCLUDED.total_slots,
+                scheduled_at = EXCLUDED.scheduled_at,
                 status = 'open',
                 message_id = NULL,
                 waiting_voice_id = NULL,
                 team_a_voice_id = NULL,
                 team_b_voice_id = NULL
-        """, (channel_id, guild_id, host_id, game, team_size, total_slots))
+        """, (channel_id, guild_id, host_id, game, team_size, total_slots, scheduled_at))
 
         cur.execute("DELETE FROM lobby_players WHERE channel_id = %s", (channel_id,))
         cur.execute("DELETE FROM lobby_teams WHERE channel_id = %s", (channel_id,))
         cur.execute("DELETE FROM lobby_party_members WHERE channel_id = %s", (channel_id,))
         cur.execute("DELETE FROM lobby_parties WHERE channel_id = %s", (channel_id,))
+
+
+
+def get_due_lobbies():
+    init_recruit_tables()
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("""
+            SELECT
+                channel_id, guild_id, host_id, game, team_size, total_slots, scheduled_at, status,
+                message_id, waiting_voice_id, team_a_voice_id, team_b_voice_id, created_at
+            FROM lobbies
+            WHERE status = 'open'
+              AND scheduled_at IS NOT NULL
+              AND scheduled_at <= CURRENT_TIMESTAMP
+            ORDER BY scheduled_at ASC, created_at ASC
+        """)
+        return [dict(row) for row in cur.fetchall()]
 
 
 def set_lobby_message(channel_id: int, message_id: int):
@@ -1656,9 +1677,14 @@ class DB:
         host_id: int,
         game: str,
         team_size: int,
-        total_slots: Optional[int] = None
+        total_slots: Optional[int] = None,
+        scheduled_at: Optional[datetime] = None
     ):
-        return create_lobby(channel_id, guild_id, host_id, game, team_size, total_slots)
+        return create_lobby(channel_id, guild_id, host_id, game, team_size, total_slots, scheduled_at)
+
+    @staticmethod
+    def get_due_lobbies():
+        return get_due_lobbies()
 
     @staticmethod
     def set_lobby_message(channel_id: int, message_id: int):

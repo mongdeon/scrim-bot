@@ -10,7 +10,6 @@ from core.db import DB
 load_dotenv()
 
 TOKEN = os.getenv("DISCORD_TOKEN", "").strip()
-GUILD_ID_RAW = os.getenv("GUILD_ID", "").strip()
 
 intents = discord.Intents.default()
 intents.guilds = True
@@ -46,14 +45,8 @@ async def load_extensions():
 
 async def sync_commands():
     try:
-        if GUILD_ID_RAW.isdigit():
-            guild = discord.Object(id=int(GUILD_ID_RAW))
-            bot.tree.copy_global_to(guild=guild)
-            synced = await bot.tree.sync(guild=guild)
-            print(f"[SYNC] guild sync 완료: {len(synced)}개 (guild_id={GUILD_ID_RAW})")
-        else:
-            synced = await bot.tree.sync()
-            print(f"[SYNC] global sync 완료: {len(synced)}개")
+        synced = await bot.tree.sync()
+        print(f"[SYNC] global sync 완료: {len(synced)}개")
     except Exception as e:
         print(f"[SYNC ERROR] {e}")
 
