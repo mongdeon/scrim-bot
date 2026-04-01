@@ -2,7 +2,7 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 
-from core.db import DB, render_clan_template
+from core.db import DB
 from core.matchmaking import auto_balance_players
 
 db = DB()
@@ -27,26 +27,6 @@ POSITION_MAP = {
     "pubg": ["IGL", "Entry", "Support", "Scout", "상관없음"],
     "overwatch": ["돌격", "딜러", "지원", "상관없음"],
 }
-
-
-
-async def send_clan_announcement(guild: discord.Guild, channel: discord.TextChannel | None, content: str):
-    if not content:
-        return
-    settings = db.get_settings(guild.id)
-    target = None
-    if settings and settings.get("announcement_channel_id"):
-        maybe = guild.get_channel(settings["announcement_channel_id"])
-        if isinstance(maybe, discord.TextChannel):
-            target = maybe
-    if target is None:
-        target = channel
-    if not isinstance(target, discord.TextChannel):
-        return
-    try:
-        await target.send(content)
-    except Exception:
-        pass
 
 async def send_operation_log(guild: discord.Guild, title: str, description: str, color: discord.Color = discord.Color.blue()):
     settings = db.get_settings(guild.id)
@@ -536,41 +516,19 @@ class Recruit(commands.Cog):
             if lobby["team_size"] in [2, 4]:
                 party_lines = build_party_lines(channel_id)
                 party_text = "\n".join(party_lines) if party_lines else "없음"
-                default_text = (
+                await channel.send(
                     f"배그 배틀로얄 모집 완료\n"
                     f"형식: **{get_pubg_mode_label(lobby['team_size'])}**\n"
                     f"총 인원: **{need}명**\n\n"
                     f"파티 목록:\n{party_text}"
                 )
-                clan_text = render_clan_template(
-                    channel.guild.id,
-                    "start",
-                    game=get_game_display_name(lobby),
-                    channel=channel.mention,
-                    mode_text=get_pubg_mode_label(lobby['team_size']),
-                    team_a="-",
-                    team_b="-",
-                    difference=0,
-                )
-                await send_clan_announcement(channel.guild, channel, clan_text if db.has_premium_plan(channel.guild.id, "clan") else default_text)
             else:
-                default_text = (
+                await channel.send(
                     f"배그 배틀로얄 모집 완료\n"
                     f"형식: **{get_pubg_mode_label(lobby['team_size'])}**\n"
                     f"총 인원: **{need}명**\n\n"
                     + "\n".join(f"- {p['display_name']} ({p['mmr']}, {p['position']})" for p in players[:need])
                 )
-                clan_text = render_clan_template(
-                    channel.guild.id,
-                    "start",
-                    game=get_game_display_name(lobby),
-                    channel=channel.mention,
-                    mode_text=get_pubg_mode_label(lobby['team_size']),
-                    team_a="-",
-                    team_b="-",
-                    difference=0,
-                )
-                await send_clan_announcement(channel.guild, channel, clan_text if db.has_premium_plan(channel.guild.id, "clan") else default_text)
             return
 
         selected = players[:need]
@@ -601,7 +559,7 @@ class Recruit(commands.Cog):
         a_sum = sum(p["mmr"] for p in team_a)
         b_sum = sum(p["mmr"] for p in team_b)
 
-        default_text = (
+        await channel.send(
             f"정원이 차서 자동 팀 분배 + 자동 음성 이동이 완료되었습니다. ({mode_text})\n\n"
             f"**A팀 총합:** {a_sum}\n"
             + "\n".join(f"{p['display_name']} ({p['mmr']}, {p['position']})" for p in team_a)
@@ -609,17 +567,6 @@ class Recruit(commands.Cog):
             + "\n".join(f"{p['display_name']} ({p['mmr']}, {p['position']})" for p in team_b)
             + f"\n\n차이: {abs(a_sum - b_sum)}"
         )
-        clan_text = render_clan_template(
-            channel.guild.id,
-            "start",
-            game=get_game_display_name(lobby),
-            channel=channel.mention,
-            mode_text=mode_text,
-            team_a=", ".join(p['display_name'] for p in team_a),
-            team_b=", ".join(p['display_name'] for p in team_b),
-            difference=abs(a_sum - b_sum),
-        )
-        await send_clan_announcement(channel.guild, channel, clan_text if db.has_premium_plan(channel.guild.id, "clan") else default_text)
 
     @app_commands.command(name="내전생성", description="내전 모집 메시지를 생성합니다.")
     @app_commands.describe(
