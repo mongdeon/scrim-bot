@@ -22,6 +22,7 @@ from core.db import (
     get_registered_guilds,
     get_plan_label,
     get_clan_branding,
+    render_clan_template,
 )
 
 app = Flask(__name__)
@@ -373,11 +374,45 @@ BASE_STYLE = """
         line-height: 1.8;
     }
 
+    .preview-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+        margin-top: 16px;
+    }
+
+    .preview-card {
+        background: rgba(8, 22, 47, 0.68);
+        border: 1px solid rgba(255,255,255,0.08);
+        border-radius: 16px;
+        padding: 16px;
+    }
+
+    .preview-card h3 {
+        margin: 0 0 10px 0;
+        font-size: 16px;
+    }
+
+    .preview-text {
+        white-space: pre-line;
+        line-height: 1.75;
+        color: #e2e8f0;
+        font-size: 14px;
+    }
+
+    .banner-card {
+        border-left: 5px solid var(--brand-color, #8b5cf6);
+        background: linear-gradient(135deg, rgba(139,92,246,0.14), rgba(31,47,73,0.98));
+    }
+
     @media (max-width: 900px) {
         .top3 {
             grid-template-columns: 1fr;
         }
         .grid-2 {
+            grid-template-columns: 1fr;
+        }
+        .preview-grid {
             grid-template-columns: 1fr;
         }
     }
@@ -403,6 +438,32 @@ def get_selected_guild_brand(guild_id_raw: str):
     return get_clan_branding(int(guild_id_raw))
 
 
+def build_brand_previews(guild_id: int | None, brand: dict | None, game_text: str = 'VALORANT', channel_text: str = '#클랜공지'):
+    if not guild_id or not brand or not brand.get('is_clan'):
+        return '', ''
+
+    start_preview = render_clan_template(
+        guild_id,
+        'start',
+        game=game_text,
+        channel=channel_text,
+        mode_text='예약 내전 자동 시작',
+        team_a='에이스 / 브라보 / 찰리 / 델타 / 에코',
+        team_b='폭스 / 골프 / 호텔 / 인디아 / 줄리엣',
+        difference='45'
+    )
+    result_preview = render_clan_template(
+        guild_id,
+        'result',
+        game=game_text,
+        winner_team='A',
+        avg_a='1012',
+        avg_b='998',
+        channel=channel_text
+    )
+    return start_preview, result_preview
+
+
 INDEX_HTML = """
 <!DOCTYPE html>
 <html lang="ko">
@@ -426,6 +487,21 @@ INDEX_HTML = """
             {{ brand.intro_text }}<br>
             패키지: <strong>{{ brand.plan_name }}</strong>
         </div>
+        <div class="preview-grid">
+            <div class="preview-card">
+                <h3>🚀 시작 공지 미리보기</h3>
+                <div class="preview-text">{{ start_preview }}</div>
+            </div>
+            <div class="preview-card">
+                <h3>🏁 결과 공지 미리보기</h3>
+                <div class="preview-text">{{ result_preview }}</div>
+            </div>
+        </div>
+    </div>
+    <div class="card banner-card">
+        <h2 class="section-title">📢 클랜 서버 전용 안내</h2>
+        <div class="feature-box">현재 선택한 서버는 클랜 패키지 서버입니다.
+웹사이트 배너, 디스코드 시작 공지, 결과 공지가 같은 템플릿으로 동기화됩니다.</div>
     </div>
     {% endif %}
 
@@ -811,6 +887,20 @@ SEASON_HTML = """
     <div class="card brand-card">
         <div class="brand-title"><span class="brand-badge">{{ brand.badge_text }}</span><span>{{ brand.brand_name }}</span></div>
         <div class="brand-sub">{{ brand.intro_text }}</div>
+        <div class="preview-grid">
+            <div class="preview-card">
+                <h3>🏆 시즌 시작 공지 예시</h3>
+                <div class="preview-text">{{ start_preview }}</div>
+            </div>
+            <div class="preview-card">
+                <h3>📋 시즌 결과 공지 예시</h3>
+                <div class="preview-text">{{ result_preview }}</div>
+            </div>
+        </div>
+    </div>
+    <div class="card banner-card">
+        <h2 class="section-title">📣 시즌 전용 안내 배너</h2>
+        <div class="feature-box">클랜 서버는 시즌 페이지에서도 동일한 브랜드 배지와 공지 템플릿 미리보기가 함께 표시됩니다.</div>
     </div>
     {% endif %}
 
@@ -938,6 +1028,21 @@ PLAYER_HTML = """
     <div class="card brand-card">
         <div class="brand-title"><span class="brand-badge">{{ brand.badge_text }}</span><span>{{ brand.brand_name }}</span></div>
         <div class="brand-sub">{{ brand.intro_text }}</div>
+        <div class="preview-grid">
+            <div class="preview-card">
+                <h3>👀 시작 공지 미리보기</h3>
+                <div class="preview-text">{{ start_preview }}</div>
+            </div>
+            <div class="preview-card">
+                <h3>✅ 결과 공지 미리보기</h3>
+                <div class="preview-text">{{ result_preview }}</div>
+            </div>
+        </div>
+    </div>
+    <div class="card banner-card">
+        <h2 class="section-title">📌 상세 전적 안내</h2>
+        <div class="feature-box">이 상세 전적 페이지는 클랜 전용 웹 브랜딩과 연결되어 있습니다.
+디스코드에서 사용하는 공지 템플릿과 같은 문구 흐름으로 표시됩니다.</div>
     </div>
     {% endif %}
 
@@ -1282,6 +1387,8 @@ def index():
 
     active_premium_count = count_active_premium_guilds()
     brand = get_selected_guild_brand(selected_guild_id)
+    preview_guild_id = int(selected_guild_id) if selected_guild_id.isdigit() else None
+    start_preview, result_preview = build_brand_previews(preview_guild_id, brand, selected_game or 'VALORANT')
 
     return render_template_string(
         get_brand_css(brand) + INDEX_HTML,
@@ -1296,6 +1403,8 @@ def index():
         premium_days=PREMIUM_DAYS,
         active_premium_count=active_premium_count,
         brand=brand,
+        start_preview=start_preview,
+        result_preview=result_preview,
     )
 
 
@@ -1336,6 +1445,8 @@ def season_page():
     summary = {"player_count": 0, "avg_mmr": 0, "top_mmr": 0, "match_count": 0}
     error_message = ""
     brand = get_selected_guild_brand(guild_id_raw)
+    preview_guild_id = int(guild_id_raw) if guild_id_raw.isdigit() else None
+    start_preview, result_preview = build_brand_previews(preview_guild_id, brand, selected_game or 'VALORANT')
 
     if guild_id_raw and selected_game:
         if not guild_id_raw.isdigit():
@@ -1364,7 +1475,9 @@ def season_page():
         matches=matches,
         summary=summary,
         error_message=error_message,
-        brand=brand
+        brand=brand,
+        start_preview=start_preview,
+        result_preview=result_preview
     )
 
 
@@ -1413,13 +1526,16 @@ def player_page(guild_id, user_id):
     winrate = round((player["win"] / total) * 100, 1) if total > 0 else 0.0
 
     brand = get_clan_branding(guild_id)
+    start_preview, result_preview = build_brand_previews(guild_id, brand, '상세 전적 기준 내전', '#클랜공지')
 
     return render_template_string(
         get_brand_css(brand) + PLAYER_HTML,
         player=player,
         winrate=winrate,
         game_rows=game_rows,
-        brand=brand
+        brand=brand,
+        start_preview=start_preview,
+        result_preview=result_preview
     )
 
 
