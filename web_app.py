@@ -22,8 +22,6 @@ from core.db import (
     get_registered_guilds,
     get_plan_label,
     get_clan_branding,
-    update_clan_branding,
-    clear_clan_branding,
     render_clan_template,
 )
 
@@ -515,8 +513,8 @@ INDEX_HTML = """
     </div>
 
     <div class="card">
-        <div class="pill">프리미엄 가격: {{ premium_price }}원</div>
-        <div class="pill">프리미엄 기간: {{ premium_days }}일</div>
+        <div class="pill">패키지형 프리미엄 운영</div>
+        <div class="pill">서포터 3,000원 / 프로 5,000원 / 클랜 10,000원</div>
         <div class="pill">활성 프리미엄 서버 수: {{ active_premium_count }}</div>
     </div>
 
@@ -643,54 +641,38 @@ GUIDE_HTML = """
         <h2 class="section-title">🆓 무료 명령어</h2>
         <div class="guide-list">
             <div class="guide-item">
-                <h3>/설정역할</h3>
-                <p>내전에 참여 가능한 인증 역할을 설정합니다.</p>
+                <h3>기본 서버 설정</h3>
+                <p>/설정역할, /설정카테고리, /설정팀결과채널, /설정보기</p>
             </div>
             <div class="guide-item">
-                <h3>/설정카테고리</h3>
-                <p>대기방 / 팀 보이스 채널이 생성될 카테고리를 설정합니다.</p>
+                <h3>기본 내전 운영</h3>
+                <p>/내전생성, /내전상태, /밸런스팀, /내전종료</p>
             </div>
             <div class="guide-item">
-                <h3>/내전생성</h3>
-                <p>현재 채널에서 내전 모집을 시작합니다.</p>
+                <h3>PUBG 모집 기능</h3>
+                <p>배틀로얄 모집형, 솔로/듀오/스쿼드 규칙, 파티 시스템, 예약 시간 자동 진행</p>
             </div>
             <div class="guide-item">
-                <h3>/밸런스팀</h3>
-                <p>참가자 기준으로 자동 팀 분배를 진행합니다.</p>
-            </div>
-            <div class="guide-item">
-                <h3>/내전상태</h3>
-                <p>현재 모집 상태, 참가자, 현재 맵 등을 확인합니다.</p>
-            </div>
-            <div class="guide-item">
-                <h3>/내전종료</h3>
-                <p>내전을 종료하고 팀 채널을 정리합니다.</p>
+                <h3>기본 프로필 기능</h3>
+                <p>/발로티어등록, /옵치티어등록, /롤티어등록, 각 티어 점수표 확인</p>
             </div>
         </div>
     </div>
 
     <div class="card">
-        <h2 class="section-title">⭐ 프리미엄 기능</h2>
+        <h2 class="section-title">⭐ 패키지형 프리미엄</h2>
         <div class="guide-list">
             <div class="guide-item">
-                <h3>결과기록 / ELO 반영</h3>
-                <p>경기 결과를 기록하고 ELO / MMR, 승패 전적을 자동 반영합니다.</p>
+                <h3>서포터 패키지</h3>
+                <p>/맵뽑기, /시즌확인, /시즌목록, /시즌랭킹, 웹 상세 전적 / 시즌 페이지 사용 가능</p>
             </div>
             <div class="guide-item">
-                <h3>상세 전적</h3>
-                <p>유저별 상세 전적 페이지를 통해 누적 전적과 게임별 기록을 확인할 수 있습니다.</p>
+                <h3>프로 패키지</h3>
+                <p>서포터 기능 포함 + /결과기록, /시즌생성, /시즌종료 사용 가능</p>
             </div>
             <div class="guide-item">
-                <h3>게임별 시즌</h3>
-                <p>서버별, 게임별로 시즌을 따로 운영할 수 있습니다.</p>
-            </div>
-            <div class="guide-item">
-                <h3>시즌 랭킹 / 시즌 경기 기록</h3>
-                <p>현재 시즌 기준 랭킹과 최근 경기 기록을 따로 확인할 수 있습니다.</p>
-            </div>
-            <div class="guide-item">
-                <h3>맵뽑기</h3>
-                <p>현재 로비 게임 기준으로 맵을 랜덤으로 뽑고, 내전 상태에 함께 표시할 수 있습니다.</p>
+                <h3>클랜 패키지</h3>
+                <p>프로 기능 포함 + 반복 예약, 시작 전 알림, 운영 로그, 웹 브랜딩, 공지 템플릿 통합 기능 사용 가능</p>
             </div>
         </div>
     </div>
@@ -721,35 +703,27 @@ SUPPORT_HTML = """
     <div class="grid-2">
         <div>
             <div class="card">
-                <h2 class="section-title">📖 프리미엄 안내</h2>
+                <h2 class="section-title">📖 패키지형 프리미엄 안내</h2>
                 <p style="line-height:1.8; margin:0;">
-                    패키지별 후원 기능을 제공합니다.<br>
+                    후원은 <strong>서포터 / 프로 / 클랜</strong> 패키지형으로 운영됩니다.<br>
                     클랜 패키지는 웹 브랜딩과 디스코드 공지 템플릿을 같은 설정으로 통일할 수 있습니다.
                 </p>
             </div>
 
             <div class="card">
-                <h2 class="section-title">⭐ 프리미엄 기능</h2>
+                <h2 class="section-title">⭐ 패키지 구성</h2>
                 <div class="guide-list">
                     <div class="guide-item">
-                        <h3>결과기록 / ELO 반영</h3>
-                        <p>경기 결과를 기록하고 ELO / MMR을 자동 반영합니다.</p>
+                        <h3>서포터 · 3,000원 / 30일</h3>
+                        <p>/맵뽑기, /시즌확인, /시즌목록, /시즌랭킹, 웹 상세 전적 / 시즌 페이지 사용 가능</p>
                     </div>
                     <div class="guide-item">
-                        <h3>상세 전적</h3>
-                        <p>유저별 상세 전적과 게임별 기록을 확인할 수 있습니다.</p>
+                        <h3>프로 · 5,000원 / 30일</h3>
+                        <p>서포터 기능 포함 + /결과기록, /시즌생성, /시즌종료 사용 가능</p>
                     </div>
                     <div class="guide-item">
-                        <h3>게임별 시즌</h3>
-                        <p>게임마다 별도로 시즌을 운영하고 관리할 수 있습니다.</p>
-                    </div>
-                    <div class="guide-item">
-                        <h3>시즌 랭킹 / 시즌 경기 기록</h3>
-                        <p>시즌 전용 랭킹과 경기 기록을 따로 조회할 수 있습니다.</p>
-                    </div>
-                    <div class="guide-item">
-                        <h3>맵뽑기</h3>
-                        <p>프리미엄 서버 전용으로 맵을 랜덤으로 뽑고 내전 운영에 활용할 수 있습니다.</p>
+                        <h3>클랜 · 10,000원 / 30일</h3>
+                        <p>프로 기능 포함 + 반복 예약, 시작 전 알림, 운영 로그, 웹 브랜딩, 공지 템플릿 통합 기능 사용 가능</p>
                     </div>
                 </div>
             </div>
@@ -775,6 +749,15 @@ SUPPORT_HTML = """
                 <div class="form-group">
                     <label for="guildId">서버 ID</label>
                     <input type="number" id="guildId" placeholder="예: 123456789012345678">
+                </div>
+
+                <div class="form-group">
+                    <label for="planKey">패키지 선택</label>
+                    <select id="planKey">
+                        <option value="supporter">서포터 (3,000원 / 30일)</option>
+                        <option value="pro">프로 (5,000원 / 30일)</option>
+                        <option value="clan">클랜 (10,000원 / 30일)</option>
+                    </select>
                 </div>
 
                 <div class="form-group">
@@ -807,6 +790,7 @@ SUPPORT_HTML = """
 <script>
 async function submitPremiumRequest() {
     const guildId = document.getElementById("guildId").value.trim();
+    const planKey = document.getElementById("planKey").value.trim();
     const applicantName = document.getElementById("applicantName").value.trim();
     const discordTag = document.getElementById("discordTag").value.trim();
     const amount = document.getElementById("amount").value.trim();
@@ -843,7 +827,8 @@ async function submitPremiumRequest() {
                 applicant_name: applicantName,
                 discord_tag: discordTag,
                 amount: amount,
-                memo: memo
+                memo: memo,
+                plan_key: planKey
             })
         });
 
@@ -1142,152 +1127,9 @@ ADMIN_PREMIUM_HTML = """
         <h2 class="section-title">프리미엄 신청 목록</h2>
         <div id="requestList"></div>
     </div>
-
-    <div class="card">
-        <h2 class="section-title">클랜 웹 브랜딩 / 공지 템플릿 편집</h2>
-        <div class="form-group">
-            <label for="brandGuildId">서버 ID</label>
-            <input type="number" id="brandGuildId" placeholder="클랜 패키지 서버 ID 입력">
-        </div>
-        <div class="action-row">
-            <button class="submit-btn" onclick="loadClanBranding()">불러오기</button>
-            <button class="reject-btn" onclick="resetClanBranding()">초기화</button>
-        </div>
-        <div id="brandStatus" class="status"></div>
-
-        <div class="grid-2">
-            <div>
-                <div class="form-group">
-                    <label for="brandName">브랜드 이름</label>
-                    <input type="text" id="brandName" placeholder="예: 뽀짝이네 클랜">
-                </div>
-                <div class="form-group">
-                    <label for="brandColor">브랜드 색상</label>
-                    <input type="text" id="brandColor" placeholder="#8b5cf6">
-                </div>
-                <div class="form-group">
-                    <label for="badgeText">배지 문구</label>
-                    <input type="text" id="badgeText" placeholder="👑 POZZAK">
-                </div>
-                <div class="form-group">
-                    <label for="introText">클랜 소개 문구</label>
-                    <textarea id="introText" placeholder="웹 상단 안내 문구"></textarea>
-                </div>
-                <div class="form-group">
-                    <label for="startTemplate">시작 공지 템플릿</label>
-                    <textarea id="startTemplate" placeholder="{badge} {brand_name} ..."></textarea>
-                </div>
-                <div class="form-group">
-                    <label for="resultTemplate">결과 공지 템플릿</label>
-                    <textarea id="resultTemplate" placeholder="{badge} {brand_name} ..."></textarea>
-                </div>
-                <button class="primary-btn" onclick="saveClanBranding()">저장하기</button>
-            </div>
-            <div>
-                <div class="guide-item">
-                    <h3>웹/디스코드 공통 미리보기</h3>
-                    <p class="muted">아래 내용은 저장 후 웹 배너와 디스코드 공지에 함께 반영됩니다.</p>
-                </div>
-                <div class="guide-item">
-                    <h3>소개 미리보기</h3>
-                    <div id="previewIntro" class="feature-box"></div>
-                </div>
-                <div class="guide-item">
-                    <h3>시작 공지 미리보기</h3>
-                    <div id="previewStart" class="feature-box"></div>
-                </div>
-                <div class="guide-item">
-                    <h3>결과 공지 미리보기</h3>
-                    <div id="previewResult" class="feature-box"></div>
-                </div>
-            </div>
-        </div>
-    </div>
 </div>
 
 <script>
-function setBrandStatus(message, ok=false) {
-    const box = document.getElementById("brandStatus");
-    box.textContent = message;
-    box.className = "status " + (ok ? "ok" : "err");
-}
-
-function fillBrandForm(data) {
-    document.getElementById("brandName").value = data.brand_name || "";
-    document.getElementById("brandColor").value = data.brand_color || "";
-    document.getElementById("badgeText").value = data.badge_text || "";
-    document.getElementById("introText").value = data.intro_text || "";
-    document.getElementById("startTemplate").value = data.start_template || "";
-    document.getElementById("resultTemplate").value = data.result_template || "";
-    document.getElementById("previewIntro").textContent = data.intro_preview || "";
-    document.getElementById("previewStart").textContent = data.start_preview || "";
-    document.getElementById("previewResult").textContent = data.result_preview || "";
-}
-
-async function loadClanBranding() {
-    const secret = document.getElementById("adminSecret").value.trim();
-    const guildId = document.getElementById("brandGuildId").value.trim();
-    if (!guildId) { setBrandStatus("서버 ID를 입력해주세요."); return; }
-    try {
-        const response = await fetch(`/api/admin/clan/branding?guild_id=${guildId}`, {
-            method: "GET",
-            headers: { "X-Admin-Secret": secret }
-        });
-        const result = await response.json();
-        if (!result.ok) { setBrandStatus(result.message || "불러오기 실패"); return; }
-        fillBrandForm(result.branding);
-        setBrandStatus("불러오기 완료", true);
-    } catch (e) {
-        setBrandStatus("불러오기 중 오류가 발생했습니다.");
-    }
-}
-
-async function saveClanBranding() {
-    const secret = document.getElementById("adminSecret").value.trim();
-    const guildId = document.getElementById("brandGuildId").value.trim();
-    if (!guildId) { setBrandStatus("서버 ID를 입력해주세요."); return; }
-    try {
-        const response = await fetch(`/api/admin/clan/branding/save`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "X-Admin-Secret": secret },
-            body: JSON.stringify({
-                guild_id: guildId,
-                brand_name: document.getElementById("brandName").value,
-                brand_color: document.getElementById("brandColor").value,
-                badge_text: document.getElementById("badgeText").value,
-                intro_text: document.getElementById("introText").value,
-                start_template: document.getElementById("startTemplate").value,
-                result_template: document.getElementById("resultTemplate").value
-            })
-        });
-        const result = await response.json();
-        if (!result.ok) { setBrandStatus(result.message || "저장 실패"); return; }
-        fillBrandForm(result.branding);
-        setBrandStatus("저장 완료", true);
-    } catch (e) {
-        setBrandStatus("저장 중 오류가 발생했습니다.");
-    }
-}
-
-async function resetClanBranding() {
-    const secret = document.getElementById("adminSecret").value.trim();
-    const guildId = document.getElementById("brandGuildId").value.trim();
-    if (!guildId) { setBrandStatus("서버 ID를 입력해주세요."); return; }
-    try {
-        const response = await fetch(`/api/admin/clan/branding/reset`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "X-Admin-Secret": secret },
-            body: JSON.stringify({ guild_id: guildId })
-        });
-        const result = await response.json();
-        if (!result.ok) { setBrandStatus(result.message || "초기화 실패"); return; }
-        fillBrandForm(result.branding);
-        setBrandStatus("초기화 완료", true);
-    } catch (e) {
-        setBrandStatus("초기화 중 오류가 발생했습니다.");
-    }
-}
-
 async function loadRequests() {
     const secret = document.getElementById("adminSecret").value.trim();
     const loginStatus = document.getElementById("loginStatus");
@@ -1855,106 +1697,6 @@ def api_admin_premium_reject():
             "ok": False,
             "message": f"서버 오류가 발생했습니다: {str(e)}"
         }), 500
-
-
-@app.route("/api/admin/clan/branding", methods=["GET"])
-def api_admin_clan_branding():
-    try:
-        secret = request.headers.get("X-Admin-Secret", "").strip()
-        if not ADMIN_SECRET or secret != ADMIN_SECRET:
-            return jsonify({"ok": False, "message": "관리자 인증 실패"}), 403
-
-        guild_id = str(request.args.get("guild_id") or "").strip()
-        if not guild_id.isdigit():
-            return jsonify({"ok": False, "message": "guild_id가 올바르지 않습니다."}), 400
-
-        guild_id_int = int(guild_id)
-        premium = get_premium_info(guild_id_int)
-        if not premium.get("is_premium") or premium.get("plan_key") != "clan":
-            return jsonify({"ok": False, "message": "클랜 패키지 서버만 편집할 수 있습니다."}), 400
-
-        branding = get_clan_branding(guild_id_int)
-        branding["intro_preview"] = branding.get("intro_text") or ""
-        branding["start_preview"] = render_clan_template(
-            guild_id_int, "start", game="VALORANT", channel="#내전공지", mode_text="5 vs 5",
-            team_a="팀A 예시", team_b="팀B 예시", difference="12"
-        )
-        branding["result_preview"] = render_clan_template(
-            guild_id_int, "result", game="VALORANT", winner_team="A", avg_a="1012", avg_b="1000", channel="#내전공지"
-        )
-        return jsonify({"ok": True, "branding": branding})
-    except Exception as e:
-        return jsonify({"ok": False, "message": f"서버 오류가 발생했습니다: {str(e)}"}), 500
-
-
-@app.route("/api/admin/clan/branding/save", methods=["POST"])
-def api_admin_clan_branding_save():
-    try:
-        secret = request.headers.get("X-Admin-Secret", "").strip()
-        if not ADMIN_SECRET or secret != ADMIN_SECRET:
-            return jsonify({"ok": False, "message": "관리자 인증 실패"}), 403
-
-        data = request.get_json() or {}
-        guild_id = str(data.get("guild_id") or "").strip()
-        if not guild_id.isdigit():
-            return jsonify({"ok": False, "message": "guild_id가 올바르지 않습니다."}), 400
-
-        guild_id_int = int(guild_id)
-        premium = get_premium_info(guild_id_int)
-        if not premium.get("is_premium") or premium.get("plan_key") != "clan":
-            return jsonify({"ok": False, "message": "클랜 패키지 서버만 편집할 수 있습니다."}), 400
-
-        branding = update_clan_branding(
-            guild_id_int,
-            brand_name=data.get("brand_name"),
-            brand_color=data.get("brand_color"),
-            badge_text=data.get("badge_text"),
-            intro_text=data.get("intro_text"),
-            start_template=data.get("start_template"),
-            result_template=data.get("result_template"),
-        )
-        branding["intro_preview"] = branding.get("intro_text") or ""
-        branding["start_preview"] = render_clan_template(
-            guild_id_int, "start", game="VALORANT", channel="#내전공지", mode_text="5 vs 5",
-            team_a="팀A 예시", team_b="팀B 예시", difference="12"
-        )
-        branding["result_preview"] = render_clan_template(
-            guild_id_int, "result", game="VALORANT", winner_team="A", avg_a="1012", avg_b="1000", channel="#내전공지"
-        )
-        return jsonify({"ok": True, "message": "저장 완료", "branding": branding})
-    except Exception as e:
-        return jsonify({"ok": False, "message": f"서버 오류가 발생했습니다: {str(e)}"}), 500
-
-
-@app.route("/api/admin/clan/branding/reset", methods=["POST"])
-def api_admin_clan_branding_reset():
-    try:
-        secret = request.headers.get("X-Admin-Secret", "").strip()
-        if not ADMIN_SECRET or secret != ADMIN_SECRET:
-            return jsonify({"ok": False, "message": "관리자 인증 실패"}), 403
-
-        data = request.get_json() or {}
-        guild_id = str(data.get("guild_id") or "").strip()
-        if not guild_id.isdigit():
-            return jsonify({"ok": False, "message": "guild_id가 올바르지 않습니다."}), 400
-
-        guild_id_int = int(guild_id)
-        premium = get_premium_info(guild_id_int)
-        if not premium.get("is_premium") or premium.get("plan_key") != "clan":
-            return jsonify({"ok": False, "message": "클랜 패키지 서버만 편집할 수 있습니다."}), 400
-
-        branding = clear_clan_branding(guild_id_int)
-        branding["intro_preview"] = branding.get("intro_text") or ""
-        branding["start_preview"] = render_clan_template(
-            guild_id_int, "start", game="VALORANT", channel="#내전공지", mode_text="5 vs 5",
-            team_a="팀A 예시", team_b="팀B 예시", difference="12"
-        )
-        branding["result_preview"] = render_clan_template(
-            guild_id_int, "result", game="VALORANT", winner_team="A", avg_a="1012", avg_b="1000", channel="#내전공지"
-        )
-        return jsonify({"ok": True, "message": "초기화 완료", "branding": branding})
-    except Exception as e:
-        return jsonify({"ok": False, "message": f"서버 오류가 발생했습니다: {str(e)}"}), 500
 
 
 if __name__ == "__main__":
