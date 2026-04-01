@@ -403,8 +403,6 @@ def get_selected_guild_brand(guild_id_raw: str):
     return get_clan_branding(int(guild_id_raw))
 
 
-
-# 홈 UI / 배치는 유지
 INDEX_HTML = """
 <!DOCTYPE html>
 <html lang="ko">
@@ -544,7 +542,6 @@ INDEX_HTML = """
 </html>
 """
 
-# 카드형 UI로 변경
 GUIDE_HTML = """
 <!DOCTYPE html>
 <html lang="ko">
@@ -624,7 +621,6 @@ GUIDE_HTML = """
 </html>
 """
 
-# 카드형 UI로 변경
 SUPPORT_HTML = """
 <!DOCTYPE html>
 <html lang="ko">
@@ -998,7 +994,8 @@ LOCKED_HTML = """
 <div class="container">
     <div class="card">
         <h1>🔒 프리미엄 전용</h1>
-        <p>상세 전적 페이지는 프리미엄 서버 전용입니다.</p>
+        <p>{{ message }}</p>
+        <p>필요 패키지: <strong>{{ required_plan_label }}</strong> 이상</p>
         <p><a href="/support">→ 프리미엄 신청하러 가기</a></p>
         <p><a href="/">← 홈으로 돌아가기</a></p>
     </div>
@@ -1338,6 +1335,7 @@ def season_page():
     matches = []
     summary = {"player_count": 0, "avg_mmr": 0, "top_mmr": 0, "match_count": 0}
     error_message = ""
+    brand = get_selected_guild_brand(guild_id_raw)
 
     if guild_id_raw and selected_game:
         if not guild_id_raw.isdigit():
@@ -1356,7 +1354,7 @@ def season_page():
                     summary = get_season_stats_summary(guild_id, selected_game, season["id"])
 
     return render_template_string(
-        SEASON_HTML,
+        get_brand_css(brand) + SEASON_HTML,
         guild_id=guild_id_raw,
         selected_game=selected_game,
         guilds=guilds,
@@ -1504,9 +1502,9 @@ def api_admin_premium_requests():
                 "applicant_name": row["applicant_name"],
                 "discord_tag": row.get("discord_tag"),
                 "amount": row["amount"],
-                "memo": row.get("memo"),
                 "plan_key": row.get("plan_key"),
                 "plan_name": row.get("plan_name"),
+                "memo": row.get("memo"),
                 "status": row["status"],
                 "created_at": str(row["created_at"]),
                 "approved_at": str(row["approved_at"]) if row.get("approved_at") else None,
