@@ -18,6 +18,7 @@ from core.db import (
     get_season_matches,
     get_season_stats_summary,
     get_registered_guilds,
+    get_plan_label,
 )
 
 app = Flask(__name__)
@@ -30,6 +31,12 @@ ACCOUNT_NUMBER = "1000-0103-2111"
 ACCOUNT_HOLDER = "김태용"
 PREMIUM_PRICE = 5000
 PREMIUM_DAYS = 30
+
+PREMIUM_PACKAGES = {
+    "supporter": {"name": "서포터", "price": 3000, "days": 30},
+    "pro": {"name": "프로", "price": 5000, "days": 30},
+    "clan": {"name": "클랜", "price": 10000, "days": 30},
+}
 
 init_premium_tables()
 cleanup_expired_premium_guilds()
@@ -530,27 +537,23 @@ GUIDE_HTML = """
     </div>
 
     <div class="card">
-        <h2 class="section-title">⭐ 프리미엄 기능</h2>
+        <h2 class="section-title">⭐ 패키지형 프리미엄</h2>
         <div class="guide-list">
             <div class="guide-item">
-                <h3>결과기록 / ELO 반영</h3>
-                <p>경기 결과를 기록하고 ELO / MMR, 승패 전적을 자동 반영합니다.</p>
+                <h3>서포터 패키지</h3>
+                <p>상세 전적, 시즌 통계, 프리미엄 뱃지 같은 기본 후원 전용 기능을 제공합니다.</p>
             </div>
             <div class="guide-item">
-                <h3>상세 전적</h3>
-                <p>유저별 상세 전적 페이지를 통해 누적 전적과 게임별 기록을 확인할 수 있습니다.</p>
+                <h3>프로 패키지</h3>
+                <p>고급 팀밸런스, 예약 운영 확장, 더 강한 서버 운영 기능에 맞춘 핵심 패키지입니다.</p>
             </div>
             <div class="guide-item">
-                <h3>게임별 시즌</h3>
-                <p>서버별, 게임별로 시즌을 따로 운영할 수 있습니다.</p>
+                <h3>클랜 패키지</h3>
+                <p>서버 맞춤 운영, 확장된 관리 기능, 고급 자동화에 맞춘 상위 패키지입니다.</p>
             </div>
             <div class="guide-item">
-                <h3>시즌 랭킹 / 시즌 경기 기록</h3>
-                <p>현재 시즌 기준 랭킹과 최근 경기 기록을 따로 확인할 수 있습니다.</p>
-            </div>
-            <div class="guide-item">
-                <h3>맵뽑기</h3>
-                <p>현재 로비 게임 기준으로 맵을 랜덤으로 뽑고, 내전 상태에 함께 표시할 수 있습니다.</p>
+                <h3>공통 프리미엄 기능</h3>
+                <p>결과 기록, ELO/MMR 반영, 상세 전적, 시즌 랭킹/기록, 프리미엄 전용 웹 기능을 확장할 수 있습니다.</p>
             </div>
         </div>
     </div>
@@ -582,35 +585,27 @@ SUPPORT_HTML = """
     <div class="grid-2">
         <div>
             <div class="card">
-                <h2 class="section-title">📖 프리미엄 안내</h2>
+                <h2 class="section-title">📖 패키지 안내</h2>
                 <p style="line-height:1.8; margin:0;">
-                    프리미엄 가격은 <strong>{{ premium_price }}원 / {{ premium_days }}일</strong> 입니다.<br>
-                    입금 후 아래 신청 폼을 작성하면 관리자가 확인 후 프리미엄을 활성화합니다.
+                    입금 후 아래 신청 폼을 작성하면 관리자가 확인 후 해당 패키지를 활성화합니다.<br>
+                    서버 운영 규모에 맞춰 <strong>서포터 / 프로 / 클랜</strong> 패키지 중 선택할 수 있습니다.
                 </p>
             </div>
 
             <div class="card">
-                <h2 class="section-title">⭐ 프리미엄 기능</h2>
+                <h2 class="section-title">⭐ 패키지 구성</h2>
                 <div class="guide-list">
                     <div class="guide-item">
-                        <h3>결과기록 / ELO 반영</h3>
-                        <p>경기 결과를 기록하고 ELO / MMR을 자동 반영합니다.</p>
+                        <h3>서포터 · 3,000원 / 30일</h3>
+                        <p>상세 전적, 시즌 통계, 기본 프리미엄 뱃지 등 가벼운 후원형 패키지입니다.</p>
                     </div>
                     <div class="guide-item">
-                        <h3>상세 전적</h3>
-                        <p>유저별 상세 전적과 게임별 기록을 확인할 수 있습니다.</p>
+                        <h3>프로 · 5,000원 / 30일</h3>
+                        <p>고급 팀밸런스, 예약 운영 확장, 관리자 운영 편의 기능까지 포함하는 핵심 패키지입니다.</p>
                     </div>
                     <div class="guide-item">
-                        <h3>게임별 시즌</h3>
-                        <p>게임마다 별도로 시즌을 운영하고 관리할 수 있습니다.</p>
-                    </div>
-                    <div class="guide-item">
-                        <h3>시즌 랭킹 / 시즌 경기 기록</h3>
-                        <p>시즌 전용 랭킹과 경기 기록을 따로 조회할 수 있습니다.</p>
-                    </div>
-                    <div class="guide-item">
-                        <h3>맵뽑기</h3>
-                        <p>프리미엄 서버 전용으로 맵을 랜덤으로 뽑고 내전 운영에 활용할 수 있습니다.</p>
+                        <h3>클랜 · 10,000원 / 30일</h3>
+                        <p>상위 서버용 맞춤 패키지로, 확장 운영 기능과 서버 단위 프리미엄 활용에 맞춰집니다.</p>
                     </div>
                 </div>
             </div>
@@ -636,6 +631,15 @@ SUPPORT_HTML = """
                 <div class="form-group">
                     <label for="guildId">서버 ID</label>
                     <input type="number" id="guildId" placeholder="예: 123456789012345678">
+                </div>
+
+                <div class="form-group">
+                    <label for="planKey">패키지 선택</label>
+                    <select id="planKey">
+                        <option value="supporter">서포터 (3,000원 / 30일)</option>
+                        <option value="pro">프로 (5,000원 / 30일)</option>
+                        <option value="clan">클랜 (10,000원 / 30일)</option>
+                    </select>
                 </div>
 
                 <div class="form-group">
@@ -668,6 +672,7 @@ SUPPORT_HTML = """
 <script>
 async function submitPremiumRequest() {
     const guildId = document.getElementById("guildId").value.trim();
+    const planKey = document.getElementById("planKey").value.trim();
     const applicantName = document.getElementById("applicantName").value.trim();
     const discordTag = document.getElementById("discordTag").value.trim();
     const amount = document.getElementById("amount").value.trim();
@@ -701,6 +706,7 @@ async function submitPremiumRequest() {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
                 guild_id: guildId,
+                plan_key: planKey,
                 applicant_name: applicantName,
                 discord_tag: discordTag,
                 amount: amount,
@@ -715,6 +721,7 @@ async function submitPremiumRequest() {
             statusText.classList.add("ok");
 
             document.getElementById("guildId").value = "";
+            document.getElementById("planKey").value = "supporter";
             document.getElementById("applicantName").value = "";
             document.getElementById("discordTag").value = "";
             document.getElementById("amount").value = "";
@@ -998,13 +1005,14 @@ async function loadRequests() {
                 <div class="request-row"><strong>서버 ID:</strong> ${item.guild_id}</div>
                 <div class="request-row"><strong>입금자명:</strong> ${item.applicant_name}</div>
                 <div class="request-row"><strong>디스코드:</strong> ${item.discord_tag || "-"}</div>
+                <div class="request-row"><strong>패키지:</strong> ${item.plan_name || item.plan_key || "-"}</div>
                 <div class="request-row"><strong>입금 금액:</strong> ${item.amount}원</div>
                 <div class="request-row"><strong>메모:</strong> ${item.memo || "-"}</div>
                 <div class="request-row"><strong>상태:</strong> <span class="status-badge">${item.status}</span></div>
                 <div class="request-row"><strong>신청일:</strong> ${item.created_at}</div>
                 <br>
                 <input class="days-input" type="number" id="days-${item.id}" value="30" min="1">
-                <button class="approve-btn" onclick="approveRequest(${item.id})">승인</button>
+                <button class="approve-btn" onclick="approveRequest(${item.id}, '${item.plan_key || 'supporter'}')">승인</button>
                 <button class="reject-btn" onclick="rejectRequest(${item.id})">거절</button>
                 <div id="status-${item.id}" class="status"></div>
             </div>
@@ -1015,7 +1023,7 @@ async function loadRequests() {
     }
 }
 
-async function approveRequest(requestId) {
+async function approveRequest(requestId, planKey) {
     const secret = document.getElementById("adminSecret").value.trim();
     const days = document.getElementById(`days-${requestId}`).value.trim();
     const statusBox = document.getElementById(`status-${requestId}`);
@@ -1033,13 +1041,14 @@ async function approveRequest(requestId) {
             body: JSON.stringify({
                 request_id: requestId,
                 days: days,
+                plan_key: planKey,
                 approved_by: "admin_page"
             })
         });
 
         const result = await response.json();
         if (result.ok) {
-            statusBox.textContent = "승인 완료 / premium_until: " + result.premium_until;
+            statusBox.textContent = "승인 완료 / " + (result.plan_name || "") + " / premium_until: " + result.premium_until;
             statusBox.classList.add("ok");
             loadRequests();
         } else {
@@ -1352,6 +1361,7 @@ def api_premium_request():
         data = request.get_json()
 
         guild_id = str(data.get("guild_id") or "").strip()
+        plan_key = str(data.get("plan_key") or "supporter").strip().lower()
         applicant_name = (data.get("applicant_name") or "").strip()
         discord_tag = (data.get("discord_tag") or "").strip()
         amount = str(data.get("amount") or "").strip()
@@ -1372,12 +1382,16 @@ def api_premium_request():
         if not amount.isdigit():
             return jsonify({"ok": False, "message": "입금 금액은 숫자만 입력해주세요."}), 400
 
+        if plan_key not in PREMIUM_PACKAGES:
+            return jsonify({"ok": False, "message": "올바른 패키지를 선택해주세요."}), 400
+
         row = create_premium_request(
             guild_id=int(guild_id),
             applicant_name=applicant_name,
             amount=int(amount),
             discord_tag=discord_tag if discord_tag else None,
-            memo=memo if memo else None
+            memo=memo if memo else None,
+            plan_key=plan_key
         )
 
         return jsonify({
@@ -1436,6 +1450,7 @@ def api_admin_premium_approve():
         data = request.get_json()
         request_id = str(data.get("request_id") or "").strip()
         days = str(data.get("days") or PREMIUM_DAYS).strip()
+        plan_key = str(data.get("plan_key") or "supporter").strip().lower()
         approved_by = (data.get("approved_by") or "admin").strip()
 
         if not request_id or not request_id.isdigit():
@@ -1444,16 +1459,22 @@ def api_admin_premium_approve():
         if not str(days).isdigit():
             return jsonify({"ok": False, "message": "days는 숫자여야 합니다."}), 400
 
+        if plan_key not in PREMIUM_PACKAGES:
+            return jsonify({"ok": False, "message": "plan_key가 올바르지 않습니다."}), 400
+
         row = approve_premium_request(
             request_id=int(request_id),
             days=int(days),
-            approved_by=approved_by
+            approved_by=approved_by,
+            plan_key=plan_key
         )
 
         return jsonify({
             "ok": True,
             "message": "프리미엄이 활성화되었습니다.",
             "guild_id": row["guild_id"],
+            "plan_key": row.get("plan_key"),
+            "plan_name": row.get("plan_name"),
             "premium_until": str(row["premium_until"])
         })
 
