@@ -76,22 +76,6 @@ PLAN_LABELS = {
 DEFAULT_CLAN_BADGE = "👑 CLAN"
 DEFAULT_CLAN_COLOR = "#8b5cf6"
 
-DEFAULT_CLAN_INTRO = "우리 클랜만의 브랜딩과 공지 템플릿이 적용된 서버입니다."
-
-DEFAULT_CLAN_START_TEMPLATE = """{badge} {brand_name} 내전 시작!
-게임: {game}
-채널: {channel}
-진행: {mode_text}
-A팀: {team_a}
-B팀: {team_b}
-차이: {difference}"""
-
-DEFAULT_CLAN_RESULT_TEMPLATE = """{badge} {brand_name} 경기 결과
-게임: {game}
-승리팀: {winner_team}
-A팀 평균: {avg_a}
-B팀 평균: {avg_b}
-채널: {channel}"""
 
 def normalize_plan_key(plan_key: Optional[str]) -> str:
     key = (plan_key or "free").strip().lower()
