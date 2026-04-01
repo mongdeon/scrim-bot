@@ -38,8 +38,8 @@ PREMIUM_DAYS = 30
 
 PREMIUM_PACKAGES = {
     "supporter": {"name": "서포터", "price": 3000, "days": 30},
-    "pro": {"name": "프로", "price": 5000, "days": 30},
-    "clan": {"name": "클랜", "price": 10000, "days": 30},
+    "pro": {"name": "프로", "price": 4990, "days": 30},
+    "clan": {"name": "클랜", "price": 7990, "days": 30},
 }
 
 init_premium_tables()
@@ -517,7 +517,7 @@ INDEX_HTML = """
 
     <div class="card">
         <div class="pill">패키지형 프리미엄 운영</div>
-        <div class="pill">서포터 3,000원 / 프로 5,000원 / 클랜 10,000원</div>
+        <div class="pill">서포터 3,000원 / 프로 4,990원 / 클랜 7,990원</div>
         <div class="pill">활성 프리미엄 서버 수: {{ active_premium_count }}</div>
     </div>
 
@@ -721,11 +721,11 @@ SUPPORT_HTML = """
                         <p>/맵뽑기, /시즌확인, /시즌목록, /시즌랭킹, 웹 상세 전적 / 시즌 페이지 사용 가능</p>
                     </div>
                     <div class="guide-item">
-                        <h3>프로 · 5,000원 / 30일</h3>
+                        <h3>프로 · 4,990원 / 30일</h3>
                         <p>서포터 기능 포함 + /결과기록, /시즌생성, /시즌종료 사용 가능</p>
                     </div>
                     <div class="guide-item">
-                        <h3>클랜 · 10,000원 / 30일</h3>
+                        <h3>클랜 · 7,990원 / 30일</h3>
                         <p>프로 기능 포함 + 반복 예약, 시작 전 알림, 운영 로그, 웹 브랜딩, 공지 템플릿 통합 기능 사용 가능</p>
                     </div>
                 </div>
@@ -758,8 +758,8 @@ SUPPORT_HTML = """
                     <label for="planKey">패키지 선택</label>
                     <select id="planKey">
                         <option value="supporter">서포터 (3,000원 / 30일)</option>
-                        <option value="pro">프로 (5,000원 / 30일)</option>
-                        <option value="clan">클랜 (10,000원 / 30일)</option>
+                        <option value="pro">프로 (4,990원 / 30일)</option>
+                        <option value="clan">클랜 (7,990원 / 30일)</option>
                     </select>
                 </div>
 
@@ -775,7 +775,7 @@ SUPPORT_HTML = """
 
                 <div class="form-group">
                     <label for="amount">입금 금액</label>
-                    <input type="number" id="amount" placeholder="예: 5000">
+                    <input type="number" id="amount" placeholder="예: 4990">
                 </div>
 
                 <div class="form-group">
