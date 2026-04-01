@@ -536,6 +536,8 @@ class Recruit(commands.Cog):
         if not force_time:
             return
 
+        result_channel = await self.get_result_channel(channel.guild, channel)
+
         if is_pubg_lobby(lobby):
             if lobby["team_size"] in [2, 4]:
                 parties = db.get_lobby_parties(channel_id)
@@ -561,15 +563,15 @@ class Recruit(commands.Cog):
             if lobby["team_size"] in [2, 4]:
                 party_lines = build_party_lines(channel_id)
                 party_text = "\n".join(party_lines) if party_lines else "없음"
-                await channel.send(
-                    f"배그 배틀로얄 모집 완료\n"
+                await result_channel.send(
+                    f"예약된 내전 시간 도달로 배그 배틀로얄 모집이 자동 완료되었습니다.\n"
                     f"형식: **{get_pubg_mode_label(lobby['team_size'])}**\n"
                     f"총 인원: **{need}명**\n\n"
                     f"파티 목록:\n{party_text}"
                 )
             else:
-                await channel.send(
-                    f"배그 배틀로얄 모집 완료\n"
+                await result_channel.send(
+                    f"예약된 내전 시간 도달로 배그 배틀로얄 모집이 자동 완료되었습니다.\n"
                     f"형식: **{get_pubg_mode_label(lobby['team_size'])}**\n"
                     f"총 인원: **{need}명**\n\n"
                     + "\n".join(f"- {p['display_name']} ({p['mmr']}, {p['position']})" for p in players[:need])
@@ -604,8 +606,8 @@ class Recruit(commands.Cog):
         a_sum = sum(p["mmr"] for p in team_a)
         b_sum = sum(p["mmr"] for p in team_b)
 
-        await channel.send(
-            f"정원이 차서 자동 팀 분배 + 자동 음성 이동이 완료되었습니다. ({mode_text})\n\n"
+        await result_channel.send(
+            f"예약된 내전 시간 도달로 자동 팀 분배 + 자동 음성 이동이 완료되었습니다. ({mode_text})\n\n"
             f"**A팀 총합:** {a_sum}\n"
             + "\n".join(f"{p['display_name']} ({p['mmr']}, {p['position']})" for p in team_a)
             + f"\n\n**B팀 총합:** {b_sum}\n"
