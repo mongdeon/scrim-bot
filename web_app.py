@@ -378,8 +378,8 @@ INDEX_HTML = """
     </div>
 
     <div class="card">
-        <div class="pill">프리미엄 가격: {{ premium_price }}원</div>
-        <div class="pill">프리미엄 기간: {{ premium_days }}일</div>
+        <div class="pill">패키지형 프리미엄 운영</div>
+        <div class="pill">서포터 3,000원 / 프로 5,000원 / 클랜 10,000원</div>
         <div class="pill">활성 프리미엄 서버 수: {{ active_premium_count }}</div>
     </div>
 
@@ -504,66 +504,66 @@ GUIDE_HTML = """
     </div>
 
     <div class="card">
-        <h2 class="section-title">🆓 무료 명령어</h2>
+        <h2 class="section-title">🆓 무료 기본 기능</h2>
         <div class="guide-list">
             <div class="guide-item">
-                <h3>/설정역할</h3>
-                <p>내전에 참여 가능한 인증 역할을 설정합니다.</p>
+                <h3>서버 설정</h3>
+                <p>/설정역할, /설정카테고리, /설정팀결과채널, /설정보기</p>
             </div>
             <div class="guide-item">
-                <h3>/설정카테고리</h3>
-                <p>대기방 / 팀 보이스 채널이 생성될 카테고리를 설정합니다.</p>
+                <h3>내전 운영</h3>
+                <p>/내전생성, /내전상태, /밸런스팀, /내전종료</p>
             </div>
             <div class="guide-item">
-                <h3>/설정팀결과채널</h3>
-                <p>자동 팀 분배 결과가 올라갈 채널을 설정합니다.</p>
+                <h3>배그 모집</h3>
+                <p>PUBG 배틀로얄 모집형, 솔로/듀오/스쿼드 규칙, 파티 시스템, 예약 시간 자동 진행</p>
             </div>
             <div class="guide-item">
-                <h3>/내전생성</h3>
-                <p>현재 채널에서 내전 모집을 시작합니다.</p>
-            </div>
-            <div class="guide-item">
-                <h3>/밸런스팀</h3>
-                <p>참가자 기준으로 자동 팀 분배를 진행합니다.</p>
-            </div>
-            <div class="guide-item">
-                <h3>/내전상태</h3>
-                <p>현재 모집 상태, 참가자, 현재 맵 등을 확인합니다.</p>
-            </div>
-            <div class="guide-item">
-                <h3>/내전종료</h3>
-                <p>내전을 종료하고 팀 채널을 정리합니다.</p>
+                <h3>기본 프로필 기능</h3>
+                <p>/발로티어등록, /옵치티어등록, /롤티어등록, 각 티어 점수표 확인</p>
             </div>
         </div>
     </div>
 
     <div class="card">
-        <h2 class="section-title">⭐ 패키지형 프리미엄</h2>
+        <h2 class="section-title">⭐ 패키지형 프리미엄 제한</h2>
         <div class="guide-list">
             <div class="guide-item">
                 <h3>서포터 패키지</h3>
-                <p>상세 전적, 시즌 통계, 프리미엄 뱃지 같은 기본 후원 전용 기능을 제공합니다.</p>
+                <p>
+                    /맵뽑기, /시즌확인, /시즌목록, /시즌랭킹 사용 가능<br>
+                    웹 상세 전적 페이지와 시즌 페이지 조회 가능
+                </p>
             </div>
             <div class="guide-item">
                 <h3>프로 패키지</h3>
-                <p>고급 팀밸런스, 예약 운영 확장, 더 강한 서버 운영 기능에 맞춘 핵심 패키지입니다.</p>
+                <p>
+                    서포터 기능 포함<br>
+                    /결과기록, /시즌생성, /시즌종료 사용 가능
+                </p>
             </div>
             <div class="guide-item">
                 <h3>클랜 패키지</h3>
-                <p>서버 맞춤 운영, 확장된 관리 기능, 고급 자동화에 맞춘 상위 패키지입니다.</p>
-            </div>
-            <div class="guide-item">
-                <h3>공통 프리미엄 기능</h3>
-                <p>결과 기록, ELO/MMR 반영, 상세 전적, 시즌 랭킹/기록, 프리미엄 전용 웹 기능을 확장할 수 있습니다.</p>
+                <p>
+                    프로 기능 포함<br>
+                    서버 맞춤형 운영 확장과 상위 패키지 안내용으로 준비된 단계입니다.
+                </p>
             </div>
         </div>
+    </div>
+
+    <div class="card">
+        <h2 class="section-title">📌 빠른 정리</h2>
+        <div class="feature-box">무료: 기본 모집 / 기본 팀분배 / 배그 파티 / 티어등록
+서포터: 맵뽑기 / 시즌 조회 / 웹 상세 전적
+프로: 결과기록 / 시즌 생성·종료
+클랜: 프로 포함 + 서버 단위 확장 운영</div>
     </div>
 </div>
 </body>
 </html>
 """
 
-# 카드형 UI로 변경
 SUPPORT_HTML = """
 <!DOCTYPE html>
 <html lang="ko">
@@ -586,10 +586,11 @@ SUPPORT_HTML = """
     <div class="grid-2">
         <div>
             <div class="card">
-                <h2 class="section-title">📖 패키지 안내</h2>
+                <h2 class="section-title">📖 신청 안내</h2>
                 <p style="line-height:1.8; margin:0;">
                     입금 후 아래 신청 폼을 작성하면 관리자가 확인 후 해당 패키지를 활성화합니다.<br>
-                    서버 운영 규모에 맞춰 <strong>서포터 / 프로 / 클랜</strong> 패키지 중 선택할 수 있습니다.
+                    현재 패키지는 <strong>서포터 / 프로 / 클랜</strong> 3단계로 운영됩니다.<br>
+                    기능 제한은 디스코드 명령어와 웹사이트에 동일하게 적용됩니다.
                 </p>
             </div>
 
@@ -598,15 +599,24 @@ SUPPORT_HTML = """
                 <div class="guide-list">
                     <div class="guide-item">
                         <h3>서포터 · 3,000원 / 30일</h3>
-                        <p>상세 전적, 시즌 통계, 기본 프리미엄 뱃지 등 가벼운 후원형 패키지입니다.</p>
+                        <p>
+                            /맵뽑기, /시즌확인, /시즌목록, /시즌랭킹 사용 가능<br>
+                            웹 상세 전적 페이지와 시즌 페이지 조회 가능
+                        </p>
                     </div>
                     <div class="guide-item">
                         <h3>프로 · 5,000원 / 30일</h3>
-                        <p>고급 팀밸런스, 예약 운영 확장, 관리자 운영 편의 기능까지 포함하는 핵심 패키지입니다.</p>
+                        <p>
+                            서포터 기능 포함<br>
+                            /결과기록, /시즌생성, /시즌종료 사용 가능
+                        </p>
                     </div>
                     <div class="guide-item">
                         <h3>클랜 · 10,000원 / 30일</h3>
-                        <p>상위 서버용 맞춤 패키지로, 확장 운영 기능과 서버 단위 프리미엄 활용에 맞춰집니다.</p>
+                        <p>
+                            프로 기능 포함<br>
+                            서버 맞춤형 운영 확장과 상위 서버용 패키지로 안내됩니다.
+                        </p>
                     </div>
                 </div>
             </div>
@@ -707,155 +717,28 @@ async function submitPremiumRequest() {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
                 guild_id: guildId,
-                plan_key: planKey,
                 applicant_name: applicantName,
                 discord_tag: discordTag,
                 amount: amount,
-                memo: memo
+                memo: memo,
+                plan_key: planKey
             })
         });
 
         const result = await response.json();
-
         if (result.ok) {
             statusText.textContent = "프리미엄 신청이 접수되었습니다. 신청번호: " + result.request_id;
             statusText.classList.add("ok");
-
-            document.getElementById("guildId").value = "";
-            document.getElementById("planKey").value = "supporter";
-            document.getElementById("applicantName").value = "";
-            document.getElementById("discordTag").value = "";
-            document.getElementById("amount").value = "";
-            document.getElementById("memo").value = "";
         } else {
-            statusText.textContent = result.message || "신청 접수에 실패했습니다.";
+            statusText.textContent = result.message || "신청 중 오류가 발생했습니다.";
             statusText.classList.add("err");
         }
-    } catch (error) {
-        statusText.textContent = "서버와 통신 중 오류가 발생했습니다.";
+    } catch (e) {
+        statusText.textContent = "서버 오류가 발생했습니다.";
         statusText.classList.add("err");
     }
 }
 </script>
-</body>
-</html>
-"""
-
-SEASON_HTML = """
-<!DOCTYPE html>
-<html lang="ko">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>시즌 페이지</title>
-    """ + BASE_STYLE + """
-</head>
-<body>
-<div class="container">
-    <div class="page-title">🏆 시즌 페이지</div>
-
-    <div class="action-row">
-        <a href="/" class="action-btn btn-guide">🏠 홈으로</a>
-        <a href="/guide" class="action-btn btn-support">💿 명령어 / 프리미엄 소개</a>
-        <a href="/support" class="action-btn btn-season">💖 후원 / 프리미엄 신청</a>
-    </div>
-
-    <div class="card">
-        <form method="get" class="filters">
-            <select name="guild_id" style="max-width:320px;">
-                <option value="">서버 선택</option>
-                {% for guild in guilds %}
-                    <option value="{{ guild.guild_id }}" {% if guild_id == guild.guild_id|string %}selected{% endif %}>
-                        {{ guild.guild_name or ("Guild " ~ guild.guild_id) }}
-                    </option>
-                {% endfor %}
-            </select>
-
-            <select name="game" style="max-width:240px;">
-                <option value="">게임 선택</option>
-                {% for g in games %}
-                    <option value="{{ g }}" {% if selected_game == g %}selected{% endif %}>{{ g }}</option>
-                {% endfor %}
-            </select>
-            <button type="submit" class="submit-btn">조회</button>
-        </form>
-    </div>
-
-    {% if error_message %}
-    <div class="card">
-        <div class="empty-box">{{ error_message }}</div>
-    </div>
-    {% endif %}
-
-    {% if season %}
-    <div class="card">
-        <h2 class="section-title">현재 시즌</h2>
-        <div class="pill">서버: {{ season.guild_id }}</div>
-        <div class="pill">게임: {{ season.game }}</div>
-        <div class="pill">시즌명: {{ season.season_name }}</div>
-        <div class="pill">시작일: {{ season.started_at }}</div>
-        <div class="pill">상태: {% if season.is_active %}진행 중{% else %}종료{% endif %}</div>
-    </div>
-
-    <div class="card">
-        <h2 class="section-title">시즌 요약</h2>
-        <div class="pill">참가자 수: {{ summary.player_count }}</div>
-        <div class="pill">평균 MMR: {{ summary.avg_mmr }}</div>
-        <div class="pill">최고 MMR: {{ summary.top_mmr }}</div>
-        <div class="pill">경기 수: {{ summary.match_count }}</div>
-    </div>
-
-    <div class="card">
-        <h2 class="section-title">시즌 랭킹</h2>
-        {% if ranking %}
-        <table>
-            <thead>
-                <tr>
-                    <th>#</th>
-                    <th>닉네임</th>
-                    <th>유저 ID</th>
-                    <th>MMR</th>
-                    <th>승</th>
-                    <th>패</th>
-                    <th>승률</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for row in ranking %}
-                <tr>
-                    <td>{{ loop.index }}</td>
-                    <td>{{ row.display_name or "-" }}</td>
-                    <td>{{ row.user_id }}</td>
-                    <td>{{ row.mmr }}</td>
-                    <td>{{ row.win }}</td>
-                    <td>{{ row.lose }}</td>
-                    <td>{{ row.winrate }}%</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-        {% else %}
-        <div class="empty-box">시즌 전적이 아직 없습니다.</div>
-        {% endif %}
-    </div>
-
-    <div class="card">
-        <h2 class="section-title">시즌 최근 경기</h2>
-        {% if matches %}
-            {% for match in matches %}
-            <div class="match-item">
-                <span class="pill">승리팀 {{ match.winner_team }}</span>
-                <span class="pill">A평균 {{ match.team_a_avg }}</span>
-                <span class="pill">B평균 {{ match.team_b_avg }}</span>
-                <span class="pill">{{ match.created_at }}</span>
-            </div>
-            {% endfor %}
-        {% else %}
-        <div class="empty-box">시즌 경기 기록이 아직 없습니다.</div>
-        {% endif %}
-    </div>
-    {% endif %}
-</div>
 </body>
 </html>
 """
@@ -920,15 +803,17 @@ LOCKED_HTML = """
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>프리미엄 전용</title>
+    <title>패키지 필요</title>
     """ + BASE_STYLE + """
 </head>
 <body>
 <div class="container">
     <div class="card">
-        <h1>🔒 패키지 전용</h1>
+        <h1>🔒 패키지 필요</h1>
         <p>{{ message }}</p>
-        <p><a href="/support">→ 프리미엄 신청하러 가기</a></p>
+        <p>필요 패키지: <strong>{{ required_plan_label }}</strong> 이상</p>
+        <p><a href="/support">→ 후원 / 프리미엄 신청하러 가기</a></p>
+        <p><a href="/guide">→ 패키지별 기능 보러 가기</a></p>
         <p><a href="/">← 홈으로 돌아가기</a></p>
     </div>
 </div>
@@ -1273,8 +1158,8 @@ def season_page():
             error_message = "Guild ID는 숫자만 입력해주세요."
         else:
             guild_id = int(guild_id_raw)
-            if not has_premium_plan(guild_id, "supporter"):
-                error_message = "해당 서버는 서포터 패키지 이상이 아니어서 시즌 페이지를 사용할 수 없습니다."
+            if not has_premium_plan(guild_id, 'supporter'):
+                error_message = '해당 서버는 서포터 이상 패키지가 아니어서 시즌 페이지를 사용할 수 없습니다.'
             else:
                 season = get_active_season(guild_id, selected_game)
                 if not season:
@@ -1303,7 +1188,11 @@ def player_page(guild_id, user_id):
     cleanup_expired_premium_guilds()
 
     if not has_premium_plan(guild_id, "supporter"):
-        return render_template_string(LOCKED_HTML, message="상세 전적 페이지는 서포터 패키지 이상에서 사용할 수 있습니다.")
+        return render_template_string(
+            LOCKED_HTML,
+            message="상세 전적 페이지는 서포터 이상 패키지 전용입니다.",
+            required_plan_label=get_plan_label("supporter")
+        )
 
     with get_conn() as conn:
         with conn.cursor() as cur:
