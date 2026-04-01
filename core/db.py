@@ -4,6 +4,7 @@ import random
 import string
 import urllib.request
 import urllib.error
+import re
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from typing import Optional
@@ -56,6 +57,56 @@ def db_cursor(dict_cursor: bool = False):
 def generate_party_code(length: int = 6) -> str:
     chars = string.ascii_uppercase + string.digits
     return "".join(random.choice(chars) for _ in range(length))
+
+
+PLAN_ORDER = {
+    "free": 0,
+    "supporter": 1,
+    "pro": 2,
+    "clan": 3,
+}
+
+PLAN_LABELS = {
+    "free": "무료",
+    "supporter": "서포터",
+    "pro": "프로",
+    "clan": "클랜",
+}
+
+DEFAULT_CLAN_BADGE = "👑 CLAN"
+DEFAULT_CLAN_COLOR = "#8b5cf6"
+
+
+def normalize_plan_key(plan_key: Optional[str]) -> str:
+    key = (plan_key or "free").strip().lower()
+    aliases = {
+        "무료": "free", "free": "free",
+        "서포터": "supporter", "supporter": "supporter",
+        "프로": "pro", "pro": "pro",
+        "클랜": "clan", "clan": "clan",
+    }
+    return aliases.get(key, "free")
+
+
+def get_plan_label(plan_key: Optional[str]) -> str:
+    return PLAN_LABELS.get(normalize_plan_key(plan_key), "무료")
+
+
+def plan_at_least(current_plan_key: Optional[str], required_plan_key: Optional[str]) -> bool:
+    current_value = PLAN_ORDER.get(normalize_plan_key(current_plan_key), 0)
+    required_value = PLAN_ORDER.get(normalize_plan_key(required_plan_key), 0)
+    return current_value >= required_value
+
+
+def sanitize_brand_color(color: Optional[str]) -> str:
+    raw = (color or DEFAULT_CLAN_COLOR).strip()
+    if not raw:
+        return DEFAULT_CLAN_COLOR
+    if not raw.startswith('#'):
+        raw = '#' + raw
+    if re.fullmatch(r'#[0-9a-fA-F]{6}', raw):
+        return raw.lower()
+    return DEFAULT_CLAN_COLOR
 
 
 # -------------------------
@@ -216,46 +267,6 @@ def send_discord_support_webhook(inquiry: dict):
 # -------------------------
 # Premium
 # -------------------------
-PLAN_ORDER = {
-    "free": 0,
-    "supporter": 1,
-    "pro": 2,
-    "clan": 3,
-}
-
-PLAN_LABELS = {
-    "free": "무료",
-    "supporter": "서포터",
-    "pro": "프로",
-    "clan": "클랜",
-}
-
-
-def normalize_plan_key(plan_key: Optional[str]) -> str:
-    key = (plan_key or "free").strip().lower()
-    aliases = {
-        "무료": "free",
-        "free": "free",
-        "서포터": "supporter",
-        "supporter": "supporter",
-        "프로": "pro",
-        "pro": "pro",
-        "클랜": "clan",
-        "clan": "clan",
-    }
-    return aliases.get(key, "free")
-
-
-def get_plan_label(plan_key: Optional[str]) -> str:
-    return PLAN_LABELS.get(normalize_plan_key(plan_key), "무료")
-
-
-def plan_at_least(current_plan_key: Optional[str], required_plan_key: Optional[str]) -> bool:
-    current_value = PLAN_ORDER.get(normalize_plan_key(current_plan_key), 0)
-    required_value = PLAN_ORDER.get(normalize_plan_key(required_plan_key), 0)
-    return current_value >= required_value
-
-
 def init_premium_tables():
     with db_cursor() as (_, cur):
         cur.execute("""
@@ -286,7 +297,6 @@ def init_premium_tables():
             )
         """)
 
-        # 기존 DB 업그레이드용
         cur.execute("ALTER TABLE premium_requests ADD COLUMN IF NOT EXISTS plan_key VARCHAR(30) NOT NULL DEFAULT 'supporter'")
         cur.execute("ALTER TABLE premium_requests ADD COLUMN IF NOT EXISTS plan_name VARCHAR(50) NOT NULL DEFAULT '서포터'")
         cur.execute("ALTER TABLE premium_guilds ADD COLUMN IF NOT EXISTS plan_key VARCHAR(30) NOT NULL DEFAULT 'free'")
@@ -301,13 +311,11 @@ def init_premium_tables():
         cur.execute("""
             UPDATE premium_guilds
             SET plan_key = CASE
-                    WHEN is_premium = TRUE AND (plan_key IS NULL OR plan_key = '' OR plan_key = 'free')
-                        THEN 'supporter'
+                    WHEN is_premium = TRUE AND (plan_key IS NULL OR plan_key = '' OR plan_key = 'free') THEN 'supporter'
                     ELSE COALESCE(NULLIF(plan_key, ''), 'free')
                 END,
                 plan_name = CASE
-                    WHEN is_premium = TRUE AND (plan_name IS NULL OR plan_name = '' OR plan_name = '무료')
-                        THEN '서포터'
+                    WHEN is_premium = TRUE AND (plan_name IS NULL OR plan_name = '' OR plan_name = '무료') THEN '서포터'
                     WHEN COALESCE(NULLIF(plan_key, ''), 'free') = 'clan' THEN '클랜'
                     WHEN COALESCE(NULLIF(plan_key, ''), 'free') = 'pro' THEN '프로'
                     WHEN COALESCE(NULLIF(plan_key, ''), 'free') = 'supporter' THEN '서포터'
@@ -331,23 +339,13 @@ def cleanup_expired_premium_guilds():
         """)
 
 
-def create_premium_request(
-    guild_id: int,
-    applicant_name: str,
-    amount: int,
-    discord_tag: Optional[str] = None,
-    memo: Optional[str] = None,
-    plan_key: Optional[str] = "supporter"
-):
+def create_premium_request(guild_id: int, applicant_name: str, amount: int, discord_tag: Optional[str] = None, memo: Optional[str] = None, plan_key: Optional[str] = 'supporter'):
     init_premium_tables()
     normalized_plan = normalize_plan_key(plan_key)
     plan_name = get_plan_label(normalized_plan)
-
     with db_cursor(dict_cursor=True) as (_, cur):
         cur.execute("""
-            INSERT INTO premium_requests (
-                guild_id, applicant_name, discord_tag, amount, memo, plan_key, plan_name, status
-            )
+            INSERT INTO premium_requests (guild_id, applicant_name, discord_tag, amount, memo, plan_key, plan_name, status)
             VALUES (%s, %s, %s, %s, %s, %s, %s, 'pending')
             RETURNING id, guild_id, applicant_name, discord_tag, amount, memo, plan_key, plan_name, status, created_at
         """, (guild_id, applicant_name, discord_tag, amount, memo, normalized_plan, plan_name))
@@ -359,9 +357,8 @@ def get_premium_requests(limit: int = 200):
     init_premium_tables()
     with db_cursor(dict_cursor=True) as (_, cur):
         cur.execute("""
-            SELECT
-                id, guild_id, applicant_name, discord_tag, amount, memo,
-                plan_key, plan_name, status, created_at, approved_at, approved_by
+            SELECT id, guild_id, applicant_name, discord_tag, amount, memo,
+                   plan_key, plan_name, status, created_at, approved_at, approved_by
             FROM premium_requests
             ORDER BY id DESC
             LIMIT %s
@@ -369,32 +366,23 @@ def get_premium_requests(limit: int = 200):
         return [dict(row) for row in cur.fetchall()]
 
 
-def approve_premium_request(request_id: int, days: int = 30, approved_by: str = "admin", plan_key: Optional[str] = None):
+def approve_premium_request(request_id: int, days: int = 30, approved_by: str = 'admin', plan_key: Optional[str] = None):
     init_premium_tables()
-
     with db_cursor(dict_cursor=True) as (_, cur):
-        cur.execute("""
-            SELECT id, guild_id, status, plan_key, plan_name
-            FROM premium_requests
-            WHERE id = %s
-        """, (request_id,))
+        cur.execute("SELECT id, guild_id, status, plan_key FROM premium_requests WHERE id = %s", (request_id,))
         req_row = cur.fetchone()
-
         if not req_row:
-            raise ValueError("신청 내역을 찾을 수 없습니다.")
-        if req_row["status"] == "approved":
-            raise ValueError("이미 승인된 신청입니다.")
-
-        normalized_plan = normalize_plan_key(plan_key or req_row.get("plan_key"))
+            raise ValueError('신청 내역을 찾을 수 없습니다.')
+        if req_row['status'] == 'approved':
+            raise ValueError('이미 승인된 신청입니다.')
+        normalized_plan = normalize_plan_key(plan_key or req_row.get('plan_key'))
         plan_name = get_plan_label(normalized_plan)
 
-        current = get_premium_info(req_row["guild_id"])
+        current = get_premium_info(req_row['guild_id'])
         now = datetime.utcnow()
         base_time = now
-        if current and current.get("is_premium") and current.get("premium_until"):
-            if current["premium_until"] > now:
-                base_time = current["premium_until"]
-
+        if current and current.get('is_premium') and current.get('premium_until') and current['premium_until'] > now:
+            base_time = current['premium_until']
         premium_until = base_time + timedelta(days=days)
 
         cur.execute("""
@@ -408,30 +396,23 @@ def approve_premium_request(request_id: int, days: int = 30, approved_by: str = 
                 premium_until = EXCLUDED.premium_until,
                 updated_at = CURRENT_TIMESTAMP
             RETURNING guild_id, is_premium, plan_key, plan_name, premium_until, updated_at
-        """, (req_row["guild_id"], normalized_plan, plan_name, premium_until))
+        """, (req_row['guild_id'], normalized_plan, plan_name, premium_until))
         premium_row = cur.fetchone()
 
         cur.execute("""
             UPDATE premium_requests
-            SET status = 'approved',
-                plan_key = %s,
-                plan_name = %s,
-                approved_at = CURRENT_TIMESTAMP,
-                approved_by = %s
+            SET status = 'approved', plan_key = %s, plan_name = %s, approved_at = CURRENT_TIMESTAMP, approved_by = %s
             WHERE id = %s
         """, (normalized_plan, plan_name, approved_by, request_id))
-
         return dict(premium_row) if premium_row else None
 
 
-def reject_premium_request(request_id: int, rejected_by: str = "rejected"):
+def reject_premium_request(request_id: int, rejected_by: str = 'rejected'):
     init_premium_tables()
     with db_cursor(dict_cursor=True) as (_, cur):
         cur.execute("""
             UPDATE premium_requests
-            SET status = 'rejected',
-                approved_at = CURRENT_TIMESTAMP,
-                approved_by = %s
+            SET status = 'rejected', approved_at = CURRENT_TIMESTAMP, approved_by = %s
             WHERE id = %s
             RETURNING id
         """, (rejected_by, request_id))
@@ -442,39 +423,28 @@ def reject_premium_request(request_id: int, rejected_by: str = "rejected"):
 def is_premium_guild(guild_id: int) -> bool:
     cleanup_expired_premium_guilds()
     info = get_premium_info(guild_id)
-    return bool(info and info.get("is_premium"))
+    return bool(info and info.get('is_premium'))
 
 
 def is_guild_premium(guild_id: int) -> bool:
     return is_premium_guild(guild_id)
 
 
-def has_premium_plan(guild_id: int, required_plan_key: str = "supporter") -> bool:
+def has_premium_plan(guild_id: int, required_plan_key: str = 'supporter') -> bool:
     cleanup_expired_premium_guilds()
     info = get_premium_info(guild_id)
-    if not info or not info.get("is_premium"):
-        return normalize_plan_key(required_plan_key) == "free"
-    return plan_at_least(info.get("plan_key"), required_plan_key)
+    if not info or not info.get('is_premium'):
+        return normalize_plan_key(required_plan_key) == 'free'
+    return plan_at_least(info.get('plan_key'), required_plan_key)
 
 
 def get_premium_info(guild_id: int):
     cleanup_expired_premium_guilds()
     with db_cursor(dict_cursor=True) as (_, cur):
-        cur.execute("""
-            SELECT guild_id, is_premium, plan_key, plan_name, premium_until, updated_at
-            FROM premium_guilds
-            WHERE guild_id = %s
-        """, (guild_id,))
+        cur.execute("SELECT guild_id, is_premium, plan_key, plan_name, premium_until, updated_at FROM premium_guilds WHERE guild_id = %s", (guild_id,))
         row = cur.fetchone()
         if not row:
-            return {
-                "guild_id": guild_id,
-                "is_premium": False,
-                "plan_key": "free",
-                "plan_name": "무료",
-                "premium_until": None,
-                "updated_at": None,
-            }
+            return {'guild_id': guild_id, 'is_premium': False, 'plan_key': 'free', 'plan_name': '무료', 'premium_until': None, 'updated_at': None}
         return dict(row)
 
 
@@ -486,79 +456,52 @@ def set_premium(guild_id: int, enabled: bool):
                 INSERT INTO premium_guilds (guild_id, is_premium, plan_key, plan_name, premium_until, updated_at)
                 VALUES (%s, TRUE, 'supporter', '서포터', NULL, CURRENT_TIMESTAMP)
                 ON CONFLICT (guild_id)
-                DO UPDATE SET
-                    is_premium = TRUE,
-                    plan_key = 'supporter',
-                    plan_name = '서포터',
-                    updated_at = CURRENT_TIMESTAMP
+                DO UPDATE SET is_premium = TRUE, plan_key = 'supporter', plan_name = '서포터', updated_at = CURRENT_TIMESTAMP
             """, (guild_id,))
         else:
             cur.execute("""
                 INSERT INTO premium_guilds (guild_id, is_premium, plan_key, plan_name, premium_until, updated_at)
                 VALUES (%s, FALSE, 'free', '무료', NULL, CURRENT_TIMESTAMP)
                 ON CONFLICT (guild_id)
-                DO UPDATE SET
-                    is_premium = FALSE,
-                    plan_key = 'free',
-                    plan_name = '무료',
-                    premium_until = NULL,
-                    updated_at = CURRENT_TIMESTAMP
+                DO UPDATE SET is_premium = FALSE, plan_key = 'free', plan_name = '무료', premium_until = NULL, updated_at = CURRENT_TIMESTAMP
             """, (guild_id,))
     return get_premium_info(guild_id)
 
 
-def set_premium_days(guild_id: int, days: int, plan_key: Optional[str] = "supporter"):
+def set_premium_days(guild_id: int, days: int, plan_key: Optional[str] = 'supporter'):
     init_premium_tables()
     current = get_premium_info(guild_id)
     now = datetime.utcnow()
     base_time = now
-    if current and current.get("is_premium") and current.get("premium_until"):
-        if current["premium_until"] > now:
-            base_time = current["premium_until"]
+    if current and current.get('is_premium') and current.get('premium_until') and current['premium_until'] > now:
+        base_time = current['premium_until']
 
     new_until = base_time + timedelta(days=days)
     normalized_plan = normalize_plan_key(plan_key)
     plan_name = get_plan_label(normalized_plan)
-
     with db_cursor() as (_, cur):
         cur.execute("""
             INSERT INTO premium_guilds (guild_id, is_premium, plan_key, plan_name, premium_until, updated_at)
             VALUES (%s, TRUE, %s, %s, %s, CURRENT_TIMESTAMP)
             ON CONFLICT (guild_id)
-            DO UPDATE SET
-                is_premium = TRUE,
-                plan_key = EXCLUDED.plan_key,
-                plan_name = EXCLUDED.plan_name,
-                premium_until = EXCLUDED.premium_until,
-                updated_at = CURRENT_TIMESTAMP
+            DO UPDATE SET is_premium = TRUE, plan_key = EXCLUDED.plan_key, plan_name = EXCLUDED.plan_name, premium_until = EXCLUDED.premium_until, updated_at = CURRENT_TIMESTAMP
         """, (guild_id, normalized_plan, plan_name, new_until))
-
     return get_premium_info(guild_id)
 
 
 def get_active_premium_guilds():
     cleanup_expired_premium_guilds()
     with db_cursor(dict_cursor=True) as (_, cur):
-        cur.execute("""
-            SELECT guild_id, is_premium, plan_key, plan_name, premium_until, updated_at
-            FROM premium_guilds
-            WHERE is_premium = TRUE
-            ORDER BY guild_id ASC
-        """)
+        cur.execute("SELECT guild_id, is_premium, plan_key, plan_name, premium_until, updated_at FROM premium_guilds WHERE is_premium = TRUE ORDER BY guild_id ASC")
         return [dict(row) for row in cur.fetchall()]
 
 
 def count_active_premium_guilds() -> int:
     cleanup_expired_premium_guilds()
     with db_cursor(dict_cursor=True) as (_, cur):
-        cur.execute("""
-            SELECT COUNT(*) AS cnt
-            FROM premium_guilds
-            WHERE is_premium = TRUE
-        """)
+        cur.execute("SELECT COUNT(*) AS cnt FROM premium_guilds WHERE is_premium = TRUE")
         row = cur.fetchone()
-        return int(row["cnt"]) if row else 0
-
+        return int(row['cnt']) if row else 0
 
 # -------------------------
 # Settings
@@ -573,18 +516,20 @@ def init_settings_tables():
                 log_channel_id BIGINT,
                 announcement_channel_id BIGINT,
                 result_channel_id BIGINT,
-                custom_start_template TEXT,
-                custom_reminder_template TEXT,
-                custom_result_template TEXT,
-                clan_brand_name VARCHAR(120),
-                clan_brand_color VARCHAR(20),
                 voice_category_id BIGINT,
                 queue_channel_id BIGINT,
                 manager_role_id BIGINT,
                 premium_role_id BIGINT,
+                clan_brand_name VARCHAR(100),
+                clan_brand_color VARCHAR(20),
+                clan_badge_text VARCHAR(50),
                 updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
         """)
+
+        cur.execute("ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS clan_brand_name VARCHAR(100)")
+        cur.execute("ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS clan_brand_color VARCHAR(20)")
+        cur.execute("ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS clan_badge_text VARCHAR(50)")
 
 
 def ensure_guild_settings(guild_id: int):
@@ -603,9 +548,8 @@ def get_settings(guild_id: int):
         cur.execute("""
             SELECT
                 guild_id, category_id, recruit_role_id, log_channel_id,
-                announcement_channel_id, result_channel_id, custom_start_template, custom_reminder_template,
-                custom_result_template, clan_brand_name, clan_brand_color, voice_category_id,
-                queue_channel_id, manager_role_id, premium_role_id, updated_at
+                announcement_channel_id, result_channel_id, voice_category_id,
+                queue_channel_id, manager_role_id, premium_role_id, clan_brand_name, clan_brand_color, clan_badge_text, updated_at
             FROM guild_settings
             WHERE guild_id = %s
         """, (guild_id,))
@@ -619,15 +563,13 @@ def get_settings(guild_id: int):
             "log_channel_id": None,
             "announcement_channel_id": None,
             "result_channel_id": None,
-            "custom_start_template": None,
-            "custom_reminder_template": None,
-            "custom_result_template": None,
-            "clan_brand_name": None,
-            "clan_brand_color": None,
             "voice_category_id": None,
             "queue_channel_id": None,
             "manager_role_id": None,
             "premium_role_id": None,
+            "clan_brand_name": None,
+            "clan_brand_color": None,
+            "clan_badge_text": None,
             "updated_at": None,
         }
     return dict(row)
@@ -646,11 +588,9 @@ def update_settings(guild_id: int, **kwargs):
         "queue_channel_id",
         "manager_role_id",
         "premium_role_id",
-        "custom_start_template",
-        "custom_reminder_template",
-        "custom_result_template",
         "clan_brand_name",
         "clan_brand_color",
+        "clan_badge_text",
     }
 
     if not kwargs:
@@ -685,6 +625,46 @@ def set_category(guild_id: int, category_id: int):
     return update_settings(guild_id, category_id=category_id)
 
 
+def get_clan_branding(guild_id: int):
+    settings = get_settings(guild_id)
+    premium = get_premium_info(guild_id)
+    is_clan = bool(premium and premium.get('is_premium') and plan_at_least(premium.get('plan_key'), 'clan'))
+    guild_name = None
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("SELECT guild_name FROM guild_registry WHERE guild_id = %s", (guild_id,))
+        row = cur.fetchone()
+        if row:
+            guild_name = row.get('guild_name')
+
+    return {
+        'guild_id': guild_id,
+        'is_clan': is_clan,
+        'brand_name': (settings.get('clan_brand_name') or guild_name or f'Guild {guild_id}').strip(),
+        'brand_color': sanitize_brand_color(settings.get('clan_brand_color')),
+        'badge_text': (settings.get('clan_badge_text') or DEFAULT_CLAN_BADGE).strip(),
+        'plan_key': premium.get('plan_key') if premium else 'free',
+        'plan_name': premium.get('plan_name') if premium else '무료',
+    }
+
+
+def update_clan_branding(guild_id: int, brand_name: Optional[str] = None, brand_color: Optional[str] = None, badge_text: Optional[str] = None):
+    updates = {}
+    if brand_name is not None:
+        updates['clan_brand_name'] = (brand_name or '').strip() or None
+    if brand_color is not None:
+        updates['clan_brand_color'] = sanitize_brand_color(brand_color) if brand_color else None
+    if badge_text is not None:
+        updates['clan_badge_text'] = (badge_text or '').strip()[:50] or None
+    if updates:
+        update_settings(guild_id, **updates)
+    return get_clan_branding(guild_id)
+
+
+def clear_clan_branding(guild_id: int):
+    update_settings(guild_id, clan_brand_name=None, clan_brand_color=None, clan_badge_text=None)
+    return get_clan_branding(guild_id)
+
+
 # -------------------------
 # Recruit / Lobby / Party
 # -------------------------
@@ -703,13 +683,11 @@ def init_recruit_tables():
                 waiting_voice_id BIGINT,
                 team_a_voice_id BIGINT,
                 team_b_voice_id BIGINT,
-                scheduled_at TIMESTAMP,
                 created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
         """)
 
         cur.execute("""ALTER TABLE lobbies ADD COLUMN IF NOT EXISTS total_slots INTEGER""")
-        cur.execute("""ALTER TABLE lobbies ADD COLUMN IF NOT EXISTS scheduled_at TIMESTAMP""")
 
         cur.execute("""
             CREATE TABLE IF NOT EXISTS lobby_players (
@@ -785,39 +763,13 @@ def init_recruit_tables():
         """)
 
 
-        cur.execute("ALTER TABLE lobbies ADD COLUMN IF NOT EXISTS scheduled_at TIMESTAMP")
-        cur.execute("ALTER TABLE lobbies ADD COLUMN IF NOT EXISTS reminder_30_sent BOOLEAN NOT NULL DEFAULT FALSE")
-        cur.execute("ALTER TABLE lobbies ADD COLUMN IF NOT EXISTS reminder_10_sent BOOLEAN NOT NULL DEFAULT FALSE")
-        cur.execute("ALTER TABLE lobbies ADD COLUMN IF NOT EXISTS start_notice_sent BOOLEAN NOT NULL DEFAULT FALSE")
-        cur.execute("ALTER TABLE lobbies ADD COLUMN IF NOT EXISTS auto_created_from_recurring BOOLEAN NOT NULL DEFAULT FALSE")
-
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS recurring_lobby_templates (
-                id BIGSERIAL PRIMARY KEY,
-                guild_id BIGINT NOT NULL,
-                channel_id BIGINT NOT NULL,
-                host_id BIGINT NOT NULL,
-                game VARCHAR(50) NOT NULL,
-                team_size INTEGER NOT NULL,
-                total_slots INTEGER,
-                weekday INTEGER NOT NULL,
-                time_text VARCHAR(5) NOT NULL,
-                next_run_at TIMESTAMP NOT NULL,
-                is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
-                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-
-
 def get_lobby(channel_id: int):
     init_recruit_tables()
     with db_cursor(dict_cursor=True) as (_, cur):
         cur.execute("""
             SELECT
                 channel_id, guild_id, host_id, game, team_size, total_slots, status,
-                message_id, waiting_voice_id, team_a_voice_id, team_b_voice_id, scheduled_at,
-                reminder_30_sent, reminder_10_sent, start_notice_sent, auto_created_from_recurring, created_at
+                message_id, waiting_voice_id, team_a_voice_id, team_b_voice_id, created_at
             FROM lobbies
             WHERE channel_id = %s
         """, (channel_id,))
@@ -831,9 +783,7 @@ def create_lobby(
     host_id: int,
     game: str,
     team_size: int,
-    total_slots: Optional[int] = None,
-    scheduled_at: Optional[datetime] = None,
-    auto_created_from_recurring: bool = False
+    total_slots: Optional[int] = None
 ):
     init_recruit_tables()
     register_guild(guild_id)
@@ -841,161 +791,27 @@ def create_lobby(
     with db_cursor() as (_, cur):
         cur.execute("""
             INSERT INTO lobbies (
-                channel_id, guild_id, host_id, game, team_size, total_slots, scheduled_at, auto_created_from_recurring, status
+                channel_id, guild_id, host_id, game, team_size, total_slots, status
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'open')
+            VALUES (%s, %s, %s, %s, %s, %s, 'open')
             ON CONFLICT (channel_id) DO UPDATE SET
                 guild_id = EXCLUDED.guild_id,
                 host_id = EXCLUDED.host_id,
                 game = EXCLUDED.game,
                 team_size = EXCLUDED.team_size,
                 total_slots = EXCLUDED.total_slots,
-                scheduled_at = EXCLUDED.scheduled_at,
-                auto_created_from_recurring = EXCLUDED.auto_created_from_recurring,
-                reminder_30_sent = FALSE,
-                reminder_10_sent = FALSE,
-                start_notice_sent = FALSE,
                 status = 'open',
                 message_id = NULL,
                 waiting_voice_id = NULL,
                 team_a_voice_id = NULL,
                 team_b_voice_id = NULL
-        """, (channel_id, guild_id, host_id, game, team_size, total_slots, scheduled_at, auto_created_from_recurring))
+        """, (channel_id, guild_id, host_id, game, team_size, total_slots))
 
         cur.execute("DELETE FROM lobby_players WHERE channel_id = %s", (channel_id,))
         cur.execute("DELETE FROM lobby_teams WHERE channel_id = %s", (channel_id,))
         cur.execute("DELETE FROM lobby_party_members WHERE channel_id = %s", (channel_id,))
         cur.execute("DELETE FROM lobby_parties WHERE channel_id = %s", (channel_id,))
 
-
-
-def get_due_lobbies():
-    init_recruit_tables()
-    with db_cursor(dict_cursor=True) as (_, cur):
-        cur.execute("""
-            SELECT
-                channel_id, guild_id, host_id, game, team_size, total_slots, status,
-                message_id, waiting_voice_id, team_a_voice_id, team_b_voice_id, scheduled_at,
-                reminder_30_sent, reminder_10_sent, start_notice_sent, auto_created_from_recurring, created_at
-            FROM lobbies
-            WHERE status = 'open'
-              AND scheduled_at IS NOT NULL
-              AND scheduled_at <= CURRENT_TIMESTAMP
-            ORDER BY scheduled_at ASC, channel_id ASC
-        """)
-        return [dict(row) for row in cur.fetchall()]
-
-
-def get_due_lobby_reminders(minutes_before: int):
-    init_recruit_tables()
-    if minutes_before not in (30, 10):
-        raise ValueError("minutes_before는 30 또는 10만 가능합니다.")
-
-    flag_column = "reminder_30_sent" if minutes_before == 30 else "reminder_10_sent"
-    lower_minutes = max(minutes_before - 1, 0)
-    upper_minutes = minutes_before
-
-    with db_cursor(dict_cursor=True) as (_, cur):
-        cur.execute(f"""
-            SELECT
-                channel_id, guild_id, host_id, game, team_size, total_slots, status,
-                message_id, waiting_voice_id, team_a_voice_id, team_b_voice_id, scheduled_at,
-                reminder_30_sent, reminder_10_sent, start_notice_sent, auto_created_from_recurring, created_at
-            FROM lobbies
-            WHERE status = 'open'
-              AND scheduled_at IS NOT NULL
-              AND {flag_column} = FALSE
-              AND scheduled_at > CURRENT_TIMESTAMP
-              AND scheduled_at <= (CURRENT_TIMESTAMP + INTERVAL '{upper_minutes} minutes')
-              AND scheduled_at > (CURRENT_TIMESTAMP + INTERVAL '{lower_minutes} minutes')
-            ORDER BY scheduled_at ASC, channel_id ASC
-        """)
-        return [dict(row) for row in cur.fetchall()]
-
-
-def mark_lobby_reminder_sent(channel_id: int, minutes_before: int):
-    init_recruit_tables()
-    if minutes_before == 30:
-        column = 'reminder_30_sent'
-    elif minutes_before == 10:
-        column = 'reminder_10_sent'
-    else:
-        raise ValueError('minutes_before는 30 또는 10만 가능합니다.')
-
-    with db_cursor() as (_, cur):
-        cur.execute(f"UPDATE lobbies SET {column} = TRUE WHERE channel_id = %s", (channel_id,))
-
-
-def add_recurring_lobby_template(
-    guild_id: int,
-    channel_id: int,
-    host_id: int,
-    game: str,
-    team_size: int,
-    total_slots: Optional[int],
-    weekday: int,
-    time_text: str,
-    next_run_at: datetime
-):
-    init_recruit_tables()
-    with db_cursor(dict_cursor=True) as (_, cur):
-        cur.execute("""
-            INSERT INTO recurring_lobby_templates (
-                guild_id, channel_id, host_id, game, team_size, total_slots, weekday, time_text, next_run_at, is_enabled
-            )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, TRUE)
-            RETURNING *
-        """, (guild_id, channel_id, host_id, game, team_size, total_slots, weekday, time_text, next_run_at))
-        row = cur.fetchone()
-        return dict(row) if row else None
-
-
-def get_recurring_lobby_templates(guild_id: int):
-    init_recruit_tables()
-    with db_cursor(dict_cursor=True) as (_, cur):
-        cur.execute("""
-            SELECT *
-            FROM recurring_lobby_templates
-            WHERE guild_id = %s
-            ORDER BY weekday ASC, time_text ASC, id ASC
-        """, (guild_id,))
-        return [dict(row) for row in cur.fetchall()]
-
-
-def delete_recurring_lobby_template(template_id: int, guild_id: int):
-    init_recruit_tables()
-    with db_cursor(dict_cursor=True) as (_, cur):
-        cur.execute("""
-            DELETE FROM recurring_lobby_templates
-            WHERE id = %s AND guild_id = %s
-            RETURNING *
-        """, (template_id, guild_id))
-        row = cur.fetchone()
-        return dict(row) if row else None
-
-
-def get_due_recurring_lobby_templates():
-    init_recruit_tables()
-    with db_cursor(dict_cursor=True) as (_, cur):
-        cur.execute("""
-            SELECT *
-            FROM recurring_lobby_templates
-            WHERE is_enabled = TRUE
-              AND next_run_at <= CURRENT_TIMESTAMP
-            ORDER BY next_run_at ASC, id ASC
-        """)
-        return [dict(row) for row in cur.fetchall()]
-
-
-def bump_recurring_lobby_template(template_id: int, next_run_at: datetime):
-    init_recruit_tables()
-    with db_cursor() as (_, cur):
-        cur.execute("""
-            UPDATE recurring_lobby_templates
-            SET next_run_at = %s,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = %s
-        """, (next_run_at, template_id))
 
 def set_lobby_message(channel_id: int, message_id: int):
     with db_cursor() as (_, cur):
@@ -1693,16 +1509,16 @@ class DB:
         return cleanup_expired_premium_guilds()
 
     @staticmethod
-    def create_premium_request(guild_id: int, applicant_name: str, amount: int, discord_tag: Optional[str] = None, memo: Optional[str] = None, plan_key: Optional[str] = "supporter"):
-        return create_premium_request(guild_id, applicant_name, amount, discord_tag, memo, plan_key)
+    def create_premium_request(guild_id: int, applicant_name: str, amount: int, discord_tag: Optional[str] = None, memo: Optional[str] = None):
+        return create_premium_request(guild_id, applicant_name, amount, discord_tag, memo)
 
     @staticmethod
     def get_premium_requests(limit: int = 200):
         return get_premium_requests(limit)
 
     @staticmethod
-    def approve_premium_request(request_id: int, days: int = 30, approved_by: str = "admin", plan_key: Optional[str] = None):
-        return approve_premium_request(request_id, days, approved_by, plan_key)
+    def approve_premium_request(request_id: int, days: int = 30, approved_by: str = "admin"):
+        return approve_premium_request(request_id, days, approved_by)
 
     @staticmethod
     def reject_premium_request(request_id: int, rejected_by: str = "rejected"):
@@ -1717,8 +1533,12 @@ class DB:
         return is_guild_premium(guild_id)
 
     @staticmethod
-    def has_premium_plan(guild_id: int, required_plan_key: str = "supporter") -> bool:
+    def has_premium_plan(guild_id: int, required_plan_key: str = 'supporter') -> bool:
         return has_premium_plan(guild_id, required_plan_key)
+
+    @staticmethod
+    def get_plan_label(plan_key: Optional[str]) -> str:
+        return get_plan_label(plan_key)
 
     @staticmethod
     def get_premium_info(guild_id: int):
@@ -1729,7 +1549,7 @@ class DB:
         return set_premium(guild_id, enabled)
 
     @staticmethod
-    def set_premium_days(guild_id: int, days: int, plan_key: Optional[str] = "supporter"):
+    def set_premium_days(guild_id: int, days: int, plan_key: Optional[str] = 'supporter'):
         return set_premium_days(guild_id, days, plan_key)
 
     @staticmethod
@@ -1775,43 +1595,9 @@ class DB:
         host_id: int,
         game: str,
         team_size: int,
-        total_slots: Optional[int] = None,
-        scheduled_at: Optional[datetime] = None,
-        auto_created_from_recurring: bool = False
+        total_slots: Optional[int] = None
     ):
-        return create_lobby(channel_id, guild_id, host_id, game, team_size, total_slots, scheduled_at, auto_created_from_recurring)
-
-    @staticmethod
-    def get_due_lobbies():
-        return get_due_lobbies()
-
-    @staticmethod
-    def get_due_lobby_reminders(minutes_before: int):
-        return get_due_lobby_reminders(minutes_before)
-
-    @staticmethod
-    def mark_lobby_reminder_sent(channel_id: int, minutes_before: int):
-        return mark_lobby_reminder_sent(channel_id, minutes_before)
-
-    @staticmethod
-    def add_recurring_lobby_template(guild_id: int, channel_id: int, host_id: int, game: str, team_size: int, total_slots: Optional[int], weekday: int, time_text: str, next_run_at: datetime):
-        return add_recurring_lobby_template(guild_id, channel_id, host_id, game, team_size, total_slots, weekday, time_text, next_run_at)
-
-    @staticmethod
-    def get_recurring_lobby_templates(guild_id: int):
-        return get_recurring_lobby_templates(guild_id)
-
-    @staticmethod
-    def delete_recurring_lobby_template(template_id: int, guild_id: int):
-        return delete_recurring_lobby_template(template_id, guild_id)
-
-    @staticmethod
-    def get_due_recurring_lobby_templates():
-        return get_due_recurring_lobby_templates()
-
-    @staticmethod
-    def bump_recurring_lobby_template(template_id: int, next_run_at: datetime):
-        return bump_recurring_lobby_template(template_id, next_run_at)
+        return create_lobby(channel_id, guild_id, host_id, game, team_size, total_slots)
 
     @staticmethod
     def set_lobby_message(channel_id: int, message_id: int):

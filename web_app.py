@@ -14,12 +14,14 @@ from core.db import (
     count_active_premium_guilds,
     is_guild_premium,
     has_premium_plan,
+    get_premium_info,
     get_active_season,
     get_season_ranking,
     get_season_matches,
     get_season_stats_summary,
     get_registered_guilds,
     get_plan_label,
+    get_clan_branding,
 )
 
 app = Flask(__name__)
@@ -339,6 +341,38 @@ BASE_STYLE = """
         font-weight: 700;
     }
 
+    .brand-card {
+        border: 1px solid var(--brand-color, #8b5cf6);
+        box-shadow: 0 0 0 1px rgba(255,255,255,0.03), 0 14px 30px rgba(0,0,0,0.22);
+        background: linear-gradient(135deg, rgba(139,92,246,0.18), rgba(31,47,73,0.96));
+    }
+
+    .brand-title {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 24px;
+        font-weight: 800;
+        margin-bottom: 12px;
+    }
+
+    .brand-badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 8px 12px;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 800;
+        background: var(--brand-color, #8b5cf6);
+        color: #fff;
+    }
+
+    .brand-sub {
+        color: #dbeafe;
+        line-height: 1.8;
+    }
+
     @media (max-width: 900px) {
         .top3 {
             grid-template-columns: 1fr;
@@ -356,6 +390,21 @@ BASE_STYLE = """
 </style>
 """
 
+def get_brand_css(brand: dict | None) -> str:
+    color = '#8b5cf6'
+    if brand and brand.get('is_clan') and brand.get('brand_color'):
+        color = brand['brand_color']
+    return f"<style>:root{{--brand-color:{color};}}</style>"
+
+
+def get_selected_guild_brand(guild_id_raw: str):
+    if not guild_id_raw or not str(guild_id_raw).isdigit():
+        return None
+    return get_clan_branding(int(guild_id_raw))
+
+
+
+# 홈 UI / 배치는 유지
 INDEX_HTML = """
 <!DOCTYPE html>
 <html lang="ko">
@@ -369,6 +418,19 @@ INDEX_HTML = """
 <div class="container">
     <div class="page-title">🎮 내전봇 전적 사이트</div>
 
+    {% if brand and brand.is_clan %}
+    <div class="card brand-card">
+        <div class="brand-title">
+            <span class="brand-badge">{{ brand.badge_text }}</span>
+            <span>{{ brand.brand_name }}</span>
+        </div>
+        <div class="brand-sub">
+            클랜 패키지 서버 전용 브랜딩이 적용된 전적 화면입니다.<br>
+            패키지: <strong>{{ brand.plan_name }}</strong>
+        </div>
+    </div>
+    {% endif %}
+
     <div class="action-row">
         <a href="/guide" class="action-btn btn-guide">💿 명령어 / 프리미엄 소개</a>
         <a href="/support" class="action-btn btn-support">💖 후원 / 프리미엄 신청</a>
@@ -377,8 +439,8 @@ INDEX_HTML = """
     </div>
 
     <div class="card">
-        <div class="pill">패키지형 프리미엄 운영</div>
-        <div class="pill">서포터 3,000원 / 프로 5,000원 / 클랜 10,000원</div>
+        <div class="pill">프리미엄 가격: {{ premium_price }}원</div>
+        <div class="pill">프리미엄 기간: {{ premium_days }}일</div>
         <div class="pill">활성 프리미엄 서버 수: {{ active_premium_count }}</div>
     </div>
 
@@ -482,6 +544,7 @@ INDEX_HTML = """
 </html>
 """
 
+# 카드형 UI로 변경
 GUIDE_HTML = """
 <!DOCTYPE html>
 <html lang="ko">
@@ -502,66 +565,66 @@ GUIDE_HTML = """
     </div>
 
     <div class="card">
-        <h2 class="section-title">🆓 무료 기본 기능</h2>
+        <h2 class="section-title">🆓 무료 명령어</h2>
         <div class="guide-list">
             <div class="guide-item">
-                <h3>서버 설정</h3>
-                <p>/설정역할, /설정카테고리, /설정팀결과채널, /설정보기</p>
+                <h3>/설정역할</h3>
+                <p>내전에 참여 가능한 인증 역할을 설정합니다.</p>
             </div>
             <div class="guide-item">
-                <h3>내전 운영</h3>
-                <p>/내전생성, /내전상태, /밸런스팀, /내전종료</p>
+                <h3>/설정카테고리</h3>
+                <p>대기방 / 팀 보이스 채널이 생성될 카테고리를 설정합니다.</p>
             </div>
             <div class="guide-item">
-                <h3>배그 모집</h3>
-                <p>PUBG 배틀로얄 모집형, 솔로/듀오/스쿼드 규칙, 파티 시스템, 예약 시간 자동 진행</p>
+                <h3>/내전생성</h3>
+                <p>현재 채널에서 내전 모집을 시작합니다.</p>
             </div>
             <div class="guide-item">
-                <h3>기본 프로필 기능</h3>
-                <p>/발로티어등록, /옵치티어등록, /롤티어등록, 각 티어 점수표 확인</p>
+                <h3>/밸런스팀</h3>
+                <p>참가자 기준으로 자동 팀 분배를 진행합니다.</p>
+            </div>
+            <div class="guide-item">
+                <h3>/내전상태</h3>
+                <p>현재 모집 상태, 참가자, 현재 맵 등을 확인합니다.</p>
+            </div>
+            <div class="guide-item">
+                <h3>/내전종료</h3>
+                <p>내전을 종료하고 팀 채널을 정리합니다.</p>
             </div>
         </div>
     </div>
 
     <div class="card">
-        <h2 class="section-title">⭐ 패키지형 프리미엄 제한</h2>
+        <h2 class="section-title">⭐ 프리미엄 기능</h2>
         <div class="guide-list">
             <div class="guide-item">
-                <h3>서포터 패키지</h3>
-                <p>
-                    /맵뽑기, /시즌확인, /시즌목록, /시즌랭킹 사용 가능<br>
-                    웹 상세 전적 페이지와 시즌 페이지 조회 가능
-                </p>
+                <h3>결과기록 / ELO 반영</h3>
+                <p>경기 결과를 기록하고 ELO / MMR, 승패 전적을 자동 반영합니다.</p>
             </div>
             <div class="guide-item">
-                <h3>프로 패키지</h3>
-                <p>
-                    서포터 기능 포함<br>
-                    /결과기록, /시즌생성, /시즌종료 사용 가능
-                </p>
+                <h3>상세 전적</h3>
+                <p>유저별 상세 전적 페이지를 통해 누적 전적과 게임별 기록을 확인할 수 있습니다.</p>
             </div>
             <div class="guide-item">
-                <h3>클랜 패키지</h3>
-                <p>
-                    프로 기능 포함<br>
-                    서버 맞춤형 운영 확장과 상위 패키지 안내용으로 준비된 단계입니다.
-                </p>
+                <h3>게임별 시즌</h3>
+                <p>서버별, 게임별로 시즌을 따로 운영할 수 있습니다.</p>
+            </div>
+            <div class="guide-item">
+                <h3>시즌 랭킹 / 시즌 경기 기록</h3>
+                <p>현재 시즌 기준 랭킹과 최근 경기 기록을 따로 확인할 수 있습니다.</p>
+            </div>
+            <div class="guide-item">
+                <h3>맵뽑기</h3>
+                <p>현재 로비 게임 기준으로 맵을 랜덤으로 뽑고, 내전 상태에 함께 표시할 수 있습니다.</p>
             </div>
         </div>
-    </div>
-
-    <div class="card">
-        <h2 class="section-title">📌 빠른 정리</h2>
-        <div class="feature-box">무료: 기본 모집 / 기본 팀분배 / 배그 파티 / 티어등록
-서포터: 맵뽑기 / 시즌 조회 / 웹 상세 전적
-프로: 결과기록 / 시즌 생성·종료
-클랜: 프로 포함 + 서버 단위 확장 운영</div>
     </div>
 </div>
 </body>
 </html>
 """
 
+# 카드형 UI로 변경
 SUPPORT_HTML = """
 <!DOCTYPE html>
 <html lang="ko">
@@ -584,37 +647,35 @@ SUPPORT_HTML = """
     <div class="grid-2">
         <div>
             <div class="card">
-                <h2 class="section-title">📖 신청 안내</h2>
+                <h2 class="section-title">📖 프리미엄 안내</h2>
                 <p style="line-height:1.8; margin:0;">
-                    입금 후 아래 신청 폼을 작성하면 관리자가 확인 후 해당 패키지를 활성화합니다.<br>
-                    현재 패키지는 <strong>서포터 / 프로 / 클랜</strong> 3단계로 운영됩니다.<br>
-                    기능 제한은 디스코드 명령어와 웹사이트에 동일하게 적용됩니다.
+                    프리미엄 가격은 <strong>{{ premium_price }}원 / {{ premium_days }}일</strong> 입니다.<br>
+                    입금 후 아래 신청 폼을 작성하면 관리자가 확인 후 프리미엄을 활성화합니다.
                 </p>
             </div>
 
             <div class="card">
-                <h2 class="section-title">⭐ 패키지 구성</h2>
+                <h2 class="section-title">⭐ 프리미엄 기능</h2>
                 <div class="guide-list">
                     <div class="guide-item">
-                        <h3>서포터 · 3,000원 / 30일</h3>
-                        <p>
-                            /맵뽑기, /시즌확인, /시즌목록, /시즌랭킹 사용 가능<br>
-                            웹 상세 전적 페이지와 시즌 페이지 조회 가능
-                        </p>
+                        <h3>결과기록 / ELO 반영</h3>
+                        <p>경기 결과를 기록하고 ELO / MMR을 자동 반영합니다.</p>
                     </div>
                     <div class="guide-item">
-                        <h3>프로 · 5,000원 / 30일</h3>
-                        <p>
-                            서포터 기능 포함<br>
-                            /결과기록, /시즌생성, /시즌종료 사용 가능
-                        </p>
+                        <h3>상세 전적</h3>
+                        <p>유저별 상세 전적과 게임별 기록을 확인할 수 있습니다.</p>
                     </div>
                     <div class="guide-item">
-                        <h3>클랜 · 10,000원 / 30일</h3>
-                        <p>
-                            프로 기능 포함<br>
-                            서버 맞춤형 운영 확장과 상위 서버용 패키지로 안내됩니다.
-                        </p>
+                        <h3>게임별 시즌</h3>
+                        <p>게임마다 별도로 시즌을 운영하고 관리할 수 있습니다.</p>
+                    </div>
+                    <div class="guide-item">
+                        <h3>시즌 랭킹 / 시즌 경기 기록</h3>
+                        <p>시즌 전용 랭킹과 경기 기록을 따로 조회할 수 있습니다.</p>
+                    </div>
+                    <div class="guide-item">
+                        <h3>맵뽑기</h3>
+                        <p>프리미엄 서버 전용으로 맵을 랜덤으로 뽑고 내전 운영에 활용할 수 있습니다.</p>
                     </div>
                 </div>
             </div>
@@ -640,15 +701,6 @@ SUPPORT_HTML = """
                 <div class="form-group">
                     <label for="guildId">서버 ID</label>
                     <input type="number" id="guildId" placeholder="예: 123456789012345678">
-                </div>
-
-                <div class="form-group">
-                    <label for="planKey">패키지 선택</label>
-                    <select id="planKey">
-                        <option value="supporter">서포터 (3,000원 / 30일)</option>
-                        <option value="pro">프로 (5,000원 / 30일)</option>
-                        <option value="clan">클랜 (10,000원 / 30일)</option>
-                    </select>
                 </div>
 
                 <div class="form-group">
@@ -681,7 +733,6 @@ SUPPORT_HTML = """
 <script>
 async function submitPremiumRequest() {
     const guildId = document.getElementById("guildId").value.trim();
-    const planKey = document.getElementById("planKey").value.trim();
     const applicantName = document.getElementById("applicantName").value.trim();
     const discordTag = document.getElementById("discordTag").value.trim();
     const amount = document.getElementById("amount").value.trim();
@@ -718,21 +769,27 @@ async function submitPremiumRequest() {
                 applicant_name: applicantName,
                 discord_tag: discordTag,
                 amount: amount,
-                memo: memo,
-                plan_key: planKey
+                memo: memo
             })
         });
 
         const result = await response.json();
+
         if (result.ok) {
             statusText.textContent = "프리미엄 신청이 접수되었습니다. 신청번호: " + result.request_id;
             statusText.classList.add("ok");
+
+            document.getElementById("guildId").value = "";
+            document.getElementById("applicantName").value = "";
+            document.getElementById("discordTag").value = "";
+            document.getElementById("amount").value = "";
+            document.getElementById("memo").value = "";
         } else {
-            statusText.textContent = result.message || "신청 중 오류가 발생했습니다.";
+            statusText.textContent = result.message || "신청 접수에 실패했습니다.";
             statusText.classList.add("err");
         }
-    } catch (e) {
-        statusText.textContent = "서버 오류가 발생했습니다.";
+    } catch (error) {
+        statusText.textContent = "서버와 통신 중 오류가 발생했습니다.";
         statusText.classList.add("err");
     }
 }
@@ -754,6 +811,13 @@ SEASON_HTML = """
 <div class="container">
     <div class="page-title">🏆 시즌 페이지</div>
 
+    {% if brand and brand.is_clan %}
+    <div class="card brand-card">
+        <div class="brand-title"><span class="brand-badge">{{ brand.badge_text }}</span><span>{{ brand.brand_name }}</span></div>
+        <div class="brand-sub">클랜 패키지 서버 전용 시즌 브랜딩이 적용된 화면입니다.</div>
+    </div>
+    {% endif %}
+
     <div class="action-row">
         <a href="/" class="action-btn btn-guide">🏠 홈으로</a>
         <a href="/guide" class="action-btn btn-support">💿 명령어 / 프리미엄 소개</a>
@@ -771,13 +835,12 @@ SEASON_HTML = """
                 {% endfor %}
             </select>
 
-            <select name="game" style="max-width:220px;">
+            <select name="game" style="max-width:240px;">
                 <option value="">게임 선택</option>
                 {% for g in games %}
                     <option value="{{ g }}" {% if selected_game == g %}selected{% endif %}>{{ g }}</option>
                 {% endfor %}
             </select>
-
             <button type="submit" class="submit-btn">조회</button>
         </form>
     </div>
@@ -790,33 +853,24 @@ SEASON_HTML = """
 
     {% if season %}
     <div class="card">
-        <h2 class="section-title">현재 시즌 정보</h2>
-        <div class="pill">시즌 ID: {{ season.id }}</div>
+        <h2 class="section-title">현재 시즌</h2>
+        <div class="pill">서버: {{ season.guild_id }}</div>
         <div class="pill">게임: {{ season.game }}</div>
-        <div class="pill">상태: {{ season.status }}</div>
+        <div class="pill">시즌명: {{ season.season_name }}</div>
         <div class="pill">시작일: {{ season.started_at }}</div>
-        {% if season.ended_at %}
-        <div class="pill">종료일: {{ season.ended_at }}</div>
-        {% endif %}
-    </div>
-
-    <div class="top3">
-        <div class="top-card">
-            <h3>참가 인원</h3>
-            <p>{{ summary.player_count }}</p>
-        </div>
-        <div class="top-card">
-            <h3>평균 MMR</h3>
-            <p>{{ summary.avg_mmr }}</p>
-        </div>
-        <div class="top-card">
-            <h3>경기 수</h3>
-            <p>{{ summary.match_count }}</p>
-        </div>
+        <div class="pill">상태: {% if season.is_active %}진행 중{% else %}종료{% endif %}</div>
     </div>
 
     <div class="card">
-        <h2 class="section-title">🏅 시즌 랭킹</h2>
+        <h2 class="section-title">시즌 요약</h2>
+        <div class="pill">참가자 수: {{ summary.player_count }}</div>
+        <div class="pill">평균 MMR: {{ summary.avg_mmr }}</div>
+        <div class="pill">최고 MMR: {{ summary.top_mmr }}</div>
+        <div class="pill">경기 수: {{ summary.match_count }}</div>
+    </div>
+
+    <div class="card">
+        <h2 class="section-title">시즌 랭킹</h2>
         {% if ranking %}
         <table>
             <thead>
@@ -845,16 +899,15 @@ SEASON_HTML = """
             </tbody>
         </table>
         {% else %}
-        <div class="empty-box">시즌 랭킹 데이터가 없습니다.</div>
+        <div class="empty-box">시즌 전적이 아직 없습니다.</div>
         {% endif %}
     </div>
 
     <div class="card">
-        <h2 class="section-title">📝 시즌 최근 경기</h2>
+        <h2 class="section-title">시즌 최근 경기</h2>
         {% if matches %}
             {% for match in matches %}
             <div class="match-item">
-                <span class="pill">{{ match.game }}</span>
                 <span class="pill">승리팀 {{ match.winner_team }}</span>
                 <span class="pill">A평균 {{ match.team_a_avg }}</span>
                 <span class="pill">B평균 {{ match.team_b_avg }}</span>
@@ -862,7 +915,7 @@ SEASON_HTML = """
             </div>
             {% endfor %}
         {% else %}
-            <div class="empty-box">시즌 경기 기록이 없습니다.</div>
+        <div class="empty-box">시즌 경기 기록이 아직 없습니다.</div>
         {% endif %}
     </div>
     {% endif %}
@@ -884,6 +937,13 @@ PLAYER_HTML = """
     <div class="action-row">
         <a href="/" class="action-btn btn-guide">🏠 홈으로</a>
     </div>
+
+    {% if brand and brand.is_clan %}
+    <div class="card brand-card">
+        <div class="brand-title"><span class="brand-badge">{{ brand.badge_text }}</span><span>{{ brand.brand_name }}</span></div>
+        <div class="brand-sub">클랜 패키지 서버 전용 상세 전적 화면입니다.</div>
+    </div>
+    {% endif %}
 
     <div class="card">
         <h1>👤 유저 전적</h1>
@@ -931,17 +991,15 @@ LOCKED_HTML = """
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>패키지 필요</title>
+    <title>프리미엄 전용</title>
     """ + BASE_STYLE + """
 </head>
 <body>
 <div class="container">
     <div class="card">
-        <h1>🔒 패키지 필요</h1>
-        <p>{{ message }}</p>
-        <p>필요 패키지: <strong>{{ required_plan_label }}</strong> 이상</p>
-        <p><a href="/support">→ 후원 / 프리미엄 신청하러 가기</a></p>
-        <p><a href="/guide">→ 패키지별 기능 보러 가기</a></p>
+        <h1>🔒 프리미엄 전용</h1>
+        <p>상세 전적 페이지는 프리미엄 서버 전용입니다.</p>
+        <p><a href="/support">→ 프리미엄 신청하러 가기</a></p>
         <p><a href="/">← 홈으로 돌아가기</a></p>
     </div>
 </div>
@@ -1019,14 +1077,13 @@ async function loadRequests() {
                 <div class="request-row"><strong>서버 ID:</strong> ${item.guild_id}</div>
                 <div class="request-row"><strong>입금자명:</strong> ${item.applicant_name}</div>
                 <div class="request-row"><strong>디스코드:</strong> ${item.discord_tag || "-"}</div>
-                <div class="request-row"><strong>패키지:</strong> ${item.plan_name || item.plan_key || "-"}</div>
                 <div class="request-row"><strong>입금 금액:</strong> ${item.amount}원</div>
                 <div class="request-row"><strong>메모:</strong> ${item.memo || "-"}</div>
                 <div class="request-row"><strong>상태:</strong> <span class="status-badge">${item.status}</span></div>
                 <div class="request-row"><strong>신청일:</strong> ${item.created_at}</div>
                 <br>
                 <input class="days-input" type="number" id="days-${item.id}" value="30" min="1">
-                <button class="approve-btn" onclick="approveRequest(${item.id}, '${item.plan_key || 'supporter'}')">승인</button>
+                <button class="approve-btn" onclick="approveRequest(${item.id})">승인</button>
                 <button class="reject-btn" onclick="rejectRequest(${item.id})">거절</button>
                 <div id="status-${item.id}" class="status"></div>
             </div>
@@ -1037,7 +1094,7 @@ async function loadRequests() {
     }
 }
 
-async function approveRequest(requestId, planKey) {
+async function approveRequest(requestId) {
     const secret = document.getElementById("adminSecret").value.trim();
     const days = document.getElementById(`days-${requestId}`).value.trim();
     const statusBox = document.getElementById(`status-${requestId}`);
@@ -1055,14 +1112,13 @@ async function approveRequest(requestId, planKey) {
             body: JSON.stringify({
                 request_id: requestId,
                 days: days,
-                plan_key: planKey,
                 approved_by: "admin_page"
             })
         });
 
         const result = await response.json();
         if (result.ok) {
-            statusBox.textContent = "승인 완료 / " + (result.plan_name || "") + " / premium_until: " + result.premium_until;
+            statusBox.textContent = "승인 완료 / premium_until: " + result.premium_until;
             statusBox.classList.add("ok");
             loadRequests();
         } else {
@@ -1228,9 +1284,10 @@ def index():
             matches = cur.fetchall()
 
     active_premium_count = count_active_premium_guilds()
+    brand = get_selected_guild_brand(selected_guild_id)
 
     return render_template_string(
-        INDEX_HTML,
+        get_brand_css(brand) + INDEX_HTML,
         ranking=ranking,
         matches=matches,
         guilds=guilds,
@@ -1241,6 +1298,7 @@ def index():
         premium_price=PREMIUM_PRICE,
         premium_days=PREMIUM_DAYS,
         active_premium_count=active_premium_count,
+        brand=brand,
     )
 
 
@@ -1286,8 +1344,8 @@ def season_page():
             error_message = "Guild ID는 숫자만 입력해주세요."
         else:
             guild_id = int(guild_id_raw)
-            if not has_premium_plan(guild_id, "supporter"):
-                error_message = "해당 서버는 서포터 이상 패키지가 아니어서 시즌 페이지를 사용할 수 없습니다."
+            if not is_guild_premium(guild_id):
+                error_message = "해당 서버는 프리미엄 서버가 아니어서 시즌 페이지를 사용할 수 없습니다."
             else:
                 season = get_active_season(guild_id, selected_game)
                 if not season:
@@ -1307,7 +1365,8 @@ def season_page():
         ranking=ranking,
         matches=matches,
         summary=summary,
-        error_message=error_message
+        error_message=error_message,
+        brand=brand
     )
 
 
@@ -1317,7 +1376,7 @@ def player_page(guild_id, user_id):
 
     if not has_premium_plan(guild_id, "supporter"):
         return render_template_string(
-            LOCKED_HTML,
+            get_brand_css(get_clan_branding(guild_id)) + LOCKED_HTML,
             message="상세 전적 페이지는 서포터 이상 패키지 전용입니다.",
             required_plan_label=get_plan_label("supporter")
         )
@@ -1355,11 +1414,14 @@ def player_page(guild_id, user_id):
     total = player["win"] + player["lose"]
     winrate = round((player["win"] / total) * 100, 1) if total > 0 else 0.0
 
+    brand = get_clan_branding(guild_id)
+
     return render_template_string(
-        PLAYER_HTML,
+        get_brand_css(brand) + PLAYER_HTML,
         player=player,
         winrate=winrate,
-        game_rows=game_rows
+        game_rows=game_rows,
+        brand=brand
     )
 
 
@@ -1443,12 +1505,12 @@ def api_admin_premium_requests():
                 "discord_tag": row.get("discord_tag"),
                 "amount": row["amount"],
                 "memo": row.get("memo"),
+                "plan_key": row.get("plan_key"),
+                "plan_name": row.get("plan_name"),
                 "status": row["status"],
                 "created_at": str(row["created_at"]),
                 "approved_at": str(row["approved_at"]) if row.get("approved_at") else None,
                 "approved_by": row.get("approved_by"),
-                "plan_key": row.get("plan_key"),
-                "plan_name": row.get("plan_name"),
             })
 
         return jsonify({"ok": True, "requests": requests_data})

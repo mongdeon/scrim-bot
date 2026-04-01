@@ -7,69 +7,69 @@ from core.db import DB
 db = DB()
 
 
-async def send_operation_log(guild: discord.Guild, title: str, description: str, color: discord.Color = discord.Color.blue()):
-    settings = db.get_settings(guild.id)
-    if not settings:
-        return
-
-    channel_id = settings.get("log_channel_id")
-    if not channel_id:
-        return
-
-    channel = guild.get_channel(channel_id)
-    if not isinstance(channel, discord.TextChannel):
-        return
-
-    embed = discord.Embed(title=title, description=description, color=color)
-    try:
-        await channel.send(embed=embed)
-    except Exception:
-        pass
-
-
 class Settings(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+
+    def is_clan_guild(self, guild_id: int) -> bool:
+        return db.has_premium_plan(guild_id, "clan")
 
     @app_commands.command(name="설정역할", description="내전 참여 가능 역할을 설정합니다.")
     @app_commands.checks.has_permissions(administrator=True)
     async def role(self, interaction: discord.Interaction, 역할: discord.Role):
         db.update_settings(interaction.guild_id, recruit_role_id=역할.id)
         await interaction.response.send_message("인증 역할 설정 완료", ephemeral=True)
-        await send_operation_log(
-            interaction.guild,
-            "운영 설정 변경",
-            f"관리자: {interaction.user.mention}\n설정 항목: 인증 역할\n값: {역할.mention}",
-            discord.Color.green()
-        )
 
     @app_commands.command(name="설정카테고리", description="내전 음성채널 생성 카테고리를 설정합니다.")
     @app_commands.checks.has_permissions(administrator=True)
     async def cat(self, interaction: discord.Interaction, 카테고리: discord.CategoryChannel):
         db.update_settings(interaction.guild_id, category_id=카테고리.id)
         await interaction.response.send_message("내전 카테고리 설정 완료", ephemeral=True)
-        await send_operation_log(
-            interaction.guild,
-            "운영 설정 변경",
-            f"관리자: {interaction.user.mention}\n설정 항목: 내전 카테고리\n값: {카테고리.name}",
-            discord.Color.green()
-        )
 
     @app_commands.command(name="설정로그채널", description="운영 로그가 올라갈 채널을 설정합니다.")
     @app_commands.checks.has_permissions(administrator=True)
-    async def log_channel(self, interaction: discord.Interaction, 채널: discord.TextChannel):
+    async def set_log_channel(self, interaction: discord.Interaction, 채널: discord.TextChannel):
         db.update_settings(interaction.guild_id, log_channel_id=채널.id)
         await interaction.response.send_message(f"운영 로그 채널을 {채널.mention} 로 설정했습니다.", ephemeral=True)
 
-        embed = discord.Embed(
-            title="운영 로그 채널 설정 완료",
-            description=f"관리자: {interaction.user.mention}\n이 채널이 운영 로그 채널로 설정되었습니다.",
-            color=discord.Color.green()
+    @app_commands.command(name="설정브랜드이름", description="클랜 패키지 서버의 웹사이트 브랜드 이름을 설정합니다.")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def set_brand_name(self, interaction: discord.Interaction, 이름: str):
+        if not self.is_clan_guild(interaction.guild_id):
+            await interaction.response.send_message("이 기능은 클랜 패키지 서버 전용입니다.", ephemeral=True)
+            return
+        brand = db.update_clan_branding(interaction.guild_id, brand_name=이름[:100])
+        await interaction.response.send_message(f"브랜드 이름을 `{brand['brand_name']}` 로 설정했습니다.", ephemeral=True)
+
+    @app_commands.command(name="설정브랜드색상", description="클랜 패키지 서버의 웹사이트 대표 색상을 설정합니다.")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def set_brand_color(self, interaction: discord.Interaction, 색상코드: str):
+        if not self.is_clan_guild(interaction.guild_id):
+            await interaction.response.send_message("이 기능은 클랜 패키지 서버 전용입니다.", ephemeral=True)
+            return
+        brand = db.update_clan_branding(interaction.guild_id, brand_color=색상코드)
+        await interaction.response.send_message(f"브랜드 색상을 `{brand['brand_color']}` 로 설정했습니다.", ephemeral=True)
+
+    @app_commands.command(name="설정브랜드배지", description="클랜 패키지 서버의 웹사이트 배지 문구를 설정합니다.")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def set_brand_badge(self, interaction: discord.Interaction, 배지문구: str):
+        if not self.is_clan_guild(interaction.guild_id):
+            await interaction.response.send_message("이 기능은 클랜 패키지 서버 전용입니다.", ephemeral=True)
+            return
+        brand = db.update_clan_branding(interaction.guild_id, badge_text=배지문구[:50])
+        await interaction.response.send_message(f"브랜드 배지를 `{brand['badge_text']}` 로 설정했습니다.", ephemeral=True)
+
+    @app_commands.command(name="브랜드초기화", description="클랜 패키지 서버의 웹사이트 브랜딩을 기본값으로 되돌립니다.")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def reset_brand(self, interaction: discord.Interaction):
+        if not self.is_clan_guild(interaction.guild_id):
+            await interaction.response.send_message("이 기능은 클랜 패키지 서버 전용입니다.", ephemeral=True)
+            return
+        brand = db.clear_clan_branding(interaction.guild_id)
+        await interaction.response.send_message(
+            f"브랜딩을 초기화했습니다.\n기본 이름: `{brand['brand_name']}`\n기본 배지: `{brand['badge_text']}`\n기본 색상: `{brand['brand_color']}`",
+            ephemeral=True,
         )
-        try:
-            await 채널.send(embed=embed)
-        except Exception:
-            pass
 
     @app_commands.command(name="설정보기", description="현재 서버 설정을 확인합니다.")
     async def show(self, interaction: discord.Interaction):
@@ -80,14 +80,25 @@ class Settings(commands.Cog):
 
         role = interaction.guild.get_role(data["recruit_role_id"]) if data["recruit_role_id"] else None
         category = interaction.guild.get_channel(data["category_id"]) if data["category_id"] else None
-        log_channel = interaction.guild.get_channel(data["log_channel_id"]) if data.get("log_channel_id") else None
+        log_channel = interaction.guild.get_channel(data["log_channel_id"]) if data["log_channel_id"] else None
+        premium = db.get_premium_info(interaction.guild_id)
+        brand = db.get_clan_branding(interaction.guild_id)
 
-        await interaction.response.send_message(
-            f"인증 역할: {role.mention if role else '미설정'}\n"
-            f"내전 카테고리: {category.mention if category else '미설정'}\n"
+        lines = [
+            f"인증 역할: {role.mention if role else '미설정'}",
+            f"내전 카테고리: {category.mention if category else '미설정'}",
             f"운영 로그 채널: {log_channel.mention if log_channel else '미설정'}",
-            ephemeral=True
-        )
+            f"프리미엄 상태: {premium.get('plan_name', '무료') if premium else '무료'}",
+        ]
+
+        if brand["is_clan"]:
+            lines.extend([
+                f"브랜드 이름: {brand['brand_name']}",
+                f"브랜드 색상: {brand['brand_color']}",
+                f"브랜드 배지: {brand['badge_text']}",
+            ])
+
+        await interaction.response.send_message("\n".join(lines), ephemeral=True)
 
 
 async def setup(bot):
