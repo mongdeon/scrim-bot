@@ -1,10 +1,10 @@
 import discord
 from discord.ext import commands, tasks
 from discord import app_commands
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from core.db import DB
+from core.db import DB, has_premium_plan
 from core.matchmaking import auto_balance_players
 
 db = DB()
@@ -24,6 +24,19 @@ PUBG_MODE_OPTIONS = [
 ]
 
 KST = ZoneInfo("Asia/Seoul")
+
+
+WEEKDAY_CHOICES = [
+    app_commands.Choice(name="월요일", value="0"),
+    app_commands.Choice(name="화요일", value="1"),
+    app_commands.Choice(name="수요일", value="2"),
+    app_commands.Choice(name="목요일", value="3"),
+    app_commands.Choice(name="금요일", value="4"),
+    app_commands.Choice(name="토요일", value="5"),
+    app_commands.Choice(name="일요일", value="6"),
+]
+
+
 
 POSITION_MAP = {
     "valorant": ["타격대", "척후대", "감시자", "전략가", "상관없음"],
@@ -377,6 +390,115 @@ class Recruit(commands.Cog):
         dt = datetime.strptime(f"{date_text} {time_text}", "%Y-%m-%d %H:%M")
         return dt.replace(tzinfo=KST).replace(tzinfo=None)
 
+    def get_next_weekly_run(self, weekday: int, time_text: str):
+        hour, minute = map(int, time_text.split(":"))
+        now_kst = datetime.now(KST)
+        candidate = now_kst.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        days_ahead = (weekday - candidate.weekday()) % 7
+        if days_ahead == 0 and candidate <= now_kst:
+            days_ahead = 7
+        candidate = candidate + timedelta(days=days_ahead)
+        return candidate.replace(tzinfo=None)
+
+    async def get_announcement_channel(self, guild: discord.Guild, fallback_channel: discord.TextChannel | None = None):
+        settings = db.get_settings(guild.id)
+        channel_id = settings.get("announcement_channel_id") if settings else None
+        if channel_id:
+            channel = guild.get_channel(channel_id)
+            if isinstance(channel, discord.TextChannel):
+                return channel
+        return await self.get_result_channel(guild, fallback_channel)
+
+    def format_text_template(self, template: str | None, **kwargs):
+        if not template:
+            return None
+        try:
+            return template.format(**kwargs)
+        except Exception:
+            return template
+
+    async def send_lobby_reminder(self, guild: discord.Guild, lobby: dict, minutes_before: int):
+        channel = guild.get_channel(lobby["channel_id"])
+        if channel is None or not isinstance(channel, discord.TextChannel):
+            return
+        announce_channel = await self.get_announcement_channel(guild, channel)
+        settings = db.get_settings(guild.id)
+        scheduled_at = self.format_scheduled_at(lobby.get("scheduled_at"))
+        game_name = get_game_display_name(lobby)
+        need = get_lobby_need_count(lobby)
+        joined = len(db.get_lobby_players(lobby["channel_id"]))
+        template = settings.get("custom_reminder_template") if settings else None
+        text = self.format_text_template(
+            template,
+            minutes=minutes_before,
+            game=game_name,
+            scheduled_at=scheduled_at,
+            joined=joined,
+            need=need,
+            channel_mention=channel.mention,
+        )
+        if not text:
+            text = (
+                f"⏰ 예약된 내전 시작 {minutes_before}분 전입니다.\n"
+                f"게임: **{game_name}**\n"
+                f"시간: **{scheduled_at}**\n"
+                f"현재 인원: **{joined}/{need}**\n"
+                f"모집 채널: {channel.mention}"
+            )
+        await announce_channel.send(text)
+        db.mark_lobby_reminder_sent(lobby["channel_id"], minutes_before)
+
+    async def process_due_recurring_templates(self):
+        templates = db.get_due_recurring_lobby_templates()
+        for template in templates:
+            guild = self.bot.get_guild(template["guild_id"])
+            if guild is None:
+                db.bump_recurring_lobby_template(template["id"], template["next_run_at"] + timedelta(days=7))
+                continue
+
+            channel = guild.get_channel(template["channel_id"])
+            if channel is None or not isinstance(channel, discord.TextChannel):
+                db.bump_recurring_lobby_template(template["id"], template["next_run_at"] + timedelta(days=7))
+                continue
+
+            existing = db.get_lobby(template["channel_id"])
+            if existing and existing.get("status") in ("open", "balanced", "started"):
+                db.bump_recurring_lobby_template(template["id"], template["next_run_at"] + timedelta(days=7))
+                continue
+
+            db.create_lobby(
+                template["channel_id"],
+                template["guild_id"],
+                template["host_id"],
+                template["game"],
+                template["team_size"],
+                total_slots=template.get("total_slots"),
+                scheduled_at=template.get("next_run_at"),
+                auto_created_from_recurring=True,
+            )
+            lobby = db.get_lobby(template["channel_id"])
+            embed = build_lobby_embed(lobby, db.get_lobby_players(template["channel_id"]))
+            view = RecruitView(self)
+            if lobby and lobby.get("message_id"):
+                try:
+                    msg = await channel.fetch_message(lobby["message_id"])
+                    await msg.edit(embed=embed, view=view)
+                except Exception:
+                    msg = await channel.send(embed=embed, view=view)
+                    db.set_lobby_message(template["channel_id"], msg.id)
+            else:
+                msg = await channel.send(embed=embed, view=view)
+                db.set_lobby_message(template["channel_id"], msg.id)
+
+            announce_channel = await self.get_announcement_channel(guild, channel)
+            await announce_channel.send(
+                f"🔁 클랜 반복 예약으로 새 내전 모집이 자동 생성되었습니다.\n"
+                f"게임: **{get_game_display_name(lobby)}**\n"
+                f"시간: **{self.format_scheduled_at(lobby.get('scheduled_at'))}**\n"
+                f"채널: {channel.mention}"
+            )
+            db.bump_recurring_lobby_template(template["id"], template["next_run_at"] + timedelta(days=7))
+
     async def get_result_channel(self, guild: discord.Guild, fallback_channel: discord.TextChannel | None = None):
         settings = db.get_settings(guild.id)
         channel_id = settings.get("result_channel_id") if settings else None
@@ -390,6 +512,19 @@ class Recruit(commands.Cog):
     @tasks.loop(seconds=30)
     async def scheduled_start_loop(self):
         try:
+            await self.process_due_recurring_templates()
+
+            for minutes_before in (30, 10):
+                reminder_lobbies = db.get_due_lobby_reminders(minutes_before)
+                for lobby in reminder_lobbies:
+                    guild = self.bot.get_guild(lobby["guild_id"])
+                    if guild is None:
+                        continue
+                    try:
+                        await self.send_lobby_reminder(guild, lobby, minutes_before)
+                    except Exception as e:
+                        print(f"예약 알림 오류 ({lobby['channel_id']} / {minutes_before}분 전): {e}")
+
             due_lobbies = db.get_due_lobbies()
             for lobby in due_lobbies:
                 guild = self.bot.get_guild(lobby["guild_id"])
@@ -614,6 +749,109 @@ class Recruit(commands.Cog):
             + "\n".join(f"{p['display_name']} ({p['mmr']}, {p['position']})" for p in team_b)
             + f"\n\n차이: {abs(a_sum - b_sum)}"
         )
+
+    @app_commands.command(name="클랜반복예약추가", description="클랜 패키지 전용 반복 예약을 추가합니다.")
+    @app_commands.describe(
+        게임="게임 선택",
+        요일="반복 예약 요일",
+        시간="HH:MM 형식",
+        팀인원="일반 게임 팀 인원",
+        배그형식="배그 형식",
+        모집인원="배그 총 모집 인원"
+    )
+    @app_commands.choices(게임=GAME_OPTIONS, 배그형식=PUBG_MODE_OPTIONS, 요일=WEEKDAY_CHOICES)
+    async def add_recurring_schedule(
+        self,
+        interaction: discord.Interaction,
+        게임: app_commands.Choice[str],
+        요일: app_commands.Choice[str],
+        시간: str,
+        팀인원: int | None = None,
+        배그형식: app_commands.Choice[str] | None = None,
+        모집인원: int | None = None,
+    ):
+        try:
+            if not db.has_premium_plan(interaction.guild_id, "clan"):
+                await interaction.response.send_message("이 기능은 클랜 패키지 전용입니다.", ephemeral=True)
+                return
+
+            final_team_size = 팀인원
+            final_total_slots = None
+            if 게임.value == "pubg":
+                if 배그형식 is None or 모집인원 is None:
+                    await interaction.response.send_message("배그는 배그형식과 모집인원을 함께 입력해주세요.", ephemeral=True)
+                    return
+                if 배그형식.value == "solo":
+                    final_team_size = 1
+                    if 모집인원 < 2 or 모집인원 > 100:
+                        await interaction.response.send_message("배그 솔로 모집인원은 2~100입니다.", ephemeral=True)
+                        return
+                elif 배그형식.value == "duo":
+                    final_team_size = 2
+                    if 모집인원 < 4 or 모집인원 > 100 or 모집인원 % 2 != 0:
+                        await interaction.response.send_message("배그 듀오 모집인원은 4~100, 2의 배수만 가능합니다.", ephemeral=True)
+                        return
+                else:
+                    final_team_size = 4
+                    if 모집인원 < 8 or 모집인원 > 100 or 모집인원 % 4 != 0:
+                        await interaction.response.send_message("배그 스쿼드 모집인원은 8~100, 4의 배수만 가능합니다.", ephemeral=True)
+                        return
+                final_total_slots = 모집인원
+            else:
+                if final_team_size is None or final_team_size < 2 or final_team_size > 10:
+                    await interaction.response.send_message("팀 인원은 2~10 사이로 입력해주세요.", ephemeral=True)
+                    return
+
+            next_run_at = self.get_next_weekly_run(int(요일.value), 시간.strip())
+            row = db.add_recurring_lobby_template(
+                interaction.guild_id,
+                interaction.channel_id,
+                interaction.user.id,
+                게임.value,
+                final_team_size,
+                final_total_slots,
+                int(요일.value),
+                시간.strip(),
+                next_run_at,
+            )
+            await interaction.response.send_message(
+                f"✅ 클랜 반복 예약이 추가되었습니다.\nID: `{row['id']}`\n다음 실행: `{self.format_scheduled_at(row['next_run_at'])}`",
+                ephemeral=True
+            )
+        except Exception as e:
+            if interaction.response.is_done():
+                await interaction.followup.send(f"오류 발생: {e}", ephemeral=True)
+            else:
+                await interaction.response.send_message(f"오류 발생: {e}", ephemeral=True)
+
+    @app_commands.command(name="클랜반복예약목록", description="클랜 패키지 반복 예약 목록을 확인합니다.")
+    async def list_recurring_schedule(self, interaction: discord.Interaction):
+        if not db.has_premium_plan(interaction.guild_id, "clan"):
+            await interaction.response.send_message("이 기능은 클랜 패키지 전용입니다.", ephemeral=True)
+            return
+        rows = db.get_recurring_lobby_templates(interaction.guild_id)
+        if not rows:
+            await interaction.response.send_message("등록된 반복 예약이 없습니다.", ephemeral=True)
+            return
+        weekday_names = ["월", "화", "수", "목", "금", "토", "일"]
+        lines = []
+        for row in rows:
+            game_name = row['game'].upper()
+            extra = f" / 총 {row['total_slots']}명" if row.get('total_slots') else f" / {row['team_size']}vs{row['team_size']}"
+            lines.append(f"ID `{row['id']}` | {weekday_names[row['weekday']]} {row['time_text']} | {game_name}{extra} | 다음 실행 {self.format_scheduled_at(row['next_run_at'])}")
+        await interaction.response.send_message("\n".join(lines), ephemeral=True)
+
+    @app_commands.command(name="클랜반복예약삭제", description="클랜 패키지 반복 예약을 삭제합니다.")
+    @app_commands.describe(예약ID="삭제할 반복 예약 ID")
+    async def delete_recurring_schedule(self, interaction: discord.Interaction, 예약ID: int):
+        if not db.has_premium_plan(interaction.guild_id, "clan"):
+            await interaction.response.send_message("이 기능은 클랜 패키지 전용입니다.", ephemeral=True)
+            return
+        row = db.delete_recurring_lobby_template(예약ID, interaction.guild_id)
+        if not row:
+            await interaction.response.send_message("해당 예약을 찾지 못했습니다.", ephemeral=True)
+            return
+        await interaction.response.send_message(f"🗑️ 반복 예약 ID `{예약ID}` 삭제 완료", ephemeral=True)
 
     @app_commands.command(name="내전생성", description="내전 모집 메시지를 생성합니다.")
     @app_commands.describe(

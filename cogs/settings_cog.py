@@ -29,6 +29,36 @@ class Settings(commands.Cog):
         db.update_settings(interaction.guild_id, result_channel_id=채널.id)
         await interaction.response.send_message(f"팀 결과 채널 설정 완료: {채널.mention}", ephemeral=True)
 
+    @app_commands.command(name="설정공지채널", description="예약 알림/자동 생성 공지 채널을 설정합니다.")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def announcement_channel(self, interaction: discord.Interaction, 채널: discord.TextChannel):
+        db.update_settings(interaction.guild_id, announcement_channel_id=채널.id)
+        await interaction.response.send_message(f"공지 채널 설정 완료: {채널.mention}", ephemeral=True)
+
+    @app_commands.command(name="설정로그채널", description="클랜 운영 로그 채널을 설정합니다.")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def log_channel(self, interaction: discord.Interaction, 채널: discord.TextChannel):
+        db.update_settings(interaction.guild_id, log_channel_id=채널.id)
+        await interaction.response.send_message(f"로그 채널 설정 완료: {채널.mention}", ephemeral=True)
+
+    @app_commands.command(name="클랜시작템플릿", description="클랜 패키지 시작 공지 템플릿을 설정합니다.")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def clan_start_template(self, interaction: discord.Interaction, 내용: str):
+        db.update_settings(interaction.guild_id, custom_start_template=내용)
+        await interaction.response.send_message("클랜 시작 공지 템플릿 저장 완료", ephemeral=True)
+
+    @app_commands.command(name="클랜알림템플릿", description="클랜 패키지 알림 템플릿을 설정합니다.")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def clan_reminder_template(self, interaction: discord.Interaction, 내용: str):
+        db.update_settings(interaction.guild_id, custom_reminder_template=내용)
+        await interaction.response.send_message("클랜 알림 템플릿 저장 완료", ephemeral=True)
+
+    @app_commands.command(name="클랜결과템플릿", description="클랜 패키지 결과 템플릿을 설정합니다.")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def clan_result_template(self, interaction: discord.Interaction, 내용: str):
+        db.update_settings(interaction.guild_id, custom_result_template=내용)
+        await interaction.response.send_message("클랜 결과 템플릿 저장 완료", ephemeral=True)
+
     @app_commands.command(name="설정보기", description="현재 서버 설정을 확인합니다.")
     async def show(self, interaction: discord.Interaction):
         data = db.get_settings(interaction.guild_id)

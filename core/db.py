@@ -573,6 +573,11 @@ def init_settings_tables():
                 log_channel_id BIGINT,
                 announcement_channel_id BIGINT,
                 result_channel_id BIGINT,
+                custom_start_template TEXT,
+                custom_reminder_template TEXT,
+                custom_result_template TEXT,
+                clan_brand_name VARCHAR(120),
+                clan_brand_color VARCHAR(20),
                 voice_category_id BIGINT,
                 queue_channel_id BIGINT,
                 manager_role_id BIGINT,
@@ -598,7 +603,8 @@ def get_settings(guild_id: int):
         cur.execute("""
             SELECT
                 guild_id, category_id, recruit_role_id, log_channel_id,
-                announcement_channel_id, result_channel_id, voice_category_id,
+                announcement_channel_id, result_channel_id, custom_start_template, custom_reminder_template,
+                custom_result_template, clan_brand_name, clan_brand_color, voice_category_id,
                 queue_channel_id, manager_role_id, premium_role_id, updated_at
             FROM guild_settings
             WHERE guild_id = %s
@@ -613,6 +619,11 @@ def get_settings(guild_id: int):
             "log_channel_id": None,
             "announcement_channel_id": None,
             "result_channel_id": None,
+            "custom_start_template": None,
+            "custom_reminder_template": None,
+            "custom_result_template": None,
+            "clan_brand_name": None,
+            "clan_brand_color": None,
             "voice_category_id": None,
             "queue_channel_id": None,
             "manager_role_id": None,
@@ -635,6 +646,11 @@ def update_settings(guild_id: int, **kwargs):
         "queue_channel_id",
         "manager_role_id",
         "premium_role_id",
+        "custom_start_template",
+        "custom_reminder_template",
+        "custom_result_template",
+        "clan_brand_name",
+        "clan_brand_color",
     }
 
     if not kwargs:
@@ -769,13 +785,39 @@ def init_recruit_tables():
         """)
 
 
+        cur.execute("ALTER TABLE lobbies ADD COLUMN IF NOT EXISTS scheduled_at TIMESTAMP")
+        cur.execute("ALTER TABLE lobbies ADD COLUMN IF NOT EXISTS reminder_30_sent BOOLEAN NOT NULL DEFAULT FALSE")
+        cur.execute("ALTER TABLE lobbies ADD COLUMN IF NOT EXISTS reminder_10_sent BOOLEAN NOT NULL DEFAULT FALSE")
+        cur.execute("ALTER TABLE lobbies ADD COLUMN IF NOT EXISTS start_notice_sent BOOLEAN NOT NULL DEFAULT FALSE")
+        cur.execute("ALTER TABLE lobbies ADD COLUMN IF NOT EXISTS auto_created_from_recurring BOOLEAN NOT NULL DEFAULT FALSE")
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS recurring_lobby_templates (
+                id BIGSERIAL PRIMARY KEY,
+                guild_id BIGINT NOT NULL,
+                channel_id BIGINT NOT NULL,
+                host_id BIGINT NOT NULL,
+                game VARCHAR(50) NOT NULL,
+                team_size INTEGER NOT NULL,
+                total_slots INTEGER,
+                weekday INTEGER NOT NULL,
+                time_text VARCHAR(5) NOT NULL,
+                next_run_at TIMESTAMP NOT NULL,
+                is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+
 def get_lobby(channel_id: int):
     init_recruit_tables()
     with db_cursor(dict_cursor=True) as (_, cur):
         cur.execute("""
             SELECT
                 channel_id, guild_id, host_id, game, team_size, total_slots, status,
-                message_id, waiting_voice_id, team_a_voice_id, team_b_voice_id, scheduled_at, created_at
+                message_id, waiting_voice_id, team_a_voice_id, team_b_voice_id, scheduled_at,
+                reminder_30_sent, reminder_10_sent, start_notice_sent, auto_created_from_recurring, created_at
             FROM lobbies
             WHERE channel_id = %s
         """, (channel_id,))
@@ -790,7 +832,8 @@ def create_lobby(
     game: str,
     team_size: int,
     total_slots: Optional[int] = None,
-    scheduled_at: Optional[datetime] = None
+    scheduled_at: Optional[datetime] = None,
+    auto_created_from_recurring: bool = False
 ):
     init_recruit_tables()
     register_guild(guild_id)
@@ -798,9 +841,9 @@ def create_lobby(
     with db_cursor() as (_, cur):
         cur.execute("""
             INSERT INTO lobbies (
-                channel_id, guild_id, host_id, game, team_size, total_slots, scheduled_at, status
+                channel_id, guild_id, host_id, game, team_size, total_slots, scheduled_at, auto_created_from_recurring, status
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, 'open')
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'open')
             ON CONFLICT (channel_id) DO UPDATE SET
                 guild_id = EXCLUDED.guild_id,
                 host_id = EXCLUDED.host_id,
@@ -808,12 +851,16 @@ def create_lobby(
                 team_size = EXCLUDED.team_size,
                 total_slots = EXCLUDED.total_slots,
                 scheduled_at = EXCLUDED.scheduled_at,
+                auto_created_from_recurring = EXCLUDED.auto_created_from_recurring,
+                reminder_30_sent = FALSE,
+                reminder_10_sent = FALSE,
+                start_notice_sent = FALSE,
                 status = 'open',
                 message_id = NULL,
                 waiting_voice_id = NULL,
                 team_a_voice_id = NULL,
                 team_b_voice_id = NULL
-        """, (channel_id, guild_id, host_id, game, team_size, total_slots, scheduled_at))
+        """, (channel_id, guild_id, host_id, game, team_size, total_slots, scheduled_at, auto_created_from_recurring))
 
         cur.execute("DELETE FROM lobby_players WHERE channel_id = %s", (channel_id,))
         cur.execute("DELETE FROM lobby_teams WHERE channel_id = %s", (channel_id,))
@@ -828,7 +875,8 @@ def get_due_lobbies():
         cur.execute("""
             SELECT
                 channel_id, guild_id, host_id, game, team_size, total_slots, status,
-                message_id, waiting_voice_id, team_a_voice_id, team_b_voice_id, scheduled_at, created_at
+                message_id, waiting_voice_id, team_a_voice_id, team_b_voice_id, scheduled_at,
+                reminder_30_sent, reminder_10_sent, start_notice_sent, auto_created_from_recurring, created_at
             FROM lobbies
             WHERE status = 'open'
               AND scheduled_at IS NOT NULL
@@ -836,6 +884,118 @@ def get_due_lobbies():
             ORDER BY scheduled_at ASC, channel_id ASC
         """)
         return [dict(row) for row in cur.fetchall()]
+
+
+def get_due_lobby_reminders(minutes_before: int):
+    init_recruit_tables()
+    if minutes_before not in (30, 10):
+        raise ValueError("minutes_before는 30 또는 10만 가능합니다.")
+
+    flag_column = "reminder_30_sent" if minutes_before == 30 else "reminder_10_sent"
+    lower_minutes = max(minutes_before - 1, 0)
+    upper_minutes = minutes_before
+
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute(f"""
+            SELECT
+                channel_id, guild_id, host_id, game, team_size, total_slots, status,
+                message_id, waiting_voice_id, team_a_voice_id, team_b_voice_id, scheduled_at,
+                reminder_30_sent, reminder_10_sent, start_notice_sent, auto_created_from_recurring, created_at
+            FROM lobbies
+            WHERE status = 'open'
+              AND scheduled_at IS NOT NULL
+              AND {flag_column} = FALSE
+              AND scheduled_at > CURRENT_TIMESTAMP
+              AND scheduled_at <= (CURRENT_TIMESTAMP + INTERVAL '{upper_minutes} minutes')
+              AND scheduled_at > (CURRENT_TIMESTAMP + INTERVAL '{lower_minutes} minutes')
+            ORDER BY scheduled_at ASC, channel_id ASC
+        """)
+        return [dict(row) for row in cur.fetchall()]
+
+
+def mark_lobby_reminder_sent(channel_id: int, minutes_before: int):
+    init_recruit_tables()
+    if minutes_before == 30:
+        column = 'reminder_30_sent'
+    elif minutes_before == 10:
+        column = 'reminder_10_sent'
+    else:
+        raise ValueError('minutes_before는 30 또는 10만 가능합니다.')
+
+    with db_cursor() as (_, cur):
+        cur.execute(f"UPDATE lobbies SET {column} = TRUE WHERE channel_id = %s", (channel_id,))
+
+
+def add_recurring_lobby_template(
+    guild_id: int,
+    channel_id: int,
+    host_id: int,
+    game: str,
+    team_size: int,
+    total_slots: Optional[int],
+    weekday: int,
+    time_text: str,
+    next_run_at: datetime
+):
+    init_recruit_tables()
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("""
+            INSERT INTO recurring_lobby_templates (
+                guild_id, channel_id, host_id, game, team_size, total_slots, weekday, time_text, next_run_at, is_enabled
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, TRUE)
+            RETURNING *
+        """, (guild_id, channel_id, host_id, game, team_size, total_slots, weekday, time_text, next_run_at))
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def get_recurring_lobby_templates(guild_id: int):
+    init_recruit_tables()
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("""
+            SELECT *
+            FROM recurring_lobby_templates
+            WHERE guild_id = %s
+            ORDER BY weekday ASC, time_text ASC, id ASC
+        """, (guild_id,))
+        return [dict(row) for row in cur.fetchall()]
+
+
+def delete_recurring_lobby_template(template_id: int, guild_id: int):
+    init_recruit_tables()
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("""
+            DELETE FROM recurring_lobby_templates
+            WHERE id = %s AND guild_id = %s
+            RETURNING *
+        """, (template_id, guild_id))
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def get_due_recurring_lobby_templates():
+    init_recruit_tables()
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("""
+            SELECT *
+            FROM recurring_lobby_templates
+            WHERE is_enabled = TRUE
+              AND next_run_at <= CURRENT_TIMESTAMP
+            ORDER BY next_run_at ASC, id ASC
+        """)
+        return [dict(row) for row in cur.fetchall()]
+
+
+def bump_recurring_lobby_template(template_id: int, next_run_at: datetime):
+    init_recruit_tables()
+    with db_cursor() as (_, cur):
+        cur.execute("""
+            UPDATE recurring_lobby_templates
+            SET next_run_at = %s,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = %s
+        """, (next_run_at, template_id))
 
 def set_lobby_message(channel_id: int, message_id: int):
     with db_cursor() as (_, cur):
@@ -1616,13 +1776,42 @@ class DB:
         game: str,
         team_size: int,
         total_slots: Optional[int] = None,
-        scheduled_at: Optional[datetime] = None
+        scheduled_at: Optional[datetime] = None,
+        auto_created_from_recurring: bool = False
     ):
-        return create_lobby(channel_id, guild_id, host_id, game, team_size, total_slots, scheduled_at)
+        return create_lobby(channel_id, guild_id, host_id, game, team_size, total_slots, scheduled_at, auto_created_from_recurring)
 
     @staticmethod
     def get_due_lobbies():
         return get_due_lobbies()
+
+    @staticmethod
+    def get_due_lobby_reminders(minutes_before: int):
+        return get_due_lobby_reminders(minutes_before)
+
+    @staticmethod
+    def mark_lobby_reminder_sent(channel_id: int, minutes_before: int):
+        return mark_lobby_reminder_sent(channel_id, minutes_before)
+
+    @staticmethod
+    def add_recurring_lobby_template(guild_id: int, channel_id: int, host_id: int, game: str, team_size: int, total_slots: Optional[int], weekday: int, time_text: str, next_run_at: datetime):
+        return add_recurring_lobby_template(guild_id, channel_id, host_id, game, team_size, total_slots, weekday, time_text, next_run_at)
+
+    @staticmethod
+    def get_recurring_lobby_templates(guild_id: int):
+        return get_recurring_lobby_templates(guild_id)
+
+    @staticmethod
+    def delete_recurring_lobby_template(template_id: int, guild_id: int):
+        return delete_recurring_lobby_template(template_id, guild_id)
+
+    @staticmethod
+    def get_due_recurring_lobby_templates():
+        return get_due_recurring_lobby_templates()
+
+    @staticmethod
+    def bump_recurring_lobby_template(template_id: int, next_run_at: datetime):
+        return bump_recurring_lobby_template(template_id, next_run_at)
 
     @staticmethod
     def set_lobby_message(channel_id: int, message_id: int):
