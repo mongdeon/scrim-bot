@@ -2,7 +2,7 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 
-from core.db import DB
+from core.db import DB, render_clan_template
 from cogs.recruit_cog import build_lobby_embed
 from core.matchmaking import auto_balance_players, calc_elo_delta
 
@@ -15,6 +15,26 @@ def format_team_block(team: list[dict]):
         for p in team
     )
 
+
+
+
+async def send_clan_announcement(guild: discord.Guild, channel: discord.TextChannel | None, content: str):
+    if not content:
+        return
+    settings = db.get_settings(guild.id)
+    target = None
+    if settings and settings.get("announcement_channel_id"):
+        maybe = guild.get_channel(settings["announcement_channel_id"])
+        if isinstance(maybe, discord.TextChannel):
+            target = maybe
+    if target is None:
+        target = channel
+    if not isinstance(target, discord.TextChannel):
+        return
+    try:
+        await target.send(content)
+    except Exception:
+        pass
 
 async def send_operation_log(guild: discord.Guild, title: str, description: str, color: discord.Color = discord.Color.blue()):
     settings = db.get_settings(guild.id)
@@ -249,14 +269,26 @@ class Team(commands.Cog):
                 sign = "+" if delta >= 0 else ""
                 lines.append(f"{name_map.get(uid, uid)}: {sign}{delta}")
 
-            await interaction.response.send_message(
+            default_text = (
                 f"결과 기록 완료\n"
                 f"승리팀: **{winner}팀**\n"
                 f"A팀 평균: {avg_a}\n"
                 f"B팀 평균: {avg_b}\n\n"
                 f"**ELO/MMR 변동**\n" + "\n".join(lines)
             )
+            await interaction.response.send_message(default_text)
             await self.refresh_message(interaction.channel, interaction.channel_id)
+            if db.has_premium_plan(interaction.guild_id, "clan"):
+                clan_text = render_clan_template(
+                    interaction.guild_id,
+                    "result",
+                    game=lobby["game"],
+                    winner_team=f"{winner}팀",
+                    avg_a=avg_a,
+                    avg_b=avg_b,
+                    channel=interaction.channel.mention,
+                )
+                await send_clan_announcement(interaction.guild, interaction.channel, clan_text)
             await send_operation_log(
                 interaction.guild,
                 "운영 로그 · 결과 기록",

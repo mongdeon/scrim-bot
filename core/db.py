@@ -76,6 +76,22 @@ PLAN_LABELS = {
 DEFAULT_CLAN_BADGE = "👑 CLAN"
 DEFAULT_CLAN_COLOR = "#8b5cf6"
 
+DEFAULT_CLAN_INTRO = "우리 클랜만의 브랜딩과 공지 템플릿이 적용된 서버입니다."
+
+DEFAULT_CLAN_START_TEMPLATE = """{badge} {brand_name} 내전 시작!
+게임: {game}
+채널: {channel}
+진행: {mode_text}
+A팀: {team_a}
+B팀: {team_b}
+차이: {difference}"""
+
+DEFAULT_CLAN_RESULT_TEMPLATE = """{badge} {brand_name} 경기 결과
+게임: {game}
+승리팀: {winner_team}
+A팀 평균: {avg_a}
+B팀 평균: {avg_b}
+채널: {channel}"""
 
 def normalize_plan_key(plan_key: Optional[str]) -> str:
     key = (plan_key or "free").strip().lower()
@@ -523,6 +539,9 @@ def init_settings_tables():
                 clan_brand_name VARCHAR(100),
                 clan_brand_color VARCHAR(20),
                 clan_badge_text VARCHAR(50),
+                clan_intro_text TEXT,
+                clan_start_template TEXT,
+                clan_result_template TEXT,
                 updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
         """)
@@ -530,6 +549,9 @@ def init_settings_tables():
         cur.execute("ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS clan_brand_name VARCHAR(100)")
         cur.execute("ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS clan_brand_color VARCHAR(20)")
         cur.execute("ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS clan_badge_text VARCHAR(50)")
+        cur.execute("ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS clan_intro_text TEXT")
+        cur.execute("ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS clan_start_template TEXT")
+        cur.execute("ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS clan_result_template TEXT")
 
 
 def ensure_guild_settings(guild_id: int):
@@ -549,7 +571,8 @@ def get_settings(guild_id: int):
             SELECT
                 guild_id, category_id, recruit_role_id, log_channel_id,
                 announcement_channel_id, result_channel_id, voice_category_id,
-                queue_channel_id, manager_role_id, premium_role_id, clan_brand_name, clan_brand_color, clan_badge_text, updated_at
+                queue_channel_id, manager_role_id, premium_role_id, clan_brand_name, clan_brand_color, clan_badge_text,
+                clan_intro_text, clan_start_template, clan_result_template, updated_at
             FROM guild_settings
             WHERE guild_id = %s
         """, (guild_id,))
@@ -570,6 +593,9 @@ def get_settings(guild_id: int):
             "clan_brand_name": None,
             "clan_brand_color": None,
             "clan_badge_text": None,
+            "clan_intro_text": None,
+            "clan_start_template": None,
+            "clan_result_template": None,
             "updated_at": None,
         }
     return dict(row)
@@ -591,6 +617,9 @@ def update_settings(guild_id: int, **kwargs):
         "clan_brand_name",
         "clan_brand_color",
         "clan_badge_text",
+        "clan_intro_text",
+        "clan_start_template",
+        "clan_result_template",
     }
 
     if not kwargs:
@@ -642,12 +671,15 @@ def get_clan_branding(guild_id: int):
         'brand_name': (settings.get('clan_brand_name') or guild_name or f'Guild {guild_id}').strip(),
         'brand_color': sanitize_brand_color(settings.get('clan_brand_color')),
         'badge_text': (settings.get('clan_badge_text') or DEFAULT_CLAN_BADGE).strip(),
+        'intro_text': (settings.get('clan_intro_text') or DEFAULT_CLAN_INTRO).strip(),
+        'start_template': (settings.get('clan_start_template') or DEFAULT_CLAN_START_TEMPLATE).strip(),
+        'result_template': (settings.get('clan_result_template') or DEFAULT_CLAN_RESULT_TEMPLATE).strip(),
         'plan_key': premium.get('plan_key') if premium else 'free',
         'plan_name': premium.get('plan_name') if premium else '무료',
     }
 
 
-def update_clan_branding(guild_id: int, brand_name: Optional[str] = None, brand_color: Optional[str] = None, badge_text: Optional[str] = None):
+def update_clan_branding(guild_id: int, brand_name: Optional[str] = None, brand_color: Optional[str] = None, badge_text: Optional[str] = None, intro_text: Optional[str] = None, start_template: Optional[str] = None, result_template: Optional[str] = None):
     updates = {}
     if brand_name is not None:
         updates['clan_brand_name'] = (brand_name or '').strip() or None
@@ -655,15 +687,44 @@ def update_clan_branding(guild_id: int, brand_name: Optional[str] = None, brand_
         updates['clan_brand_color'] = sanitize_brand_color(brand_color) if brand_color else None
     if badge_text is not None:
         updates['clan_badge_text'] = (badge_text or '').strip()[:50] or None
+    if intro_text is not None:
+        updates['clan_intro_text'] = (intro_text or '').strip() or None
+    if start_template is not None:
+        updates['clan_start_template'] = (start_template or '').strip() or None
+    if result_template is not None:
+        updates['clan_result_template'] = (result_template or '').strip() or None
     if updates:
         update_settings(guild_id, **updates)
     return get_clan_branding(guild_id)
 
 
 def clear_clan_branding(guild_id: int):
-    update_settings(guild_id, clan_brand_name=None, clan_brand_color=None, clan_badge_text=None)
+    update_settings(guild_id, clan_brand_name=None, clan_brand_color=None, clan_badge_text=None, clan_intro_text=None, clan_start_template=None, clan_result_template=None)
     return get_clan_branding(guild_id)
 
+
+
+class _SafeDict(dict):
+    def __missing__(self, key):
+        return '{' + key + '}'
+
+
+def render_clan_template(guild_id: int, template_key: str, **kwargs):
+    brand = get_clan_branding(guild_id)
+    template_map = {
+        'intro': brand.get('intro_text') or DEFAULT_CLAN_INTRO,
+        'start': brand.get('start_template') or DEFAULT_CLAN_START_TEMPLATE,
+        'result': brand.get('result_template') or DEFAULT_CLAN_RESULT_TEMPLATE,
+    }
+    template = template_map.get(template_key, '')
+    values = _SafeDict({
+        'brand_name': brand.get('brand_name', ''),
+        'brand_color': brand.get('brand_color', ''),
+        'badge': brand.get('badge_text', DEFAULT_CLAN_BADGE),
+        'plan_name': brand.get('plan_name', '무료'),
+        **kwargs,
+    })
+    return template.format_map(values)
 
 # -------------------------
 # Recruit / Lobby / Party

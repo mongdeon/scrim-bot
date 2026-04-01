@@ -423,7 +423,7 @@ INDEX_HTML = """
             <span>{{ brand.brand_name }}</span>
         </div>
         <div class="brand-sub">
-            클랜 패키지 서버 전용 브랜딩이 적용된 전적 화면입니다.<br>
+            {{ brand.intro_text }}<br>
             패키지: <strong>{{ brand.plan_name }}</strong>
         </div>
     </div>
@@ -645,8 +645,8 @@ SUPPORT_HTML = """
             <div class="card">
                 <h2 class="section-title">📖 프리미엄 안내</h2>
                 <p style="line-height:1.8; margin:0;">
-                    프리미엄 가격은 <strong>{{ premium_price }}원 / {{ premium_days }}일</strong> 입니다.<br>
-                    입금 후 아래 신청 폼을 작성하면 관리자가 확인 후 프리미엄을 활성화합니다.
+                    패키지별 후원 기능을 제공합니다.<br>
+                    클랜 패키지는 웹 브랜딩과 디스코드 공지 템플릿을 같은 설정으로 통일할 수 있습니다.
                 </p>
             </div>
 
@@ -810,7 +810,7 @@ SEASON_HTML = """
     {% if brand and brand.is_clan %}
     <div class="card brand-card">
         <div class="brand-title"><span class="brand-badge">{{ brand.badge_text }}</span><span>{{ brand.brand_name }}</span></div>
-        <div class="brand-sub">클랜 패키지 서버 전용 시즌 브랜딩이 적용된 화면입니다.</div>
+        <div class="brand-sub">{{ brand.intro_text }}</div>
     </div>
     {% endif %}
 
@@ -937,7 +937,7 @@ PLAYER_HTML = """
     {% if brand and brand.is_clan %}
     <div class="card brand-card">
         <div class="brand-title"><span class="brand-badge">{{ brand.badge_text }}</span><span>{{ brand.brand_name }}</span></div>
-        <div class="brand-sub">클랜 패키지 서버 전용 상세 전적 화면입니다.</div>
+        <div class="brand-sub">{{ brand.intro_text }}</div>
     </div>
     {% endif %}
 
