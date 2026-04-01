@@ -356,7 +356,6 @@ BASE_STYLE = """
 </style>
 """
 
-# 홈 UI / 배치는 유지
 INDEX_HTML = """
 <!DOCTYPE html>
 <html lang="ko">
@@ -483,7 +482,6 @@ INDEX_HTML = """
 </html>
 """
 
-# 카드형 UI로 변경
 GUIDE_HTML = """
 <!DOCTYPE html>
 <html lang="ko">
@@ -739,6 +737,136 @@ async function submitPremiumRequest() {
     }
 }
 </script>
+</body>
+</html>
+"""
+
+SEASON_HTML = """
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>시즌 페이지</title>
+    """ + BASE_STYLE + """
+</head>
+<body>
+<div class="container">
+    <div class="page-title">🏆 시즌 페이지</div>
+
+    <div class="action-row">
+        <a href="/" class="action-btn btn-guide">🏠 홈으로</a>
+        <a href="/guide" class="action-btn btn-support">💿 명령어 / 프리미엄 소개</a>
+        <a href="/support" class="action-btn btn-season">💖 후원 / 프리미엄 신청</a>
+    </div>
+
+    <div class="card">
+        <form method="get" class="filters">
+            <select name="guild_id" style="max-width:320px;">
+                <option value="">서버 선택</option>
+                {% for guild in guilds %}
+                    <option value="{{ guild.guild_id }}" {% if guild_id == guild.guild_id|string %}selected{% endif %}>
+                        {{ guild.guild_name or ("Guild " ~ guild.guild_id) }}
+                    </option>
+                {% endfor %}
+            </select>
+
+            <select name="game" style="max-width:220px;">
+                <option value="">게임 선택</option>
+                {% for g in games %}
+                    <option value="{{ g }}" {% if selected_game == g %}selected{% endif %}>{{ g }}</option>
+                {% endfor %}
+            </select>
+
+            <button type="submit" class="submit-btn">조회</button>
+        </form>
+    </div>
+
+    {% if error_message %}
+    <div class="card">
+        <div class="empty-box">{{ error_message }}</div>
+    </div>
+    {% endif %}
+
+    {% if season %}
+    <div class="card">
+        <h2 class="section-title">현재 시즌 정보</h2>
+        <div class="pill">시즌 ID: {{ season.id }}</div>
+        <div class="pill">게임: {{ season.game }}</div>
+        <div class="pill">상태: {{ season.status }}</div>
+        <div class="pill">시작일: {{ season.started_at }}</div>
+        {% if season.ended_at %}
+        <div class="pill">종료일: {{ season.ended_at }}</div>
+        {% endif %}
+    </div>
+
+    <div class="top3">
+        <div class="top-card">
+            <h3>참가 인원</h3>
+            <p>{{ summary.player_count }}</p>
+        </div>
+        <div class="top-card">
+            <h3>평균 MMR</h3>
+            <p>{{ summary.avg_mmr }}</p>
+        </div>
+        <div class="top-card">
+            <h3>경기 수</h3>
+            <p>{{ summary.match_count }}</p>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2 class="section-title">🏅 시즌 랭킹</h2>
+        {% if ranking %}
+        <table>
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>닉네임</th>
+                    <th>유저 ID</th>
+                    <th>MMR</th>
+                    <th>승</th>
+                    <th>패</th>
+                    <th>승률</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in ranking %}
+                <tr>
+                    <td>{{ loop.index }}</td>
+                    <td>{{ row.display_name or "-" }}</td>
+                    <td>{{ row.user_id }}</td>
+                    <td>{{ row.mmr }}</td>
+                    <td>{{ row.win }}</td>
+                    <td>{{ row.lose }}</td>
+                    <td>{{ row.winrate }}%</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="empty-box">시즌 랭킹 데이터가 없습니다.</div>
+        {% endif %}
+    </div>
+
+    <div class="card">
+        <h2 class="section-title">📝 시즌 최근 경기</h2>
+        {% if matches %}
+            {% for match in matches %}
+            <div class="match-item">
+                <span class="pill">{{ match.game }}</span>
+                <span class="pill">승리팀 {{ match.winner_team }}</span>
+                <span class="pill">A평균 {{ match.team_a_avg }}</span>
+                <span class="pill">B평균 {{ match.team_b_avg }}</span>
+                <span class="pill">{{ match.created_at }}</span>
+            </div>
+            {% endfor %}
+        {% else %}
+            <div class="empty-box">시즌 경기 기록이 없습니다.</div>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
 </body>
 </html>
 """
@@ -1158,8 +1286,8 @@ def season_page():
             error_message = "Guild ID는 숫자만 입력해주세요."
         else:
             guild_id = int(guild_id_raw)
-            if not has_premium_plan(guild_id, 'supporter'):
-                error_message = '해당 서버는 서포터 이상 패키지가 아니어서 시즌 페이지를 사용할 수 없습니다.'
+            if not has_premium_plan(guild_id, "supporter"):
+                error_message = "해당 서버는 서포터 이상 패키지가 아니어서 시즌 페이지를 사용할 수 없습니다."
             else:
                 season = get_active_season(guild_id, selected_game)
                 if not season:
@@ -1319,6 +1447,8 @@ def api_admin_premium_requests():
                 "created_at": str(row["created_at"]),
                 "approved_at": str(row["approved_at"]) if row.get("approved_at") else None,
                 "approved_by": row.get("approved_by"),
+                "plan_key": row.get("plan_key"),
+                "plan_name": row.get("plan_name"),
             })
 
         return jsonify({"ok": True, "requests": requests_data})
