@@ -3,8 +3,6 @@ from discord.ext import commands
 from discord import app_commands
 
 from core.db import DB
-
-PLAN_LABELS = {"free": "무료", "supporter": "서포터", "pro": "프로", "clan": "클랜"}
 from cogs.recruit_cog import build_lobby_embed
 from core.matchmaking import auto_balance_players, calc_elo_delta
 
@@ -16,6 +14,26 @@ def format_team_block(team: list[dict]):
         f"{p['display_name']} ({p['mmr']}, {p['position']})"
         for p in team
     )
+
+
+async def send_operation_log(guild: discord.Guild, title: str, description: str, color: discord.Color = discord.Color.blue()):
+    settings = db.get_settings(guild.id)
+    if not settings:
+        return
+
+    channel_id = settings.get("log_channel_id")
+    if not channel_id:
+        return
+
+    channel = guild.get_channel(channel_id)
+    if not isinstance(channel, discord.TextChannel):
+        return
+
+    embed = discord.Embed(title=title, description=description, color=color)
+    try:
+        await channel.send(embed=embed)
+    except Exception:
+        pass
 
 
 def ensure_matches_table():
@@ -93,23 +111,6 @@ class Team(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    def _current_plan_label(self, guild_id: int) -> str:
-        info = db.get_premium_info(guild_id)
-        return info.get("plan_name") or PLAN_LABELS.get(info.get("plan_key", "free"), "무료")
-
-    async def _require_plan(self, interaction: discord.Interaction, required_plan_key: str, feature_name: str) -> bool:
-        if db.has_premium_plan(interaction.guild_id, required_plan_key):
-            return True
-
-        required_name = PLAN_LABELS.get(required_plan_key, required_plan_key)
-        current_name = self._current_plan_label(interaction.guild_id)
-        await interaction.response.send_message(
-            f"⚠️ {feature_name} 기능은 **{required_name} 패키지 이상**에서 사용할 수 있습니다.\n"
-            f"현재 서버 패키지: **{current_name}**",
-            ephemeral=True
-        )
-        return False
-
     async def refresh_message(self, channel: discord.TextChannel, channel_id: int):
         lobby = db.get_lobby(channel_id)
         if not lobby or not lobby["message_id"]:
@@ -172,6 +173,12 @@ class Team(commands.Cog):
                 f"차이: {abs(a_sum - b_sum)}"
             )
             await self.refresh_message(interaction.channel, interaction.channel_id)
+            await send_operation_log(
+                interaction.guild,
+                "운영 로그 · 팀 분배",
+                f"실행자: {interaction.user.mention}\n채널: {interaction.channel.mention}\n게임: {lobby['game']}\nA팀 총합: {a_sum}\nB팀 총합: {b_sum}\n차이: {abs(a_sum - b_sum)}",
+                discord.Color.orange()
+            )
 
         except Exception as e:
             print("밸런스팀 오류:", e)
@@ -184,7 +191,11 @@ class Team(commands.Cog):
     @app_commands.describe(승리팀="A 또는 B")
     async def record_result(self, interaction: discord.Interaction, 승리팀: str):
         try:
-            if not await self._require_plan(interaction, "pro", "결과기록 / ELO 반영"):
+            if not db.is_premium_guild(interaction.guild_id):
+                await interaction.response.send_message(
+                    "⚠️ ELO 기능은 프리미엄 서버 전용입니다.",
+                    ephemeral=True
+                )
                 return
 
             lobby = db.get_lobby(interaction.channel_id)
@@ -246,6 +257,12 @@ class Team(commands.Cog):
                 f"**ELO/MMR 변동**\n" + "\n".join(lines)
             )
             await self.refresh_message(interaction.channel, interaction.channel_id)
+            await send_operation_log(
+                interaction.guild,
+                "운영 로그 · 결과 기록",
+                f"실행자: {interaction.user.mention}\n채널: {interaction.channel.mention}\n게임: {lobby['game']}\n승리팀: {winner}팀\nA팀 평균: {avg_a}\nB팀 평균: {avg_b}",
+                discord.Color.green()
+            )
 
         except Exception as e:
             print("결과기록 오류:", e)
@@ -300,6 +317,13 @@ class Team(commands.Cog):
                 )
             else:
                 await interaction.response.send_message("내전 종료 완료")
+
+            await send_operation_log(
+                interaction.guild,
+                "운영 로그 · 내전 종료",
+                f"실행자: {interaction.user.mention}\n채널: {interaction.channel.mention}\n게임: {lobby['game']}\n호스트: <@{lobby['host_id']}>",
+                discord.Color.red()
+            )
 
         except Exception as e:
             print("내전종료 오류:", e)
