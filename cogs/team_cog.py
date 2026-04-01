@@ -3,6 +3,8 @@ from discord.ext import commands
 from discord import app_commands
 
 from core.db import DB
+
+PLAN_LABELS = {"free": "무료", "supporter": "서포터", "pro": "프로", "clan": "클랜"}
 from cogs.recruit_cog import build_lobby_embed
 from core.matchmaking import auto_balance_players, calc_elo_delta
 
@@ -91,6 +93,23 @@ class Team(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
+    def _current_plan_label(self, guild_id: int) -> str:
+        info = db.get_premium_info(guild_id)
+        return info.get("plan_name") or PLAN_LABELS.get(info.get("plan_key", "free"), "무료")
+
+    async def _require_plan(self, interaction: discord.Interaction, required_plan_key: str, feature_name: str) -> bool:
+        if db.has_premium_plan(interaction.guild_id, required_plan_key):
+            return True
+
+        required_name = PLAN_LABELS.get(required_plan_key, required_plan_key)
+        current_name = self._current_plan_label(interaction.guild_id)
+        await interaction.response.send_message(
+            f"⚠️ {feature_name} 기능은 **{required_name} 패키지 이상**에서 사용할 수 있습니다.\n"
+            f"현재 서버 패키지: **{current_name}**",
+            ephemeral=True
+        )
+        return False
+
     async def refresh_message(self, channel: discord.TextChannel, channel_id: int):
         lobby = db.get_lobby(channel_id)
         if not lobby or not lobby["message_id"]:
@@ -165,11 +184,7 @@ class Team(commands.Cog):
     @app_commands.describe(승리팀="A 또는 B")
     async def record_result(self, interaction: discord.Interaction, 승리팀: str):
         try:
-            if not db.is_premium_guild(interaction.guild_id):
-                await interaction.response.send_message(
-                    "⚠️ ELO 기능은 프리미엄 서버 전용입니다.",
-                    ephemeral=True
-                )
+            if not await self._require_plan(interaction, "pro", "결과기록 / ELO 반영"):
                 return
 
             lobby = db.get_lobby(interaction.channel_id)

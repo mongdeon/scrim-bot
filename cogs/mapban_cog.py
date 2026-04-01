@@ -5,6 +5,8 @@ from discord import app_commands
 
 from core.db import DB
 
+PLAN_LABELS = {"free": "무료", "supporter": "서포터", "pro": "프로", "clan": "클랜"}
+
 db = DB()
 
 VALORANT_MAPS = [
@@ -74,6 +76,13 @@ class MapPick(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.init_tables()
+
+    def _current_plan_label(self, guild_id: int) -> str:
+        info = db.get_premium_info(guild_id)
+        return info.get("plan_name") or PLAN_LABELS.get(info.get("plan_key", "free"), "무료")
+
+    def _has_supporter_or_higher(self, guild_id: int) -> bool:
+        return db.has_premium_plan(guild_id, "supporter")
 
     def init_tables(self):
         db.execute("""
@@ -176,8 +185,12 @@ class MapPick(commands.Cog):
     @app_commands.command(name="맵뽑기", description="현재 로비 게임 기준으로 맵을 랜덤 뽑기합니다. (프리미엄)")
     async def pick_map(self, interaction: discord.Interaction):
         try:
-            if not db.is_premium_guild(interaction.guild_id):
-                await interaction.response.send_message("프리미엄 서버만 맵 뽑기 기능을 사용할 수 있습니다.", ephemeral=True)
+            if not self._has_supporter_or_higher(interaction.guild_id):
+                current_name = self._current_plan_label(interaction.guild_id)
+                await interaction.response.send_message(
+                    f"맵 뽑기 기능은 **서포터 패키지 이상**에서 사용할 수 있습니다.\n현재 서버 패키지: **{current_name}**",
+                    ephemeral=True
+                )
                 return
 
             lobby = db.get_lobby(interaction.channel_id)

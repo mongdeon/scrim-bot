@@ -13,6 +13,7 @@ from core.db import (
     cleanup_expired_premium_guilds,
     count_active_premium_guilds,
     is_guild_premium,
+    has_premium_plan,
     get_active_season,
     get_season_ranking,
     get_season_matches,
@@ -925,8 +926,8 @@ LOCKED_HTML = """
 <body>
 <div class="container">
     <div class="card">
-        <h1>🔒 프리미엄 전용</h1>
-        <p>상세 전적 페이지는 프리미엄 서버 전용입니다.</p>
+        <h1>🔒 패키지 전용</h1>
+        <p>{{ message }}</p>
         <p><a href="/support">→ 프리미엄 신청하러 가기</a></p>
         <p><a href="/">← 홈으로 돌아가기</a></p>
     </div>
@@ -1272,8 +1273,8 @@ def season_page():
             error_message = "Guild ID는 숫자만 입력해주세요."
         else:
             guild_id = int(guild_id_raw)
-            if not is_guild_premium(guild_id):
-                error_message = "해당 서버는 프리미엄 서버가 아니어서 시즌 페이지를 사용할 수 없습니다."
+            if not has_premium_plan(guild_id, "supporter"):
+                error_message = "해당 서버는 서포터 패키지 이상이 아니어서 시즌 페이지를 사용할 수 없습니다."
             else:
                 season = get_active_season(guild_id, selected_game)
                 if not season:
@@ -1301,8 +1302,8 @@ def season_page():
 def player_page(guild_id, user_id):
     cleanup_expired_premium_guilds()
 
-    if not is_guild_premium(guild_id):
-        return render_template_string(LOCKED_HTML)
+    if not has_premium_plan(guild_id, "supporter"):
+        return render_template_string(LOCKED_HTML, message="상세 전적 페이지는 서포터 패키지 이상에서 사용할 수 있습니다.")
 
     with get_conn() as conn:
         with conn.cursor() as cur:

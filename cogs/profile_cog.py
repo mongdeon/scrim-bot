@@ -6,6 +6,14 @@ from core.db import DB
 
 db = DB()
 
+
+PLAN_LABELS = {
+    "free": "무료",
+    "supporter": "서포터",
+    "pro": "프로",
+    "clan": "클랜",
+}
+
 VALORANT_TIER_SCORES = {
     "아이언1": 100, "아이언2": 150, "아이언3": 200,
     "브론즈1": 250, "브론즈2": 300, "브론즈3": 350,
@@ -46,6 +54,10 @@ LOL_TIER_SCORES = {
 class Profile(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+
+    def _current_plan_label(self, guild_id: int) -> str:
+        info = db.get_premium_info(guild_id)
+        return info.get("plan_name") or PLAN_LABELS.get(info.get("plan_key", "free"), "무료")
 
     @app_commands.command(name="티어점수표", description="발로란트 티어 점수표를 보여줍니다.")
     async def tier_table(self, interaction: discord.Interaction):
@@ -107,6 +119,19 @@ class Profile(commands.Cog):
 
         await interaction.response.send_message(
             f"{interaction.user.mention} 롤 티어 등록 완료\n티어: **{tier}**\nMMR: **{mmr}**",
+            ephemeral=True
+        )
+
+    @app_commands.command(name="상세전적안내", description="상세 전적/시즌 페이지 패키지 조건을 안내합니다.")
+    async def premium_profile_guide(self, interaction: discord.Interaction):
+        current_name = self._current_plan_label(interaction.guild_id)
+        await interaction.response.send_message(
+            "웹사이트 패키지 안내\n"
+            f"- 현재 서버 패키지: **{current_name}**\n"
+            "- 상세 전적 페이지: **서포터 이상**\n"
+            "- 시즌 페이지: **서포터 이상**\n"
+            "- 시즌 생성/종료: **프로 이상**\n"
+            "- 결과기록 / ELO 반영: **프로 이상**",
             ephemeral=True
         )
 
