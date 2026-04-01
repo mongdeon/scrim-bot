@@ -79,10 +79,42 @@ class Profile(commands.Cog):
             WHERE guild_id = %s AND user_id = %s AND game = %s
         """, (mmr, display_name, guild_id, user_id, game))
 
+    def _build_tier_embed(self, title: str, description: str, scores: dict[str, int]) -> discord.Embed:
+        embed = discord.Embed(
+            title=title,
+            description=description,
+            color=discord.Color.blurple()
+        )
+
+        lines = [f"**{tier}** : `{score}`" for tier, score in scores.items()]
+        chunk = []
+        chunks = []
+
+        for line in lines:
+            if sum(len(x) + 1 for x in chunk) + len(line) > 900:
+                chunks.append("\n".join(chunk))
+                chunk = [line]
+            else:
+                chunk.append(line)
+
+        if chunk:
+            chunks.append("\n".join(chunk))
+
+        for idx, text in enumerate(chunks, start=1):
+            field_name = "티어 점수표" if idx == 1 else f"티어 점수표 {idx}"
+            embed.add_field(name=field_name, value=text, inline=False)
+
+        embed.set_footer(text="점수표 메세지는 서버 전체에 공개됩니다.")
+        return embed
+
     @app_commands.command(name="티어점수표", description="발로란트 티어 점수표를 보여줍니다.")
     async def tier_table(self, interaction: discord.Interaction):
-        text = "\n".join([f"{k}: {v}" for k, v in VALORANT_TIER_SCORES.items()])
-        await interaction.response.send_message(f"```{text}```", ephemeral=True)
+        embed = self._build_tier_embed(
+            "🎯 발로란트 티어 점수표",
+            "발로란트 티어별 MMR 기준표입니다.",
+            VALORANT_TIER_SCORES
+        )
+        await interaction.response.send_message(embed=embed)
 
     @app_commands.command(name="발로티어등록", description="발로란트 티어를 등록하고 MMR로 반영합니다.")
     async def valorant_tier_register(self, interaction: discord.Interaction, 티어: str):
@@ -108,8 +140,12 @@ class Profile(commands.Cog):
 
     @app_commands.command(name="옵치티어점수표", description="오버워치 티어 점수표를 보여줍니다.")
     async def overwatch_tier_table(self, interaction: discord.Interaction):
-        text = "\n".join([f"{k}: {v}" for k, v in OVERWATCH_TIER_SCORES.items()])
-        await interaction.response.send_message(f"```{text}```", ephemeral=True)
+        embed = self._build_tier_embed(
+            "🛡️ 오버워치 티어 점수표",
+            "오버워치 티어별 MMR 기준표입니다.",
+            OVERWATCH_TIER_SCORES
+        )
+        await interaction.response.send_message(embed=embed)
 
     @app_commands.command(name="옵치티어등록", description="오버워치 티어를 등록하고 MMR로 반영합니다.")
     async def overwatch_tier_register(self, interaction: discord.Interaction, 티어: str):
@@ -135,8 +171,12 @@ class Profile(commands.Cog):
 
     @app_commands.command(name="롤티어점수표", description="롤 티어 점수표를 보여줍니다.")
     async def lol_tier_table(self, interaction: discord.Interaction):
-        text = "\n".join([f"{k}: {v}" for k, v in LOL_TIER_SCORES.items()])
-        await interaction.response.send_message(f"```{text}```", ephemeral=True)
+        embed = self._build_tier_embed(
+            "🧠 롤 티어 점수표",
+            "리그 오브 레전드 티어별 MMR 기준표입니다.",
+            LOL_TIER_SCORES
+        )
+        await interaction.response.send_message(embed=embed)
 
     @app_commands.command(name="롤티어등록", description="롤 티어를 등록하고 MMR로 반영합니다.")
     async def lol_tier_register(self, interaction: discord.Interaction, 티어: str):
