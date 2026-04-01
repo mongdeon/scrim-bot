@@ -487,6 +487,9 @@ INDEX_HTML = """
             {{ brand.intro_text }}<br>
             패키지: <strong>{{ brand.plan_name }}</strong>
         </div>
+        <div class="action-row">
+        <a href="/clan/{{ selected_guild_id }}" class="action-btn btn-admin">👑 클랜 페이지</a>
+    </div>
         <div class="preview-grid">
             <div class="preview-card">
                 <h3>🚀 시작 공지 미리보기</h3>
@@ -874,6 +877,9 @@ SEASON_HTML = """
     <div class="card brand-card">
         <div class="brand-title"><span class="brand-badge">{{ brand.badge_text }}</span><span>{{ brand.brand_name }}</span></div>
         <div class="brand-sub">{{ brand.intro_text }}</div>
+        <div class="action-row">
+        <a href="/clan/{{ guild_id }}" class="action-btn btn-admin">👑 클랜 페이지</a>
+    </div>
         <div class="preview-grid">
             <div class="preview-card">
                 <h3>🏆 시즌 시작 공지 예시</h3>
@@ -1015,6 +1021,9 @@ PLAYER_HTML = """
     <div class="card brand-card">
         <div class="brand-title"><span class="brand-badge">{{ brand.badge_text }}</span><span>{{ brand.brand_name }}</span></div>
         <div class="brand-sub">{{ brand.intro_text }}</div>
+        <div class="action-row">
+        <a href="/clan/{{ player.guild_id }}" class="action-btn btn-admin">👑 클랜 페이지</a>
+    </div>
         <div class="preview-grid">
             <div class="preview-card">
                 <h3>👀 시작 공지 미리보기</h3>
@@ -1073,6 +1082,133 @@ PLAYER_HTML = """
 </body>
 </html>
 """
+
+CLAN_PAGE_HTML = """
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>클랜 페이지</title>
+    """ + BASE_STYLE + """
+</head>
+<body>
+<div class="container">
+    <div class="page-title">👑 클랜 페이지</div>
+
+    <div class="action-row">
+        <a href="/" class="action-btn btn-guide">🏠 홈으로</a>
+        <a href="/guide" class="action-btn btn-support">💿 명령어 / 프리미엄 소개</a>
+        <a href="/support" class="action-btn btn-season">💖 후원 / 프리미엄 신청</a>
+        <a href="/season?guild_id={{ guild_id }}&game={{ default_game }}" class="action-btn btn-admin">🏆 시즌 페이지</a>
+    </div>
+
+    <div class="card brand-card">
+        <div class="brand-title">
+            <span class="brand-badge">{{ brand.badge_text }}</span>
+            <span>{{ brand.brand_name }}</span>
+        </div>
+        <div class="brand-sub">
+            {{ brand.intro_text }}<br>
+            패키지: <strong>{{ brand.plan_name }}</strong>
+        </div>
+    </div>
+
+    <div class="card banner-card">
+        <h2 class="section-title">📢 클랜 전용 안내</h2>
+        <div class="feature-box">이 페이지는 클랜 패키지 서버 전용 독립 페이지입니다.
+웹 브랜딩, 디스코드 공지 템플릿, 공지 미리보기 흐름을 한 화면에서 확인할 수 있습니다.</div>
+    </div>
+
+    <div class="grid-2">
+        <div class="card">
+            <h2 class="section-title">🚀 시작 공지 미리보기</h2>
+            <div class="preview-text">{{ start_preview }}</div>
+        </div>
+        <div class="card">
+            <h2 class="section-title">🏁 결과 공지 미리보기</h2>
+            <div class="preview-text">{{ result_preview }}</div>
+        </div>
+    </div>
+
+    <div class="grid-2">
+        <div class="card">
+            <h2 class="section-title">🏆 시즌 요약</h2>
+            {% if season %}
+            <div class="pill">게임: {{ season.game }}</div>
+            <div class="pill">시즌명: {{ season.season_name }}</div>
+            <div class="pill">상태: {% if season.is_active %}진행 중{% else %}종료{% endif %}</div>
+            <div class="pill">참가자 수: {{ summary.player_count }}</div>
+            <div class="pill">평균 MMR: {{ summary.avg_mmr }}</div>
+            <div class="pill">최고 MMR: {{ summary.top_mmr }}</div>
+            <div class="pill">경기 수: {{ summary.match_count }}</div>
+            {% else %}
+            <div class="empty-box">활성 시즌이 없습니다.</div>
+            {% endif %}
+        </div>
+        <div class="card">
+            <h2 class="section-title">🎮 서버 정보</h2>
+            <div class="pill">Guild ID: {{ guild_id }}</div>
+            <div class="pill">대표 게임: {{ default_game }}</div>
+            <div class="feature-box">클랜 공지 채널, 시작 템플릿, 결과 템플릿은 디스코드와 웹사이트에서 같은 설정값을 사용합니다.</div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2 class="section-title">📝 최근 경기</h2>
+        {% if recent_matches %}
+            {% for match in recent_matches %}
+            <div class="match-item">
+                <span class="pill">{{ match.game }}</span>
+                <span class="pill">승리팀 {{ match.winner_team }}</span>
+                <span class="pill">A평균 {{ match.team_a_avg }}</span>
+                <span class="pill">B평균 {{ match.team_b_avg }}</span>
+                <span class="pill">{{ match.created_at }}</span>
+            </div>
+            {% endfor %}
+        {% else %}
+            <div class="empty-box">최근 경기 데이터가 없습니다.</div>
+        {% endif %}
+    </div>
+
+    <div class="card">
+        <h2 class="section-title">🥇 최근 시즌 랭킹 TOP 10</h2>
+        {% if ranking %}
+        <table>
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>닉네임</th>
+                    <th>유저 ID</th>
+                    <th>MMR</th>
+                    <th>승</th>
+                    <th>패</th>
+                    <th>승률</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in ranking[:10] %}
+                <tr>
+                    <td>{{ loop.index }}</td>
+                    <td>{{ row.display_name or '-' }}</td>
+                    <td>{{ row.user_id }}</td>
+                    <td>{{ row.mmr }}</td>
+                    <td>{{ row.win }}</td>
+                    <td>{{ row.lose }}</td>
+                    <td>{{ row.winrate }}%</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="empty-box">표시할 시즌 랭킹 데이터가 없습니다.</div>
+        {% endif %}
+    </div>
+</div>
+</body>
+</html>
+"""
+
 
 LOCKED_HTML = """
 <!DOCTYPE html>
@@ -1523,6 +1659,96 @@ def player_page(guild_id, user_id):
         brand=brand,
         start_preview=start_preview,
         result_preview=result_preview
+    )
+
+
+@app.route("/clan/<int:guild_id>")
+def clan_page(guild_id):
+    cleanup_expired_premium_guilds()
+
+    brand = get_clan_branding(guild_id)
+    if not brand or not brand.get("is_clan"):
+        return render_template_string(
+            get_brand_css(brand) + LOCKED_HTML,
+            message="독립된 클랜 페이지는 클랜 패키지 서버 전용입니다.",
+            required_plan_label=get_plan_label("clan")
+        )
+
+    default_game = "valorant"
+    recent_matches = []
+    season = None
+    ranking = []
+    summary = {"player_count": 0, "avg_mmr": 0, "top_mmr": 0, "match_count": 0}
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, guild_id, game, winner_team, team_a_avg, team_b_avg, created_at
+                FROM matches
+                WHERE guild_id = %s
+                ORDER BY id DESC
+                LIMIT 10
+                """,
+                (guild_id,)
+            )
+            recent_matches = cur.fetchall()
+
+            cur.execute(
+                """
+                SELECT game, COUNT(*) AS cnt
+                FROM player_game_stats
+                WHERE guild_id = %s
+                GROUP BY game
+                ORDER BY cnt DESC, game ASC
+                LIMIT 1
+                """,
+                (guild_id,)
+            )
+            game_row = cur.fetchone()
+            if game_row and game_row.get("game"):
+                default_game = game_row["game"]
+
+    start_preview, result_preview = build_brand_previews(guild_id, brand, default_game.upper())
+
+    season = get_active_season(guild_id, default_game)
+    if not season:
+        latest_seasons = get_season_matches  # keep name referenced? no-op
+    if season:
+        ranking = get_season_ranking(guild_id, default_game, season["id"], limit=10)
+        summary = get_season_stats_summary(guild_id, default_game, season["id"])
+    else:
+        # 활성 시즌이 없으면 가장 최근 시즌을 찾아서 요약만 표시 시도
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id, guild_id, game, season_name, is_active, started_at, ended_at
+                    FROM seasons
+                    WHERE guild_id = %s
+                    ORDER BY id DESC
+                    LIMIT 1
+                    """,
+                    (guild_id,)
+                )
+                season = cur.fetchone()
+        if season:
+            default_game = season["game"]
+            ranking = get_season_ranking(guild_id, season["game"], season["id"], limit=10)
+            summary = get_season_stats_summary(guild_id, season["game"], season["id"])
+            start_preview, result_preview = build_brand_previews(guild_id, brand, season["game"].upper())
+
+    return render_template_string(
+        get_brand_css(brand) + CLAN_PAGE_HTML,
+        guild_id=guild_id,
+        brand=brand,
+        start_preview=start_preview,
+        result_preview=result_preview,
+        recent_matches=recent_matches,
+        season=season,
+        ranking=ranking,
+        summary=summary,
+        default_game=default_game,
     )
 
 
