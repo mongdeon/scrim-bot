@@ -783,6 +783,31 @@ async function submitPremiumRequest() {
 </html>
 """
 
+SEASON_HTML = """
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>시즌 페이지</title>
+    """
+
+PLAYER_HTML = """
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>유저 전적</title>
+    """
+
+LOCKED_HTML = """
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>프리미엄 전용</title>
+    """
+
 ADMIN_PREMIUM_HTML = """
 <!DOCTYPE html>
 <html lang="ko">
