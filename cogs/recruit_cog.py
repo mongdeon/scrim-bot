@@ -1,10 +1,9 @@
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 from discord import app_commands
-from datetime import datetime
-from zoneinfo import ZoneInfo
 
 from core.db import DB
+from datetime import datetime
 from core.matchmaking import auto_balance_players
 
 db = DB()
@@ -23,14 +22,21 @@ PUBG_MODE_OPTIONS = [
     app_commands.Choice(name="스쿼드", value="squad"),
 ]
 
-KST = ZoneInfo("Asia/Seoul")
-
 POSITION_MAP = {
     "valorant": ["타격대", "척후대", "감시자", "전략가", "상관없음"],
     "lol": ["탑", "정글", "미드", "원딜", "서폿", "상관없음"],
     "pubg": ["IGL", "Entry", "Support", "Scout", "상관없음"],
-    "overwatch": ["돌격", "딜러", "지원", "상관없음"],
+    "overwatch": ["돌격", "딜러", "지원"],
 }
+
+OVERWATCH_ROLES = ["돌격", "딜러", "지원"]
+
+def parse_date_time(date_text: str | None, time_text: str | None):
+    if not date_text and not time_text:
+        return None
+    if not date_text or not time_text:
+        raise ValueError("날짜와 시간은 함께 입력해야 합니다.")
+    return datetime.strptime(f"{date_text.strip()} {time_text.strip()}", "%Y-%m-%d %H:%M")
 
 async def send_operation_log(guild: discord.Guild, title: str, description: str, color: discord.Color = discord.Color.blue()):
     settings = db.get_settings(guild.id)
@@ -51,11 +57,6 @@ async def send_operation_log(guild: discord.Guild, title: str, description: str,
     except Exception:
         pass
 
-
-
-def parse_schedule_datetime(date_text: str, time_text: str):
-    dt = datetime.strptime(f"{date_text} {time_text}", "%Y-%m-%d %H:%M")
-    return dt.replace(tzinfo=KST).replace(tzinfo=None)
 
 
 def member_has_access(member: discord.Member) -> bool:
@@ -147,14 +148,6 @@ def build_lobby_embed(lobby: dict, players: list[dict], team_a=None, team_b=None
         embed.add_field(name="팀 인원", value=f"{lobby['team_size']} vs {lobby['team_size']}", inline=True)
         embed.add_field(name="현재 인원", value=f"{len(players)} / {need}", inline=True)
 
-    scheduled_text = "미설정"
-    if lobby.get("scheduled_at"):
-        try:
-            scheduled_text = lobby["scheduled_at"].strftime("%Y-%m-%d %H:%M")
-        except Exception:
-            scheduled_text = str(lobby["scheduled_at"])
-    embed.add_field(name="내전 시간", value=scheduled_text, inline=False)
-
     if players:
         if is_pubg_lobby(lobby) and lobby["team_size"] in [2, 4]:
             grouped = {}
@@ -176,16 +169,23 @@ def build_lobby_embed(lobby: dict, players: list[dict], team_a=None, team_b=None
                 group_idx += 1
 
             for player in no_party_rows:
-                lines.append(f"{player['display_name']} | MMR {player['mmr']} | {player['position']}")
+                pos_text = player['position'] if not player.get('sub_position') else f"{player['position']} / {player['sub_position']}"
+                lines.append(f"{player['display_name']} | MMR {player['mmr']} | {pos_text}")
 
             embed.add_field(name="참가자", value="\n".join(lines[:25]), inline=False)
         else:
             lines = []
             for idx, player in enumerate(players, start=1):
-                lines.append(f"{idx}. {player['display_name']} | MMR {player['mmr']} | {player['position']}")
+                pos_text = player['position'] if not player.get('sub_position') else f"{player['position']} / {player['sub_position']}"
+                lines.append(f"{idx}. {player['display_name']} | MMR {player['mmr']} | {pos_text}")
             embed.add_field(name="참가자", value="\n".join(lines[:25]), inline=False)
     else:
         embed.add_field(name="참가자", value="아직 없음", inline=False)
+
+    if lobby.get("scheduled_at"):
+        embed.add_field(name="내전 시간", value=str(lobby["scheduled_at"])[:16], inline=True)
+    if lobby.get("recruit_close_at"):
+        embed.add_field(name="모집 마감", value=str(lobby["recruit_close_at"])[:16], inline=True)
 
     if is_pubg_lobby(lobby) and lobby["team_size"] in [2, 4]:
         party_lines = build_party_lines(lobby["channel_id"])
@@ -227,85 +227,70 @@ class JoinModal(discord.ui.Modal, title="내전 참가"):
         self.cog = cog
 
         pos_hint = ", ".join(POSITION_MAP.get(game_key, ["상관없음"]))
-
-        self.position = discord.ui.TextInput(
-            label="포지션",
-            placeholder=pos_hint,
-            required=True,
-            max_length=20
-        )
-        self.mmr = discord.ui.TextInput(
-            label="MMR",
-            placeholder="예: 1000",
-            required=True,
-            max_length=10
-        )
-
-        self.add_item(self.position)
-        self.add_item(self.mmr)
+        self.main_position = discord.ui.TextInput(label="주 포지션", placeholder=pos_hint, required=True, max_length=20)
+        self.sub_position = discord.ui.TextInput(label="부 포지션", placeholder=pos_hint, required=False, max_length=20)
+        self.add_item(self.main_position)
+        self.add_item(self.sub_position)
+        if game_key != "overwatch":
+            self.mmr = discord.ui.TextInput(label="MMR", placeholder="예: 1000", required=True, max_length=10)
+            self.add_item(self.mmr)
 
     async def on_submit(self, interaction: discord.Interaction):
         lobby = db.get_lobby(self.channel_id)
         if not lobby:
             await interaction.response.send_message("로비가 없습니다.", ephemeral=True)
             return
-
         if lobby["status"] != "open":
             await interaction.response.send_message("현재 모집 중이 아닙니다.", ephemeral=True)
             return
 
-        position = self.position.value.strip()
-        mmr_raw = self.mmr.value.strip()
-
-        if position not in POSITION_MAP.get(self.game_key, []):
-            await interaction.response.send_message(
-                f"가능한 포지션: {', '.join(POSITION_MAP.get(self.game_key, []))}",
-                ephemeral=True
-            )
+        main_position = self.main_position.value.strip()
+        sub_position = self.sub_position.value.strip() or None
+        valid_positions = POSITION_MAP.get(self.game_key, [])
+        if main_position not in valid_positions:
+            await interaction.response.send_message(f"가능한 주 포지션: {', '.join(valid_positions)}", ephemeral=True)
+            return
+        if sub_position and sub_position not in valid_positions:
+            await interaction.response.send_message(f"가능한 부 포지션: {', '.join(valid_positions)}", ephemeral=True)
+            return
+        if sub_position and sub_position == main_position:
+            await interaction.response.send_message("주 포지션과 부 포지션은 다르게 입력해주세요.", ephemeral=True)
             return
 
-        if not mmr_raw.isdigit():
-            await interaction.response.send_message("MMR은 숫자로 입력해주세요.", ephemeral=True)
-            return
-
-        mmr = int(mmr_raw)
-        if mmr < 1 or mmr > 9999:
-            await interaction.response.send_message("MMR은 1~9999 사이로 입력해주세요.", ephemeral=True)
-            return
+        if self.game_key == "overwatch":
+            mmr = db.get_overwatch_role_mmr(interaction.guild_id, interaction.user.id, main_position)
+            if mmr is None:
+                await interaction.response.send_message("오버워치는 역할군별 MMR 등록이 필요합니다. `/옵치티어등록 역할군:<주포지션> 티어:<티어>` 를 먼저 사용해주세요.", ephemeral=True)
+                return
+            ow_role = main_position
+        else:
+            mmr_raw = self.mmr.value.strip()
+            if not mmr_raw.isdigit():
+                await interaction.response.send_message("MMR은 숫자로 입력해주세요.", ephemeral=True)
+                return
+            mmr = int(mmr_raw)
+            if mmr < 1 or mmr > 9999:
+                await interaction.response.send_message("MMR은 1~9999 사이로 입력해주세요.", ephemeral=True)
+                return
+            ow_role = None
 
         party_id = None
         if lobby["game"] == "pubg" and lobby["team_size"] in [2, 4]:
             party = db.get_user_party(self.channel_id, interaction.user.id)
             if not party:
-                await interaction.response.send_message(
-                    "배그 듀오/스쿼드는 먼저 파티를 만들어야 참가할 수 있습니다.\n`/파티생성` 또는 `/파티참가`를 사용하세요.",
-                    ephemeral=True
-                )
+                await interaction.response.send_message("배그 듀오/스쿼드는 먼저 파티를 만들어야 참가할 수 있습니다.\n`/파티생성` 또는 `/파티참가`를 사용하세요.", ephemeral=True)
                 return
-
             members = db.get_party_members(self.channel_id, party["id"])
             if len(members) != lobby["team_size"]:
-                await interaction.response.send_message(
-                    f"현재 파티 인원이 {len(members)}명입니다. {lobby['team_size']}명 파티를 완성한 뒤 참가하세요.",
-                    ephemeral=True
-                )
+                await interaction.response.send_message(f"현재 파티 인원이 {len(members)}명입니다. {lobby['team_size']}명 파티를 완성한 뒤 참가하세요.", ephemeral=True)
                 return
-
             party_id = party["id"]
 
-        db.add_lobby_player(
-            self.channel_id,
-            interaction.user.id,
-            interaction.user.display_name,
-            mmr,
-            position,
-            party_id=party_id
-        )
+        db.add_lobby_player(self.channel_id, interaction.user.id, interaction.user.display_name, mmr, main_position, sub_position=sub_position, ow_role=ow_role, party_id=party_id)
         db.ensure_player(interaction.guild_id, interaction.user.id, mmr, interaction.user.display_name)
         db.ensure_player_game(interaction.guild_id, interaction.user.id, lobby["game"], mmr, interaction.user.display_name)
 
         await interaction.response.send_message("참가 완료", ephemeral=True)
-
         await self.cog.refresh_lobby_message(interaction.channel, self.channel_id)
         await self.cog.try_auto_balance_and_start(interaction.channel, self.channel_id)
 
@@ -385,6 +370,35 @@ class RecruitView(discord.ui.View):
 class Recruit(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        db.execute("ALTER TABLE lobbies ADD COLUMN IF NOT EXISTS scheduled_at TIMESTAMP")
+        db.execute("ALTER TABLE lobbies ADD COLUMN IF NOT EXISTS recruit_close_at TIMESTAMP")
+        db.execute("ALTER TABLE lobbies ADD COLUMN IF NOT EXISTS close_notice_sent BOOLEAN NOT NULL DEFAULT FALSE")
+        db.execute("ALTER TABLE lobby_players ADD COLUMN IF NOT EXISTS sub_position VARCHAR(50)")
+        db.execute("ALTER TABLE lobby_players ADD COLUMN IF NOT EXISTS ow_role VARCHAR(20)")
+        self.recruit_close_loop.start()
+
+    def cog_unload(self):
+        self.recruit_close_loop.cancel()
+
+    @tasks.loop(minutes=1)
+    async def recruit_close_loop(self):
+        for lobby in db.get_due_close_notice_lobbies():
+            guild = self.bot.get_guild(lobby["guild_id"])
+            channel = guild.get_channel(lobby["channel_id"]) if guild else None
+            if channel:
+                await channel.send(f"⏰ 인원 모집 마감 10분 전입니다. 마감 시간: **{str(lobby['recruit_close_at'])[:16]}**")
+            db.mark_close_notice_sent(lobby["channel_id"])
+        for lobby in db.get_due_close_lobbies():
+            guild = self.bot.get_guild(lobby["guild_id"])
+            channel = guild.get_channel(lobby["channel_id"]) if guild else None
+            db.set_lobby_status(lobby["channel_id"], "closed")
+            if channel:
+                await self.refresh_lobby_message(channel, lobby["channel_id"])
+                await channel.send("🔒 인원 모집 시간이 종료되었습니다.")
+
+    @recruit_close_loop.before_loop
+    async def before_recruit_close_loop(self):
+        await self.bot.wait_until_ready()
 
     async def refresh_lobby_message(self, channel: discord.TextChannel, channel_id: int):
         lobby = db.get_lobby(channel_id)
@@ -589,10 +603,12 @@ class Recruit(commands.Cog):
     @app_commands.describe(
         게임="게임 선택",
         팀인원="한 팀 인원 수 (배그는 입력하지 않음)",
-        배그형식="배그일 때 솔로 / 듀오 / 스쿼드",
-        모집인원="배그 총 모집 인원",
         날짜="내전 날짜 (YYYY-MM-DD)",
-        시간="내전 시간 (HH:MM, 24시간제)"
+        시간="내전 시간 (HH:MM)",
+        모집마감날짜="인원 모집 마감 날짜 (YYYY-MM-DD)",
+        모집마감시간="인원 모집 마감 시간 (HH:MM)",
+        배그형식="배그일 때 솔로 / 듀오 / 스쿼드",
+        모집인원="배그 총 모집 인원"
     )
     @app_commands.choices(게임=GAME_OPTIONS, 배그형식=PUBG_MODE_OPTIONS)
     async def create(
@@ -600,10 +616,12 @@ class Recruit(commands.Cog):
         interaction: discord.Interaction,
         게임: app_commands.Choice[str],
         팀인원: int | None = None,
-        배그형식: app_commands.Choice[str] | None = None,
-        모집인원: int | None = None,
         날짜: str | None = None,
-        시간: str | None = None
+        시간: str | None = None,
+        모집마감날짜: str | None = None,
+        모집마감시간: str | None = None,
+        배그형식: app_commands.Choice[str] | None = None,
+        모집인원: int | None = None
     ):
         try:
             if not member_has_access(interaction.user):
@@ -618,17 +636,15 @@ class Recruit(commands.Cog):
             if db.get_lobby(interaction.channel_id):
                 await interaction.response.send_message("이미 이 채널에 로비가 있습니다.", ephemeral=True)
                 return
+            if not db.has_premium_plan(interaction.guild_id, "supporter") and db.count_active_guild_lobbies(interaction.guild_id) >= 2:
+                await interaction.response.send_message("무료 서버는 동시에 최대 2개의 내전만 생성할 수 있습니다. 2개 이상은 서포터 이상 패키지에서 사용 가능합니다.", ephemeral=True)
+                return
 
-            scheduled_at = None
-            if 날짜 and 시간:
-                try:
-                    scheduled_at = parse_schedule_datetime(날짜, 시간)
-                except Exception:
-                    await interaction.response.send_message(
-                        "날짜/시간 형식이 잘못되었습니다. 예: 날짜 `2026-04-05`, 시간 `21:30`",
-                        ephemeral=True
-                    )
-                    return
+            scheduled_at = parse_date_time(날짜, 시간)
+            recruit_close_at = parse_date_time(모집마감날짜, 모집마감시간)
+            if recruit_close_at and scheduled_at and recruit_close_at >= scheduled_at:
+                await interaction.response.send_message("모집 마감 시간은 내전 시간보다 이전이어야 합니다.", ephemeral=True)
+                return
 
             final_team_size: int | None = 팀인원
             final_total_slots: int | None = None
@@ -690,7 +706,8 @@ class Recruit(commands.Cog):
                 게임.value,
                 final_team_size,
                 total_slots=final_total_slots,
-                scheduled_at=scheduled_at
+                scheduled_at=scheduled_at,
+                recruit_close_at=recruit_close_at
             )
 
             lobby = db.get_lobby(interaction.channel_id)
@@ -705,14 +722,12 @@ class Recruit(commands.Cog):
             if 게임.value == "pubg":
                 log_desc = (
                     f"생성자: {interaction.user.mention}\n채널: {interaction.channel.mention}\n"
-                    f"게임: PUBG\n형식: {배그형식.name if 배그형식 else '-'}\n총 모집 인원: {final_total_slots}\n"
-                    f"내전 시간: {날짜 or '-'} {시간 or '-'}"
+                    f"게임: PUBG\n형식: {배그형식.name if 배그형식 else '-'}\n총 모집 인원: {final_total_slots}"
                 )
             else:
                 log_desc = (
                     f"생성자: {interaction.user.mention}\n채널: {interaction.channel.mention}\n"
-                    f"게임: {게임.name}\n팀 인원: {final_team_size} vs {final_team_size}\n"
-                    f"내전 시간: {날짜 or '-'} {시간 or '-'}"
+                    f"게임: {게임.name}\n팀 인원: {final_team_size} vs {final_team_size}"
                 )
 
             await send_operation_log(
@@ -728,6 +743,26 @@ class Recruit(commands.Cog):
                 await interaction.followup.send(f"오류 발생: {e}", ephemeral=True)
             else:
                 await interaction.response.send_message(f"오류 발생: {e}", ephemeral=True)
+
+
+    @app_commands.command(name="내전시간수정", description="현재 내전의 날짜/시간과 모집 마감 시간을 수정합니다.")
+    @app_commands.describe(날짜="내전 날짜 (YYYY-MM-DD)", 시간="내전 시간 (HH:MM)", 모집마감날짜="모집 마감 날짜 (YYYY-MM-DD)", 모집마감시간="모집 마감 시간 (HH:MM)")
+    async def edit_lobby_time(self, interaction: discord.Interaction, 날짜: str | None = None, 시간: str | None = None, 모집마감날짜: str | None = None, 모집마감시간: str | None = None):
+        try:
+            lobby = db.get_lobby(interaction.channel_id)
+            if not lobby:
+                await interaction.response.send_message("이 채널에 로비가 없습니다.", ephemeral=True)
+                return
+            scheduled_at = parse_date_time(날짜, 시간)
+            recruit_close_at = parse_date_time(모집마감날짜, 모집마감시간)
+            if recruit_close_at and scheduled_at and recruit_close_at >= scheduled_at:
+                await interaction.response.send_message("모집 마감 시간은 내전 시간보다 이전이어야 합니다.", ephemeral=True)
+                return
+            db.update_lobby_times(interaction.channel_id, scheduled_at, recruit_close_at)
+            await self.refresh_lobby_message(interaction.channel, interaction.channel_id)
+            await interaction.response.send_message("내전 시간/모집 마감 시간이 수정되었습니다.", ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"오류 발생: {e}", ephemeral=True)
 
     @app_commands.command(name="파티생성", description="배그 듀오/스쿼드 파티를 생성합니다.")
     async def create_party(self, interaction: discord.Interaction):

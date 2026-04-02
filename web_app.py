@@ -22,7 +22,6 @@ from core.db import (
     get_registered_guilds,
     get_plan_label,
     get_clan_branding,
-    render_clan_template,
 )
 
 app = Flask(__name__)
@@ -38,8 +37,8 @@ PREMIUM_DAYS = 30
 
 PREMIUM_PACKAGES = {
     "supporter": {"name": "서포터", "price": 3000, "days": 30},
-    "pro": {"name": "프로", "price": 4990, "days": 30},
-    "clan": {"name": "클랜", "price": 7990, "days": 30},
+    "pro": {"name": "프로", "price": 5000, "days": 30},
+    "clan": {"name": "클랜", "price": 10000, "days": 30},
 }
 
 init_premium_tables()
@@ -374,45 +373,11 @@ BASE_STYLE = """
         line-height: 1.8;
     }
 
-    .preview-grid {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 16px;
-        margin-top: 16px;
-    }
-
-    .preview-card {
-        background: rgba(8, 22, 47, 0.68);
-        border: 1px solid rgba(255,255,255,0.08);
-        border-radius: 16px;
-        padding: 16px;
-    }
-
-    .preview-card h3 {
-        margin: 0 0 10px 0;
-        font-size: 16px;
-    }
-
-    .preview-text {
-        white-space: pre-line;
-        line-height: 1.75;
-        color: #e2e8f0;
-        font-size: 14px;
-    }
-
-    .banner-card {
-        border-left: 5px solid var(--brand-color, #8b5cf6);
-        background: linear-gradient(135deg, rgba(139,92,246,0.14), rgba(31,47,73,0.98));
-    }
-
     @media (max-width: 900px) {
         .top3 {
             grid-template-columns: 1fr;
         }
         .grid-2 {
-            grid-template-columns: 1fr;
-        }
-        .preview-grid {
             grid-template-columns: 1fr;
         }
     }
@@ -438,32 +403,6 @@ def get_selected_guild_brand(guild_id_raw: str):
     return get_clan_branding(int(guild_id_raw))
 
 
-def build_brand_previews(guild_id: int | None, brand: dict | None, game_text: str = 'VALORANT', channel_text: str = '#클랜공지'):
-    if not guild_id or not brand or not brand.get('is_clan'):
-        return '', ''
-
-    start_preview = render_clan_template(
-        guild_id,
-        'start',
-        game=game_text,
-        channel=channel_text,
-        mode_text='예약 내전 자동 시작',
-        team_a='에이스 / 브라보 / 찰리 / 델타 / 에코',
-        team_b='폭스 / 골프 / 호텔 / 인디아 / 줄리엣',
-        difference='45'
-    )
-    result_preview = render_clan_template(
-        guild_id,
-        'result',
-        game=game_text,
-        winner_team='A',
-        avg_a='1012',
-        avg_b='998',
-        channel=channel_text
-    )
-    return start_preview, result_preview
-
-
 INDEX_HTML = """
 <!DOCTYPE html>
 <html lang="ko">
@@ -484,27 +423,9 @@ INDEX_HTML = """
             <span>{{ brand.brand_name }}</span>
         </div>
         <div class="brand-sub">
-            {{ brand.intro_text }}<br>
+            클랜 패키지 서버 전용 브랜딩이 적용된 전적 화면입니다.<br>
             패키지: <strong>{{ brand.plan_name }}</strong>
         </div>
-        <div class="action-row">
-        <a href="/clan/{{ selected_guild_id }}" class="action-btn btn-admin">👑 클랜 페이지</a>
-    </div>
-        <div class="preview-grid">
-            <div class="preview-card">
-                <h3>🚀 시작 공지 미리보기</h3>
-                <div class="preview-text">{{ start_preview }}</div>
-            </div>
-            <div class="preview-card">
-                <h3>🏁 결과 공지 미리보기</h3>
-                <div class="preview-text">{{ result_preview }}</div>
-            </div>
-        </div>
-    </div>
-    <div class="card banner-card">
-        <h2 class="section-title">📢 클랜 서버 전용 안내</h2>
-        <div class="feature-box">현재 선택한 서버는 클랜 패키지 서버입니다.
-웹사이트 배너, 디스코드 시작 공지, 결과 공지가 같은 템플릿으로 동기화됩니다.</div>
     </div>
     {% endif %}
 
@@ -516,8 +437,8 @@ INDEX_HTML = """
     </div>
 
     <div class="card">
-        <div class="pill">패키지형 프리미엄 운영</div>
-        <div class="pill">서포터 3,000원 / 프로 4,990원 / 클랜 7,990원</div>
+        <div class="pill">프리미엄 가격: {{ premium_price }}원</div>
+        <div class="pill">프리미엄 기간: {{ premium_days }}일</div>
         <div class="pill">활성 프리미엄 서버 수: {{ active_premium_count }}</div>
     </div>
 
@@ -644,38 +565,54 @@ GUIDE_HTML = """
         <h2 class="section-title">🆓 무료 명령어</h2>
         <div class="guide-list">
             <div class="guide-item">
-                <h3>기본 서버 설정</h3>
-                <p>/설정역할, /설정카테고리, /설정팀결과채널, /설정보기</p>
+                <h3>/설정역할</h3>
+                <p>내전에 참여 가능한 인증 역할을 설정합니다.</p>
             </div>
             <div class="guide-item">
-                <h3>기본 내전 운영</h3>
-                <p>/내전생성, /내전상태, /밸런스팀, /내전종료</p>
+                <h3>/설정카테고리</h3>
+                <p>대기방 / 팀 보이스 채널이 생성될 카테고리를 설정합니다.</p>
             </div>
             <div class="guide-item">
-                <h3>PUBG 모집 기능</h3>
-                <p>배틀로얄 모집형, 솔로/듀오/스쿼드 규칙, 파티 시스템, 예약 시간 자동 진행</p>
+                <h3>/내전생성</h3>
+                <p>현재 채널에서 내전 모집을 시작합니다. 내전 시간 / 날짜 설정이 가능합니다.</p>
             </div>
             <div class="guide-item">
-                <h3>기본 프로필 기능</h3>
-                <p>/발로티어등록, /옵치티어등록, /롤티어등록, 각 티어 점수표 확인</p>
+                <h3>/밸런스팀</h3>
+                <p>참가자 기준으로 자동 팀 분배를 진행합니다.</p>
+            </div>
+            <div class="guide-item">
+                <h3>/내전상태</h3>
+                <p>현재 모집 상태, 참가자, 현재 맵 등을 확인합니다.</p>
+            </div>
+            <div class="guide-item">
+                <h3>/내전종료</h3>
+                <p>내전을 종료하고 팀 채널을 정리합니다.</p>
             </div>
         </div>
     </div>
 
     <div class="card">
-        <h2 class="section-title">⭐ 패키지형 프리미엄</h2>
+        <h2 class="section-title">⭐ 프리미엄 기능</h2>
         <div class="guide-list">
             <div class="guide-item">
-                <h3>서포터 패키지</h3>
-                <p>/맵뽑기, /시즌확인, /시즌목록, /시즌랭킹, 웹 상세 전적 / 시즌 페이지 사용 가능</p>
+                <h3>결과기록 / ELO 반영</h3>
+                <p>경기 결과를 기록하고 ELO / MMR, 승패 전적을 자동 반영합니다.</p>
             </div>
             <div class="guide-item">
-                <h3>프로 패키지</h3>
-                <p>서포터 기능 포함 + /결과기록, /시즌생성, /시즌종료 사용 가능</p>
+                <h3>상세 전적</h3>
+                <p>유저별 상세 전적 페이지를 통해 누적 전적과 게임별 기록을 확인할 수 있습니다.</p>
             </div>
             <div class="guide-item">
-                <h3>클랜 패키지</h3>
-                <p>프로 기능 포함 + 반복 예약, 시작 전 알림, 운영 로그, 웹 브랜딩, 공지 템플릿 통합 기능 사용 가능</p>
+                <h3>게임별 시즌</h3>
+                <p>서버별, 게임별로 시즌을 따로 운영할 수 있습니다.</p>
+            </div>
+            <div class="guide-item">
+                <h3>시즌 랭킹 / 시즌 경기 기록</h3>
+                <p>현재 시즌 기준 랭킹과 최근 경기 기록을 따로 확인할 수 있습니다.</p>
+            </div>
+            <div class="guide-item">
+                <h3>맵뽑기</h3>
+                <p>현재 로비 게임 기준으로 맵을 랜덤으로 뽑고, 내전 상태에 함께 표시할 수 있습니다.</p>
             </div>
         </div>
     </div>
@@ -706,27 +643,35 @@ SUPPORT_HTML = """
     <div class="grid-2">
         <div>
             <div class="card">
-                <h2 class="section-title">📖 패키지형 프리미엄 안내</h2>
+                <h2 class="section-title">📖 프리미엄 안내</h2>
                 <p style="line-height:1.8; margin:0;">
-                    후원은 <strong>서포터 / 프로 / 클랜</strong> 패키지형으로 운영됩니다.<br>
-                    클랜 패키지는 웹 브랜딩과 디스코드 공지 템플릿을 같은 설정으로 통일할 수 있습니다.
+                    프리미엄 가격은 <strong>{{ premium_price }}원 / {{ premium_days }}일</strong> 입니다.<br>
+                    입금 후 아래 신청 폼을 작성하면 관리자가 확인 후 프리미엄을 활성화합니다.
                 </p>
             </div>
 
             <div class="card">
-                <h2 class="section-title">⭐ 패키지 구성</h2>
+                <h2 class="section-title">⭐ 프리미엄 기능</h2>
                 <div class="guide-list">
                     <div class="guide-item">
-                        <h3>서포터 · 3,000원 / 30일</h3>
-                        <p>/맵뽑기, /시즌확인, /시즌목록, /시즌랭킹, 웹 상세 전적 / 시즌 페이지 사용 가능</p>
+                        <h3>결과기록 / ELO 반영</h3>
+                        <p>경기 결과를 기록하고 ELO / MMR을 자동 반영합니다.</p>
                     </div>
                     <div class="guide-item">
-                        <h3>프로 · 4,990원 / 30일</h3>
-                        <p>서포터 기능 포함 + /결과기록, /시즌생성, /시즌종료 사용 가능</p>
+                        <h3>상세 전적</h3>
+                        <p>유저별 상세 전적과 게임별 기록을 확인할 수 있습니다.</p>
                     </div>
                     <div class="guide-item">
-                        <h3>클랜 · 7,990원 / 30일</h3>
-                        <p>프로 기능 포함 + 반복 예약, 시작 전 알림, 운영 로그, 웹 브랜딩, 공지 템플릿 통합 기능 사용 가능</p>
+                        <h3>게임별 시즌</h3>
+                        <p>게임마다 별도로 시즌을 운영하고 관리할 수 있습니다.</p>
+                    </div>
+                    <div class="guide-item">
+                        <h3>시즌 랭킹 / 시즌 경기 기록</h3>
+                        <p>시즌 전용 랭킹과 경기 기록을 따로 조회할 수 있습니다.</p>
+                    </div>
+                    <div class="guide-item">
+                        <h3>맵뽑기</h3>
+                        <p>프리미엄 서버 전용으로 맵을 랜덤으로 뽑고 내전 운영에 활용할 수 있습니다.</p>
                     </div>
                 </div>
             </div>
@@ -755,15 +700,6 @@ SUPPORT_HTML = """
                 </div>
 
                 <div class="form-group">
-                    <label for="planKey">패키지 선택</label>
-                    <select id="planKey">
-                        <option value="supporter">서포터 (3,000원 / 30일)</option>
-                        <option value="pro">프로 (4,990원 / 30일)</option>
-                        <option value="clan">클랜 (7,990원 / 30일)</option>
-                    </select>
-                </div>
-
-                <div class="form-group">
                     <label for="applicantName">입금자명</label>
                     <input type="text" id="applicantName" placeholder="예: 홍길동">
                 </div>
@@ -775,7 +711,7 @@ SUPPORT_HTML = """
 
                 <div class="form-group">
                     <label for="amount">입금 금액</label>
-                    <input type="number" id="amount" placeholder="예: 4990">
+                    <input type="number" id="amount" placeholder="예: 5000">
                 </div>
 
                 <div class="form-group">
@@ -793,7 +729,6 @@ SUPPORT_HTML = """
 <script>
 async function submitPremiumRequest() {
     const guildId = document.getElementById("guildId").value.trim();
-    const planKey = document.getElementById("planKey").value.trim();
     const applicantName = document.getElementById("applicantName").value.trim();
     const discordTag = document.getElementById("discordTag").value.trim();
     const amount = document.getElementById("amount").value.trim();
@@ -830,8 +765,7 @@ async function submitPremiumRequest() {
                 applicant_name: applicantName,
                 discord_tag: discordTag,
                 amount: amount,
-                memo: memo,
-                plan_key: planKey
+                memo: memo
             })
         });
 
@@ -876,24 +810,7 @@ SEASON_HTML = """
     {% if brand and brand.is_clan %}
     <div class="card brand-card">
         <div class="brand-title"><span class="brand-badge">{{ brand.badge_text }}</span><span>{{ brand.brand_name }}</span></div>
-        <div class="brand-sub">{{ brand.intro_text }}</div>
-        <div class="action-row">
-        <a href="/clan/{{ guild_id }}" class="action-btn btn-admin">👑 클랜 페이지</a>
-    </div>
-        <div class="preview-grid">
-            <div class="preview-card">
-                <h3>🏆 시즌 시작 공지 예시</h3>
-                <div class="preview-text">{{ start_preview }}</div>
-            </div>
-            <div class="preview-card">
-                <h3>📋 시즌 결과 공지 예시</h3>
-                <div class="preview-text">{{ result_preview }}</div>
-            </div>
-        </div>
-    </div>
-    <div class="card banner-card">
-        <h2 class="section-title">📣 시즌 전용 안내 배너</h2>
-        <div class="feature-box">클랜 서버는 시즌 페이지에서도 동일한 브랜드 배지와 공지 템플릿 미리보기가 함께 표시됩니다.</div>
+        <div class="brand-sub">클랜 패키지 서버 전용 시즌 브랜딩이 적용된 화면입니다.</div>
     </div>
     {% endif %}
 
@@ -1020,25 +937,7 @@ PLAYER_HTML = """
     {% if brand and brand.is_clan %}
     <div class="card brand-card">
         <div class="brand-title"><span class="brand-badge">{{ brand.badge_text }}</span><span>{{ brand.brand_name }}</span></div>
-        <div class="brand-sub">{{ brand.intro_text }}</div>
-        <div class="action-row">
-        <a href="/clan/{{ player.guild_id }}" class="action-btn btn-admin">👑 클랜 페이지</a>
-    </div>
-        <div class="preview-grid">
-            <div class="preview-card">
-                <h3>👀 시작 공지 미리보기</h3>
-                <div class="preview-text">{{ start_preview }}</div>
-            </div>
-            <div class="preview-card">
-                <h3>✅ 결과 공지 미리보기</h3>
-                <div class="preview-text">{{ result_preview }}</div>
-            </div>
-        </div>
-    </div>
-    <div class="card banner-card">
-        <h2 class="section-title">📌 상세 전적 안내</h2>
-        <div class="feature-box">이 상세 전적 페이지는 클랜 전용 웹 브랜딩과 연결되어 있습니다.
-디스코드에서 사용하는 공지 템플릿과 같은 문구 흐름으로 표시됩니다.</div>
+        <div class="brand-sub">클랜 패키지 서버 전용 상세 전적 화면입니다.</div>
     </div>
     {% endif %}
 
@@ -1082,133 +981,6 @@ PLAYER_HTML = """
 </body>
 </html>
 """
-
-CLAN_PAGE_HTML = """
-<!DOCTYPE html>
-<html lang="ko">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>클랜 페이지</title>
-    """ + BASE_STYLE + """
-</head>
-<body>
-<div class="container">
-    <div class="page-title">👑 클랜 페이지</div>
-
-    <div class="action-row">
-        <a href="/" class="action-btn btn-guide">🏠 홈으로</a>
-        <a href="/guide" class="action-btn btn-support">💿 명령어 / 프리미엄 소개</a>
-        <a href="/support" class="action-btn btn-season">💖 후원 / 프리미엄 신청</a>
-        <a href="/season?guild_id={{ guild_id }}&game={{ default_game }}" class="action-btn btn-admin">🏆 시즌 페이지</a>
-    </div>
-
-    <div class="card brand-card">
-        <div class="brand-title">
-            <span class="brand-badge">{{ brand.badge_text }}</span>
-            <span>{{ brand.brand_name }}</span>
-        </div>
-        <div class="brand-sub">
-            {{ brand.intro_text }}<br>
-            패키지: <strong>{{ brand.plan_name }}</strong>
-        </div>
-    </div>
-
-    <div class="card banner-card">
-        <h2 class="section-title">📢 클랜 전용 안내</h2>
-        <div class="feature-box">이 페이지는 클랜 패키지 서버 전용 독립 페이지입니다.
-웹 브랜딩, 디스코드 공지 템플릿, 공지 미리보기 흐름을 한 화면에서 확인할 수 있습니다.</div>
-    </div>
-
-    <div class="grid-2">
-        <div class="card">
-            <h2 class="section-title">🚀 시작 공지 미리보기</h2>
-            <div class="preview-text">{{ start_preview }}</div>
-        </div>
-        <div class="card">
-            <h2 class="section-title">🏁 결과 공지 미리보기</h2>
-            <div class="preview-text">{{ result_preview }}</div>
-        </div>
-    </div>
-
-    <div class="grid-2">
-        <div class="card">
-            <h2 class="section-title">🏆 시즌 요약</h2>
-            {% if season %}
-            <div class="pill">게임: {{ season.game }}</div>
-            <div class="pill">시즌명: {{ season.season_name }}</div>
-            <div class="pill">상태: {% if season.is_active %}진행 중{% else %}종료{% endif %}</div>
-            <div class="pill">참가자 수: {{ summary.player_count }}</div>
-            <div class="pill">평균 MMR: {{ summary.avg_mmr }}</div>
-            <div class="pill">최고 MMR: {{ summary.top_mmr }}</div>
-            <div class="pill">경기 수: {{ summary.match_count }}</div>
-            {% else %}
-            <div class="empty-box">활성 시즌이 없습니다.</div>
-            {% endif %}
-        </div>
-        <div class="card">
-            <h2 class="section-title">🎮 서버 정보</h2>
-            <div class="pill">Guild ID: {{ guild_id }}</div>
-            <div class="pill">대표 게임: {{ default_game }}</div>
-            <div class="feature-box">클랜 공지 채널, 시작 템플릿, 결과 템플릿은 디스코드와 웹사이트에서 같은 설정값을 사용합니다.</div>
-        </div>
-    </div>
-
-    <div class="card">
-        <h2 class="section-title">📝 최근 경기</h2>
-        {% if recent_matches %}
-            {% for match in recent_matches %}
-            <div class="match-item">
-                <span class="pill">{{ match.game }}</span>
-                <span class="pill">승리팀 {{ match.winner_team }}</span>
-                <span class="pill">A평균 {{ match.team_a_avg }}</span>
-                <span class="pill">B평균 {{ match.team_b_avg }}</span>
-                <span class="pill">{{ match.created_at }}</span>
-            </div>
-            {% endfor %}
-        {% else %}
-            <div class="empty-box">최근 경기 데이터가 없습니다.</div>
-        {% endif %}
-    </div>
-
-    <div class="card">
-        <h2 class="section-title">🥇 최근 시즌 랭킹 TOP 10</h2>
-        {% if ranking %}
-        <table>
-            <thead>
-                <tr>
-                    <th>#</th>
-                    <th>닉네임</th>
-                    <th>유저 ID</th>
-                    <th>MMR</th>
-                    <th>승</th>
-                    <th>패</th>
-                    <th>승률</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for row in ranking[:10] %}
-                <tr>
-                    <td>{{ loop.index }}</td>
-                    <td>{{ row.display_name or '-' }}</td>
-                    <td>{{ row.user_id }}</td>
-                    <td>{{ row.mmr }}</td>
-                    <td>{{ row.win }}</td>
-                    <td>{{ row.lose }}</td>
-                    <td>{{ row.winrate }}%</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-        {% else %}
-        <div class="empty-box">표시할 시즌 랭킹 데이터가 없습니다.</div>
-        {% endif %}
-    </div>
-</div>
-</body>
-</html>
-"""
-
 
 LOCKED_HTML = """
 <!DOCTYPE html>
@@ -1510,8 +1282,6 @@ def index():
 
     active_premium_count = count_active_premium_guilds()
     brand = get_selected_guild_brand(selected_guild_id)
-    preview_guild_id = int(selected_guild_id) if selected_guild_id.isdigit() else None
-    start_preview, result_preview = build_brand_previews(preview_guild_id, brand, selected_game or 'VALORANT')
 
     return render_template_string(
         get_brand_css(brand) + INDEX_HTML,
@@ -1526,8 +1296,6 @@ def index():
         premium_days=PREMIUM_DAYS,
         active_premium_count=active_premium_count,
         brand=brand,
-        start_preview=start_preview,
-        result_preview=result_preview,
     )
 
 
@@ -1568,8 +1336,6 @@ def season_page():
     summary = {"player_count": 0, "avg_mmr": 0, "top_mmr": 0, "match_count": 0}
     error_message = ""
     brand = get_selected_guild_brand(guild_id_raw)
-    preview_guild_id = int(guild_id_raw) if guild_id_raw.isdigit() else None
-    start_preview, result_preview = build_brand_previews(preview_guild_id, brand, selected_game or 'VALORANT')
 
     if guild_id_raw and selected_game:
         if not guild_id_raw.isdigit():
@@ -1598,9 +1364,7 @@ def season_page():
         matches=matches,
         summary=summary,
         error_message=error_message,
-        brand=brand,
-        start_preview=start_preview,
-        result_preview=result_preview
+        brand=brand
     )
 
 
@@ -1649,106 +1413,13 @@ def player_page(guild_id, user_id):
     winrate = round((player["win"] / total) * 100, 1) if total > 0 else 0.0
 
     brand = get_clan_branding(guild_id)
-    start_preview, result_preview = build_brand_previews(guild_id, brand, '상세 전적 기준 내전', '#클랜공지')
 
     return render_template_string(
         get_brand_css(brand) + PLAYER_HTML,
         player=player,
         winrate=winrate,
         game_rows=game_rows,
-        brand=brand,
-        start_preview=start_preview,
-        result_preview=result_preview
-    )
-
-
-@app.route("/clan/<int:guild_id>")
-def clan_page(guild_id):
-    cleanup_expired_premium_guilds()
-
-    brand = get_clan_branding(guild_id)
-    if not brand or not brand.get("is_clan"):
-        return render_template_string(
-            get_brand_css(brand) + LOCKED_HTML,
-            message="독립된 클랜 페이지는 클랜 패키지 서버 전용입니다.",
-            required_plan_label=get_plan_label("clan")
-        )
-
-    default_game = "valorant"
-    recent_matches = []
-    season = None
-    ranking = []
-    summary = {"player_count": 0, "avg_mmr": 0, "top_mmr": 0, "match_count": 0}
-
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT id, guild_id, game, winner_team, team_a_avg, team_b_avg, created_at
-                FROM matches
-                WHERE guild_id = %s
-                ORDER BY id DESC
-                LIMIT 10
-                """,
-                (guild_id,)
-            )
-            recent_matches = cur.fetchall()
-
-            cur.execute(
-                """
-                SELECT game, COUNT(*) AS cnt
-                FROM player_game_stats
-                WHERE guild_id = %s
-                GROUP BY game
-                ORDER BY cnt DESC, game ASC
-                LIMIT 1
-                """,
-                (guild_id,)
-            )
-            game_row = cur.fetchone()
-            if game_row and game_row.get("game"):
-                default_game = game_row["game"]
-
-    start_preview, result_preview = build_brand_previews(guild_id, brand, default_game.upper())
-
-    season = get_active_season(guild_id, default_game)
-    if not season:
-        latest_seasons = get_season_matches  # keep name referenced? no-op
-    if season:
-        ranking = get_season_ranking(guild_id, default_game, season["id"], limit=10)
-        summary = get_season_stats_summary(guild_id, default_game, season["id"])
-    else:
-        # 활성 시즌이 없으면 가장 최근 시즌을 찾아서 요약만 표시 시도
-        with get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT id, guild_id, game, season_name, is_active, started_at, ended_at
-                    FROM seasons
-                    WHERE guild_id = %s
-                    ORDER BY id DESC
-                    LIMIT 1
-                    """,
-                    (guild_id,)
-                )
-                season = cur.fetchone()
-        if season:
-            default_game = season["game"]
-            ranking = get_season_ranking(guild_id, season["game"], season["id"], limit=10)
-            summary = get_season_stats_summary(guild_id, season["game"], season["id"])
-            start_preview, result_preview = build_brand_previews(guild_id, brand, season["game"].upper())
-
-    return render_template_string(
-        get_brand_css(brand) + CLAN_PAGE_HTML,
-        guild_id=guild_id,
-        brand=brand,
-        start_preview=start_preview,
-        result_preview=result_preview,
-        recent_matches=recent_matches,
-        season=season,
-        ranking=ranking,
-        summary=summary,
-        default_game=default_game,
+        brand=brand
     )
 
 

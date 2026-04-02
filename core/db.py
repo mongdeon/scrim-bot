@@ -75,9 +75,7 @@ PLAN_LABELS = {
 
 DEFAULT_CLAN_BADGE = "👑 CLAN"
 DEFAULT_CLAN_COLOR = "#8b5cf6"
-
 DEFAULT_CLAN_INTRO = "우리 클랜만의 브랜딩과 공지 템플릿이 적용된 서버입니다."
-
 DEFAULT_CLAN_START_TEMPLATE = """{badge} {brand_name} 내전 시작!
 게임: {game}
 채널: {channel}
@@ -85,13 +83,13 @@ DEFAULT_CLAN_START_TEMPLATE = """{badge} {brand_name} 내전 시작!
 A팀: {team_a}
 B팀: {team_b}
 차이: {difference}"""
-
 DEFAULT_CLAN_RESULT_TEMPLATE = """{badge} {brand_name} 경기 결과
 게임: {game}
 승리팀: {winner_team}
 A팀 평균: {avg_a}
 B팀 평균: {avg_b}
 채널: {channel}"""
+
 
 def normalize_plan_key(plan_key: Optional[str]) -> str:
     key = (plan_key or "free").strip().lower()
@@ -539,9 +537,6 @@ def init_settings_tables():
                 clan_brand_name VARCHAR(100),
                 clan_brand_color VARCHAR(20),
                 clan_badge_text VARCHAR(50),
-                clan_intro_text TEXT,
-                clan_start_template TEXT,
-                clan_result_template TEXT,
                 updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
         """)
@@ -549,9 +544,6 @@ def init_settings_tables():
         cur.execute("ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS clan_brand_name VARCHAR(100)")
         cur.execute("ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS clan_brand_color VARCHAR(20)")
         cur.execute("ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS clan_badge_text VARCHAR(50)")
-        cur.execute("ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS clan_intro_text TEXT")
-        cur.execute("ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS clan_start_template TEXT")
-        cur.execute("ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS clan_result_template TEXT")
 
 
 def ensure_guild_settings(guild_id: int):
@@ -571,8 +563,7 @@ def get_settings(guild_id: int):
             SELECT
                 guild_id, category_id, recruit_role_id, log_channel_id,
                 announcement_channel_id, result_channel_id, voice_category_id,
-                queue_channel_id, manager_role_id, premium_role_id, clan_brand_name, clan_brand_color, clan_badge_text,
-                clan_intro_text, clan_start_template, clan_result_template, updated_at
+                queue_channel_id, manager_role_id, premium_role_id, clan_brand_name, clan_brand_color, clan_badge_text, updated_at
             FROM guild_settings
             WHERE guild_id = %s
         """, (guild_id,))
@@ -593,9 +584,6 @@ def get_settings(guild_id: int):
             "clan_brand_name": None,
             "clan_brand_color": None,
             "clan_badge_text": None,
-            "clan_intro_text": None,
-            "clan_start_template": None,
-            "clan_result_template": None,
             "updated_at": None,
         }
     return dict(row)
@@ -617,9 +605,6 @@ def update_settings(guild_id: int, **kwargs):
         "clan_brand_name",
         "clan_brand_color",
         "clan_badge_text",
-        "clan_intro_text",
-        "clan_start_template",
-        "clan_result_template",
     }
 
     if not kwargs:
@@ -671,15 +656,12 @@ def get_clan_branding(guild_id: int):
         'brand_name': (settings.get('clan_brand_name') or guild_name or f'Guild {guild_id}').strip(),
         'brand_color': sanitize_brand_color(settings.get('clan_brand_color')),
         'badge_text': (settings.get('clan_badge_text') or DEFAULT_CLAN_BADGE).strip(),
-        'intro_text': (settings.get('clan_intro_text') or DEFAULT_CLAN_INTRO).strip(),
-        'start_template': (settings.get('clan_start_template') or DEFAULT_CLAN_START_TEMPLATE).strip(),
-        'result_template': (settings.get('clan_result_template') or DEFAULT_CLAN_RESULT_TEMPLATE).strip(),
         'plan_key': premium.get('plan_key') if premium else 'free',
         'plan_name': premium.get('plan_name') if premium else '무료',
     }
 
 
-def update_clan_branding(guild_id: int, brand_name: Optional[str] = None, brand_color: Optional[str] = None, badge_text: Optional[str] = None, intro_text: Optional[str] = None, start_template: Optional[str] = None, result_template: Optional[str] = None):
+def update_clan_branding(guild_id: int, brand_name: Optional[str] = None, brand_color: Optional[str] = None, badge_text: Optional[str] = None):
     updates = {}
     if brand_name is not None:
         updates['clan_brand_name'] = (brand_name or '').strip() or None
@@ -687,44 +669,15 @@ def update_clan_branding(guild_id: int, brand_name: Optional[str] = None, brand_
         updates['clan_brand_color'] = sanitize_brand_color(brand_color) if brand_color else None
     if badge_text is not None:
         updates['clan_badge_text'] = (badge_text or '').strip()[:50] or None
-    if intro_text is not None:
-        updates['clan_intro_text'] = (intro_text or '').strip() or None
-    if start_template is not None:
-        updates['clan_start_template'] = (start_template or '').strip() or None
-    if result_template is not None:
-        updates['clan_result_template'] = (result_template or '').strip() or None
     if updates:
         update_settings(guild_id, **updates)
     return get_clan_branding(guild_id)
 
 
 def clear_clan_branding(guild_id: int):
-    update_settings(guild_id, clan_brand_name=None, clan_brand_color=None, clan_badge_text=None, clan_intro_text=None, clan_start_template=None, clan_result_template=None)
+    update_settings(guild_id, clan_brand_name=None, clan_brand_color=None, clan_badge_text=None)
     return get_clan_branding(guild_id)
 
-
-
-class _SafeDict(dict):
-    def __missing__(self, key):
-        return '{' + key + '}'
-
-
-def render_clan_template(guild_id: int, template_key: str, **kwargs):
-    brand = get_clan_branding(guild_id)
-    template_map = {
-        'intro': brand.get('intro_text') or DEFAULT_CLAN_INTRO,
-        'start': brand.get('start_template') or DEFAULT_CLAN_START_TEMPLATE,
-        'result': brand.get('result_template') or DEFAULT_CLAN_RESULT_TEMPLATE,
-    }
-    template = template_map.get(template_key, '')
-    values = _SafeDict({
-        'brand_name': brand.get('brand_name', ''),
-        'brand_color': brand.get('brand_color', ''),
-        'badge': brand.get('badge_text', DEFAULT_CLAN_BADGE),
-        'plan_name': brand.get('plan_name', '무료'),
-        **kwargs,
-    })
-    return template.format_map(values)
 
 # -------------------------
 # Recruit / Lobby / Party
@@ -739,7 +692,6 @@ def init_recruit_tables():
                 game VARCHAR(50) NOT NULL,
                 team_size INTEGER NOT NULL,
                 total_slots INTEGER,
-                scheduled_at TIMESTAMP,
                 status VARCHAR(30) NOT NULL DEFAULT 'open',
                 message_id BIGINT,
                 waiting_voice_id BIGINT,
@@ -751,6 +703,8 @@ def init_recruit_tables():
 
         cur.execute("""ALTER TABLE lobbies ADD COLUMN IF NOT EXISTS total_slots INTEGER""")
         cur.execute("""ALTER TABLE lobbies ADD COLUMN IF NOT EXISTS scheduled_at TIMESTAMP""")
+        cur.execute("""ALTER TABLE lobbies ADD COLUMN IF NOT EXISTS recruit_close_at TIMESTAMP""")
+        cur.execute("""ALTER TABLE lobbies ADD COLUMN IF NOT EXISTS close_notice_sent BOOLEAN NOT NULL DEFAULT FALSE""")
 
         cur.execute("""
             CREATE TABLE IF NOT EXISTS lobby_players (
@@ -759,12 +713,16 @@ def init_recruit_tables():
                 display_name VARCHAR(100) NOT NULL,
                 mmr INTEGER NOT NULL,
                 position VARCHAR(50) NOT NULL,
+                sub_position VARCHAR(50),
+                ow_role VARCHAR(20),
                 party_id BIGINT,
                 joined_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (channel_id, user_id)
             )
         """)
 
+        cur.execute("""ALTER TABLE lobby_players ADD COLUMN IF NOT EXISTS sub_position VARCHAR(50)""")
+        cur.execute("""ALTER TABLE lobby_players ADD COLUMN IF NOT EXISTS ow_role VARCHAR(20)""")
         cur.execute("""ALTER TABLE lobby_players ADD COLUMN IF NOT EXISTS party_id BIGINT""")
         cur.execute("""ALTER TABLE lobby_players ADD COLUMN IF NOT EXISTS joined_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP""")
 
@@ -803,6 +761,18 @@ def init_recruit_tables():
         """)
 
         cur.execute("""
+            CREATE TABLE IF NOT EXISTS overwatch_role_mmr (
+                guild_id BIGINT NOT NULL,
+                user_id BIGINT NOT NULL,
+                role VARCHAR(20) NOT NULL,
+                display_name VARCHAR(100),
+                mmr INTEGER NOT NULL DEFAULT 1000,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (guild_id, user_id, role)
+            )
+        """)
+
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS lobby_parties (
                 id BIGSERIAL PRIMARY KEY,
                 channel_id BIGINT NOT NULL,
@@ -831,8 +801,9 @@ def get_lobby(channel_id: int):
     with db_cursor(dict_cursor=True) as (_, cur):
         cur.execute("""
             SELECT
-                channel_id, guild_id, host_id, game, team_size, total_slots, scheduled_at, status,
-                message_id, waiting_voice_id, team_a_voice_id, team_b_voice_id, created_at
+                channel_id, guild_id, host_id, game, team_size, total_slots, status,
+                message_id, waiting_voice_id, team_a_voice_id, team_b_voice_id,
+                scheduled_at, recruit_close_at, close_notice_sent, created_at
             FROM lobbies
             WHERE channel_id = %s
         """, (channel_id,))
@@ -847,7 +818,8 @@ def create_lobby(
     game: str,
     team_size: int,
     total_slots: Optional[int] = None,
-    scheduled_at: Optional[datetime] = None
+    scheduled_at: Optional[datetime] = None,
+    recruit_close_at: Optional[datetime] = None
 ):
     init_recruit_tables()
     register_guild(guild_id)
@@ -855,9 +827,9 @@ def create_lobby(
     with db_cursor() as (_, cur):
         cur.execute("""
             INSERT INTO lobbies (
-                channel_id, guild_id, host_id, game, team_size, total_slots, scheduled_at, status
+                channel_id, guild_id, host_id, game, team_size, total_slots, scheduled_at, recruit_close_at, close_notice_sent, status
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, 'open')
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, FALSE, 'open')
             ON CONFLICT (channel_id) DO UPDATE SET
                 guild_id = EXCLUDED.guild_id,
                 host_id = EXCLUDED.host_id,
@@ -865,34 +837,19 @@ def create_lobby(
                 team_size = EXCLUDED.team_size,
                 total_slots = EXCLUDED.total_slots,
                 scheduled_at = EXCLUDED.scheduled_at,
+                recruit_close_at = EXCLUDED.recruit_close_at,
+                close_notice_sent = FALSE,
                 status = 'open',
                 message_id = NULL,
                 waiting_voice_id = NULL,
                 team_a_voice_id = NULL,
                 team_b_voice_id = NULL
-        """, (channel_id, guild_id, host_id, game, team_size, total_slots, scheduled_at))
+        """, (channel_id, guild_id, host_id, game, team_size, total_slots, scheduled_at, recruit_close_at))
 
         cur.execute("DELETE FROM lobby_players WHERE channel_id = %s", (channel_id,))
         cur.execute("DELETE FROM lobby_teams WHERE channel_id = %s", (channel_id,))
         cur.execute("DELETE FROM lobby_party_members WHERE channel_id = %s", (channel_id,))
         cur.execute("DELETE FROM lobby_parties WHERE channel_id = %s", (channel_id,))
-
-
-
-def get_due_lobbies():
-    init_recruit_tables()
-    with db_cursor(dict_cursor=True) as (_, cur):
-        cur.execute("""
-            SELECT
-                channel_id, guild_id, host_id, game, team_size, total_slots, scheduled_at, status,
-                message_id, waiting_voice_id, team_a_voice_id, team_b_voice_id, created_at
-            FROM lobbies
-            WHERE status = 'open'
-              AND scheduled_at IS NOT NULL
-              AND scheduled_at <= CURRENT_TIMESTAMP
-            ORDER BY scheduled_at ASC, created_at ASC
-        """)
-        return [dict(row) for row in cur.fetchall()]
 
 
 def set_lobby_message(channel_id: int, message_id: int):
@@ -928,7 +885,7 @@ def get_lobby_players(channel_id: int):
     init_recruit_tables()
     with db_cursor(dict_cursor=True) as (_, cur):
         cur.execute("""
-            SELECT channel_id, user_id, display_name, mmr, position, party_id, joined_at
+            SELECT channel_id, user_id, display_name, mmr, position, sub_position, ow_role, party_id, joined_at
             FROM lobby_players
             WHERE channel_id = %s
             ORDER BY joined_at ASC
@@ -942,19 +899,23 @@ def add_lobby_player(
     display_name: str,
     mmr: int,
     position: str,
+    sub_position: Optional[str] = None,
+    ow_role: Optional[str] = None,
     party_id: Optional[int] = None
 ):
     with db_cursor() as (_, cur):
         cur.execute("""
-            INSERT INTO lobby_players (channel_id, user_id, display_name, mmr, position, party_id)
-            VALUES (%s, %s, %s, %s, %s, %s)
+            INSERT INTO lobby_players (channel_id, user_id, display_name, mmr, position, sub_position, ow_role, party_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (channel_id, user_id)
             DO UPDATE SET
                 display_name = EXCLUDED.display_name,
                 mmr = EXCLUDED.mmr,
                 position = EXCLUDED.position,
+                sub_position = EXCLUDED.sub_position,
+                ow_role = EXCLUDED.ow_role,
                 party_id = EXCLUDED.party_id
-        """, (channel_id, user_id, display_name, mmr, position, party_id))
+        """, (channel_id, user_id, display_name, mmr, position, sub_position, ow_role, party_id))
 
 
 def has_lobby_player(channel_id: int, user_id: int) -> bool:
@@ -1219,6 +1180,62 @@ def get_lobby_parties(channel_id: int):
         members = get_party_members(channel_id, party["id"])
         result.append({**party, "members": members})
     return result
+
+
+def update_lobby_times(channel_id: int, scheduled_at: Optional[datetime] = None, recruit_close_at: Optional[datetime] = None):
+    with db_cursor() as (_, cur):
+        cur.execute("""
+            UPDATE lobbies
+            SET scheduled_at = %s, recruit_close_at = %s, close_notice_sent = FALSE
+            WHERE channel_id = %s
+        """, (scheduled_at, recruit_close_at, channel_id))
+
+
+def count_active_guild_lobbies(guild_id: int) -> int:
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("SELECT COUNT(*) AS cnt FROM lobbies WHERE guild_id = %s AND status IN ('open','balanced','started')", (guild_id,))
+        row = cur.fetchone()
+        return int(row['cnt']) if row else 0
+
+
+def get_due_close_notice_lobbies():
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("SELECT * FROM lobbies WHERE status = 'open' AND recruit_close_at IS NOT NULL AND close_notice_sent = FALSE AND recruit_close_at <= (CURRENT_TIMESTAMP + INTERVAL '10 minutes') AND recruit_close_at > CURRENT_TIMESTAMP ORDER BY recruit_close_at ASC")
+        return [dict(r) for r in cur.fetchall()]
+
+
+def mark_close_notice_sent(channel_id: int):
+    with db_cursor() as (_, cur):
+        cur.execute("UPDATE lobbies SET close_notice_sent = TRUE WHERE channel_id = %s", (channel_id,))
+
+
+def get_due_close_lobbies():
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("SELECT * FROM lobbies WHERE status = 'open' AND recruit_close_at IS NOT NULL AND recruit_close_at <= CURRENT_TIMESTAMP ORDER BY recruit_close_at ASC")
+        return [dict(r) for r in cur.fetchall()]
+
+
+def set_overwatch_role_mmr(guild_id: int, user_id: int, role: str, mmr: int, display_name: Optional[str] = None):
+    with db_cursor() as (_, cur):
+        cur.execute("""
+            INSERT INTO overwatch_role_mmr (guild_id, user_id, role, display_name, mmr, updated_at)
+            VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+            ON CONFLICT (guild_id, user_id, role)
+            DO UPDATE SET display_name = COALESCE(EXCLUDED.display_name, overwatch_role_mmr.display_name), mmr = EXCLUDED.mmr, updated_at = CURRENT_TIMESTAMP
+        """, (guild_id, user_id, role, display_name, mmr))
+
+
+def get_overwatch_role_mmr(guild_id: int, user_id: int, role: str):
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("SELECT mmr FROM overwatch_role_mmr WHERE guild_id = %s AND user_id = %s AND role = %s", (guild_id, user_id, role))
+        row = cur.fetchone()
+        return int(row['mmr']) if row else None
+
+
+def get_all_overwatch_role_mmr(guild_id: int, user_id: int):
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("SELECT role, mmr FROM overwatch_role_mmr WHERE guild_id = %s AND user_id = %s ORDER BY role ASC", (guild_id, user_id))
+        return {row['role']: int(row['mmr']) for row in cur.fetchall()}
 
 
 # -------------------------
@@ -1678,13 +1695,10 @@ class DB:
         game: str,
         team_size: int,
         total_slots: Optional[int] = None,
-        scheduled_at: Optional[datetime] = None
+        scheduled_at: Optional[datetime] = None,
+        recruit_close_at: Optional[datetime] = None
     ):
-        return create_lobby(channel_id, guild_id, host_id, game, team_size, total_slots, scheduled_at)
-
-    @staticmethod
-    def get_due_lobbies():
-        return get_due_lobbies()
+        return create_lobby(channel_id, guild_id, host_id, game, team_size, total_slots, scheduled_at, recruit_close_at)
 
     @staticmethod
     def set_lobby_message(channel_id: int, message_id: int):
@@ -1703,8 +1717,8 @@ class DB:
         return get_lobby_players(channel_id)
 
     @staticmethod
-    def add_lobby_player(channel_id: int, user_id: int, display_name: str, mmr: int, position: str, party_id: Optional[int] = None):
-        return add_lobby_player(channel_id, user_id, display_name, mmr, position, party_id)
+    def add_lobby_player(channel_id: int, user_id: int, display_name: str, mmr: int, position: str, sub_position: Optional[str] = None, ow_role: Optional[str] = None, party_id: Optional[int] = None):
+        return add_lobby_player(channel_id, user_id, display_name, mmr, position, sub_position, ow_role, party_id)
 
     @staticmethod
     def has_lobby_player(channel_id: int, user_id: int) -> bool:
@@ -1761,6 +1775,38 @@ class DB:
     @staticmethod
     def get_lobby_parties(channel_id: int):
         return get_lobby_parties(channel_id)
+
+    @staticmethod
+    def update_lobby_times(channel_id: int, scheduled_at: Optional[datetime] = None, recruit_close_at: Optional[datetime] = None):
+        return update_lobby_times(channel_id, scheduled_at, recruit_close_at)
+
+    @staticmethod
+    def count_active_guild_lobbies(guild_id: int) -> int:
+        return count_active_guild_lobbies(guild_id)
+
+    @staticmethod
+    def get_due_close_notice_lobbies():
+        return get_due_close_notice_lobbies()
+
+    @staticmethod
+    def mark_close_notice_sent(channel_id: int):
+        return mark_close_notice_sent(channel_id)
+
+    @staticmethod
+    def get_due_close_lobbies():
+        return get_due_close_lobbies()
+
+    @staticmethod
+    def set_overwatch_role_mmr(guild_id: int, user_id: int, role: str, mmr: int, display_name: Optional[str] = None):
+        return set_overwatch_role_mmr(guild_id, user_id, role, mmr, display_name)
+
+    @staticmethod
+    def get_overwatch_role_mmr(guild_id: int, user_id: int, role: str):
+        return get_overwatch_role_mmr(guild_id, user_id, role)
+
+    @staticmethod
+    def get_all_overwatch_role_mmr(guild_id: int, user_id: int):
+        return get_all_overwatch_role_mmr(guild_id, user_id)
 
     @staticmethod
     def init_season_tables():
