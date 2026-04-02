@@ -65,6 +65,30 @@ class Profile(commands.Cog):
         info = db.get_premium_info(guild_id)
         return info.get("plan_name") or PLAN_LABELS.get(info.get("plan_key", "free"), "무료")
 
+
+    def _build_tier_embed(self, title: str, description: str, scores: dict[str, int]) -> discord.Embed:
+        embed = discord.Embed(title=title, description=description, color=discord.Color.blurple())
+        lines = [f"**{tier}** : `{score}`" for tier, score in scores.items()]
+        chunk = []
+        chunks = []
+
+        for line in lines:
+            if sum(len(x) + 1 for x in chunk) + len(line) > 900:
+                chunks.append("\n".join(chunk))
+                chunk = [line]
+            else:
+                chunk.append(line)
+
+        if chunk:
+            chunks.append("\n".join(chunk))
+
+        for idx, text in enumerate(chunks, start=1):
+            field_name = "티어 점수표" if idx == 1 else f"티어 점수표 {idx}"
+            embed.add_field(name=field_name, value=text, inline=False)
+
+        embed.set_footer(text="점수표 메세지는 서버 전체에 공개됩니다.")
+        return embed
+
     def _apply_tier(self, guild_id: int, user_id: int, display_name: str, game: str, mmr: int):
         db.ensure_player(guild_id, user_id, 1000, display_name)
         db.ensure_player_game(guild_id, user_id, game, 1000, display_name)
