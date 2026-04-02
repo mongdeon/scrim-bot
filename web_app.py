@@ -37,8 +37,8 @@ PREMIUM_DAYS = 30
 
 PREMIUM_PACKAGES = {
     "supporter": {"name": "서포터", "price": 3000, "days": 30},
-    "pro": {"name": "프로", "price": 5000, "days": 30},
-    "clan": {"name": "클랜", "price": 10000, "days": 30},
+    "pro": {"name": "프로", "price": 4990, "days": 30},
+    "clan": {"name": "클랜", "price": 7990, "days": 30},
 }
 
 init_premium_tables()
@@ -437,8 +437,8 @@ INDEX_HTML = """
     </div>
 
     <div class="card">
-        <div class="pill">프리미엄 가격: {{ premium_price }}원</div>
-        <div class="pill">프리미엄 기간: {{ premium_days }}일</div>
+        <div class="pill">패키지형 프리미엄 운영</div>
+        <div class="pill">서포터 3,000원 / 프로 4,990원 / 클랜 7,990원</div>
         <div class="pill">활성 프리미엄 서버 수: {{ active_premium_count }}</div>
     </div>
 
@@ -562,59 +562,51 @@ GUIDE_HTML = """
     </div>
 
     <div class="card">
-        <h2 class="section-title">🆓 무료 명령어</h2>
+        <h2 class="section-title">🆓 무료 기본 기능</h2>
         <div class="guide-list">
             <div class="guide-item">
-                <h3>/설정역할</h3>
-                <p>내전에 참여 가능한 인증 역할을 설정합니다.</p>
+                <h3>서버 설정</h3>
+                <p>/설정역할, /설정카테고리, /설정팀결과채널, /설정공지채널, /설정로그채널, /설정보기</p>
             </div>
             <div class="guide-item">
-                <h3>/설정카테고리</h3>
-                <p>대기방 / 팀 보이스 채널이 생성될 카테고리를 설정합니다.</p>
+                <h3>기본 내전 운영</h3>
+                <p>/내전생성, /내전상태, /밸런스팀, /내전종료, 내전 시간 / 날짜 설정 가능</p>
             </div>
             <div class="guide-item">
-                <h3>/내전생성</h3>
-                <p>현재 채널에서 내전 모집을 시작합니다. 내전 시간 / 날짜 설정이 가능합니다.</p>
+                <h3>배그 모집</h3>
+                <p>PUBG 배틀로얄 모집형, 솔로/듀오/스쿼드 규칙 지원</p>
             </div>
             <div class="guide-item">
-                <h3>/밸런스팀</h3>
-                <p>참가자 기준으로 자동 팀 분배를 진행합니다.</p>
-            </div>
-            <div class="guide-item">
-                <h3>/내전상태</h3>
-                <p>현재 모집 상태, 참가자, 현재 맵 등을 확인합니다.</p>
-            </div>
-            <div class="guide-item">
-                <h3>/내전종료</h3>
-                <p>내전을 종료하고 팀 채널을 정리합니다.</p>
+                <h3>기본 프로필 기능</h3>
+                <p>/발로티어등록, /옵치티어등록, /롤티어등록, /발로티어점수표, /옵치티어점수표, /롤티어점수표</p>
             </div>
         </div>
     </div>
 
     <div class="card">
-        <h2 class="section-title">⭐ 프리미엄 기능</h2>
+        <h2 class="section-title">⭐ 패키지형 프리미엄</h2>
         <div class="guide-list">
             <div class="guide-item">
-                <h3>결과기록 / ELO 반영</h3>
-                <p>경기 결과를 기록하고 ELO / MMR, 승패 전적을 자동 반영합니다.</p>
+                <h3>서포터 패키지 · 3,000원</h3>
+                <p>/맵뽑기, /시즌확인, /시즌목록, /시즌랭킹 사용 가능<br>웹 상세 전적 페이지와 시즌 페이지 조회 가능</p>
             </div>
             <div class="guide-item">
-                <h3>상세 전적</h3>
-                <p>유저별 상세 전적 페이지를 통해 누적 전적과 게임별 기록을 확인할 수 있습니다.</p>
+                <h3>프로 패키지 · 4,990원</h3>
+                <p>서포터 기능 포함<br>/결과기록, /시즌생성, /시즌종료 사용 가능</p>
             </div>
             <div class="guide-item">
-                <h3>게임별 시즌</h3>
-                <p>서버별, 게임별로 시즌을 따로 운영할 수 있습니다.</p>
-            </div>
-            <div class="guide-item">
-                <h3>시즌 랭킹 / 시즌 경기 기록</h3>
-                <p>현재 시즌 기준 랭킹과 최근 경기 기록을 따로 확인할 수 있습니다.</p>
-            </div>
-            <div class="guide-item">
-                <h3>맵뽑기</h3>
-                <p>현재 로비 게임 기준으로 맵을 랜덤으로 뽑고, 내전 상태에 함께 표시할 수 있습니다.</p>
+                <h3>클랜 패키지 · 7,990원</h3>
+                <p>프로 기능 포함<br>반복 예약, 시작 전 알림, 운영 로그, 웹 브랜딩, 공지 템플릿, 독립 클랜 페이지 지원</p>
             </div>
         </div>
+    </div>
+
+    <div class="card">
+        <h2 class="section-title">📌 빠른 정리</h2>
+        <div class="feature-box">무료: 기본 모집 / 기본 팀분배 / 티어등록
+서포터: 맵뽑기 / 시즌 조회 / 웹 상세 전적
+프로: 결과기록 / 시즌 생성·종료
+클랜: 프로 포함 + 반복 예약 + 공지 자동화 + 웹 브랜딩</div>
     </div>
 </div>
 </body>
