@@ -1146,8 +1146,8 @@ def season_page():
             error_message = "Guild ID는 숫자만 입력해주세요."
         else:
             guild_id = int(guild_id_raw)
-            if not is_guild_premium(guild_id):
-                error_message = "해당 서버는 프리미엄 서버가 아니어서 시즌 페이지를 사용할 수 없습니다."
+            if not has_premium_plan(guild_id, "supporter"):
+                error_message = "해당 서버는 서포터 이상 패키지가 아니어서 시즌 페이지를 사용할 수 없습니다."
             else:
                 season = get_active_season(guild_id, selected_game)
                 if not season:
