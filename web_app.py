@@ -790,7 +790,124 @@ SEASON_HTML = """
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>시즌 페이지</title>
-    """
+    """ + BASE_STYLE + """
+</head>
+<body>
+<div class="container">
+    <div class="page-title">🏆 시즌 페이지</div>
+
+    {% if brand and brand.is_clan %}
+    <div class="card brand-card">
+        <div class="brand-title"><span class="brand-badge">{{ brand.badge_text }}</span><span>{{ brand.brand_name }}</span></div>
+        <div class="brand-sub">클랜 패키지 서버 전용 시즌 브랜딩이 적용된 화면입니다.</div>
+    </div>
+    {% endif %}
+
+    <div class="action-row">
+        <a href="/" class="action-btn btn-guide">🏠 홈으로</a>
+        <a href="/guide" class="action-btn btn-support">💿 명령어 / 프리미엄 소개</a>
+        <a href="/support" class="action-btn btn-season">💖 후원 / 프리미엄 신청</a>
+    </div>
+
+    <div class="card">
+        <form method="get" class="filters">
+            <select name="guild_id" style="max-width:320px;">
+                <option value="">서버 선택</option>
+                {% for guild in guilds %}
+                    <option value="{{ guild.guild_id }}" {% if guild_id == guild.guild_id|string %}selected{% endif %}>
+                        {{ guild.guild_name or ("Guild " ~ guild.guild_id) }}
+                    </option>
+                {% endfor %}
+            </select>
+
+            <select name="game" style="max-width:240px;">
+                <option value="">게임 선택</option>
+                {% for g in games %}
+                    <option value="{{ g }}" {% if selected_game == g %}selected{% endif %}>{{ g }}</option>
+                {% endfor %}
+            </select>
+            <button type="submit" class="submit-btn">조회</button>
+        </form>
+    </div>
+
+    {% if error_message %}
+    <div class="card">
+        <div class="empty-box">{{ error_message }}</div>
+    </div>
+    {% endif %}
+
+    {% if season %}
+    <div class="card">
+        <h2 class="section-title">현재 시즌</h2>
+        <div class="pill">서버: {{ season.guild_id }}</div>
+        <div class="pill">게임: {{ season.game }}</div>
+        <div class="pill">시즌명: {{ season.season_name }}</div>
+        <div class="pill">시작일: {{ season.started_at }}</div>
+        <div class="pill">상태: {% if season.is_active %}진행 중{% else %}종료{% endif %}</div>
+    </div>
+
+    <div class="card">
+        <h2 class="section-title">시즌 요약</h2>
+        <div class="pill">참가자 수: {{ summary.player_count }}</div>
+        <div class="pill">평균 MMR: {{ summary.avg_mmr }}</div>
+        <div class="pill">최고 MMR: {{ summary.top_mmr }}</div>
+        <div class="pill">경기 수: {{ summary.match_count }}</div>
+    </div>
+
+    <div class="card">
+        <h2 class="section-title">시즌 랭킹</h2>
+        {% if ranking %}
+        <table>
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>닉네임</th>
+                    <th>유저 ID</th>
+                    <th>MMR</th>
+                    <th>승</th>
+                    <th>패</th>
+                    <th>승률</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in ranking %}
+                <tr>
+                    <td>{{ loop.index }}</td>
+                    <td>{{ row.display_name or "-" }}</td>
+                    <td>{{ row.user_id }}</td>
+                    <td>{{ row.mmr }}</td>
+                    <td>{{ row.win }}</td>
+                    <td>{{ row.lose }}</td>
+                    <td>{{ row.winrate }}%</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="empty-box">시즌 전적이 아직 없습니다.</div>
+        {% endif %}
+    </div>
+
+    <div class="card">
+        <h2 class="section-title">시즌 최근 경기</h2>
+        {% if matches %}
+            {% for match in matches %}
+            <div class="match-item">
+                <span class="pill">승리팀 {{ match.winner_team }}</span>
+                <span class="pill">A평균 {{ match.team_a_avg }}</span>
+                <span class="pill">B평균 {{ match.team_b_avg }}</span>
+                <span class="pill">{{ match.created_at }}</span>
+            </div>
+            {% endfor %}
+        {% else %}
+        <div class="empty-box">시즌 경기 기록이 아직 없습니다.</div>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+</body>
+</html>
+"""
 
 PLAYER_HTML = """
 <!DOCTYPE html>
@@ -798,7 +915,61 @@ PLAYER_HTML = """
 <head>
     <meta charset="UTF-8">
     <title>유저 전적</title>
-    """
+    """ + BASE_STYLE + """
+</head>
+<body>
+<div class="container">
+    <div class="action-row">
+        <a href="/" class="action-btn btn-guide">🏠 홈으로</a>
+    </div>
+
+    {% if brand and brand.is_clan %}
+    <div class="card brand-card">
+        <div class="brand-title"><span class="brand-badge">{{ brand.badge_text }}</span><span>{{ brand.brand_name }}</span></div>
+        <div class="brand-sub">클랜 패키지 서버 전용 상세 전적 화면입니다.</div>
+    </div>
+    {% endif %}
+
+    <div class="card">
+        <h1>👤 유저 전적</h1>
+        <p>닉네임: {{ player.display_name or "-" }}</p>
+        <p>Guild ID: {{ player.guild_id }}</p>
+        <p>User ID: {{ player.user_id }}</p>
+        <p>전체 MMR: {{ player.mmr }}</p>
+        <p>전체 승: {{ player.win }}</p>
+        <p>전체 패: {{ player.lose }}</p>
+        <p>전체 승률: {{ winrate }}%</p>
+    </div>
+
+    <div class="card">
+        <h2 class="section-title">🎯 게임별 전적</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>게임</th>
+                    <th>MMR</th>
+                    <th>승</th>
+                    <th>패</th>
+                    <th>승률</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in game_rows %}
+                <tr>
+                    <td>{{ row.game }}</td>
+                    <td>{{ row.mmr }}</td>
+                    <td>{{ row.win }}</td>
+                    <td>{{ row.lose }}</td>
+                    <td>{{ row.winrate }}%</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+</body>
+</html>
+"""
 
 LOCKED_HTML = """
 <!DOCTYPE html>
@@ -806,7 +977,21 @@ LOCKED_HTML = """
 <head>
     <meta charset="UTF-8">
     <title>프리미엄 전용</title>
-    """
+    """ + BASE_STYLE + """
+</head>
+<body>
+<div class="container">
+    <div class="card">
+        <h1>🔒 프리미엄 전용</h1>
+        <p>{{ message }}</p>
+        <p>필요 패키지: <strong>{{ required_plan_label }}</strong> 이상</p>
+        <p><a href="/support">→ 프리미엄 신청하러 가기</a></p>
+        <p><a href="/">← 홈으로 돌아가기</a></p>
+    </div>
+</div>
+</body>
+</html>
+"""
 
 ADMIN_PREMIUM_HTML = """
 <!DOCTYPE html>
