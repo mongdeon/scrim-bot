@@ -220,20 +220,20 @@ def build_lobby_embed(lobby: dict, players: list[dict], team_a=None, team_b=None
     if lobby["status"] == "open":
         if is_pubg_lobby(lobby):
             if lobby["team_size"] == 1:
-                embed.set_footer(text=f"로비ID {lobby['lobby_id']} | 배그 솔로는 개인 참가형입니다. 정원이 차면 대기방으로 자동 이동합니다.")
+                embed.set_footer(text=f"로비아이디 {lobby['lobby_id']} | 배그 솔로는 개인 참가형입니다. 정원이 차면 대기방으로 자동 이동합니다.")
             else:
-                embed.set_footer(text=f"로비ID {lobby['lobby_id']} | 배그 듀오/스쿼드는 먼저 파티를 만든 뒤 참가하세요. 정원이 차면 대기방으로 자동 이동합니다.")
+                embed.set_footer(text=f"로비아이디 {lobby['lobby_id']} | 배그 듀오/스쿼드는 먼저 파티를 만든 뒤 참가하세요. 정원이 차면 대기방으로 자동 이동합니다.")
         else:
-            embed.set_footer(text=f"로비ID {lobby['lobby_id']} | 참가 버튼을 눌러 포지션과 MMR을 입력하세요.")
+            embed.set_footer(text=f"로비아이디 {lobby['lobby_id']} | 참가 버튼을 눌러 포지션과 MMR을 입력하세요.")
     elif lobby["status"] == "started":
         if is_pubg_lobby(lobby):
-            embed.set_footer(text=f"로비ID {lobby['lobby_id']} | 배그 모집이 완료되어 대기방으로 이동되었습니다.")
+            embed.set_footer(text=f"로비아이디 {lobby['lobby_id']} | 배그 모집이 완료되어 대기방으로 이동되었습니다.")
         else:
-            embed.set_footer(text=f"로비ID {lobby['lobby_id']} | 정원이 차서 자동 팀 분배 + 자동 음성 이동이 완료되었습니다.")
+            embed.set_footer(text=f"로비아이디 {lobby['lobby_id']} | 정원이 차서 자동 팀 분배 + 자동 음성 이동이 완료되었습니다.")
     elif lobby["status"] == "closed":
-        embed.set_footer(text=f"로비ID {lobby['lobby_id']} | 모집 시간이 종료된 로비입니다.")
+        embed.set_footer(text=f"로비아이디 {lobby['lobby_id']} | 모집 시간이 종료된 로비입니다.")
     else:
-        embed.set_footer(text=f"로비ID {lobby['lobby_id']} | 내전 상태를 확인하세요.")
+        embed.set_footer(text=f"로비아이디 {lobby['lobby_id']} | 내전 상태를 확인하세요.")
 
     return embed
 
@@ -259,7 +259,7 @@ def build_lobby_list_embed(channel: discord.TextChannel, lobbies: list[dict]) ->
         )
 
     embed.add_field(name="로비 목록", value="\n".join(lines[:20]), inline=False)
-    embed.set_footer(text="여러 로비가 있으면 /내전상태 로비ID:<번호> 형식으로 선택하세요.")
+    embed.set_footer(text="여러 로비가 있으면 /내전상태 로비아이디:<번호> 형식으로 선택하세요.")
     return embed
 
 
@@ -328,7 +328,7 @@ class JoinModal(discord.ui.Modal, title="내전 참가"):
             party = db.get_user_party_by_id(self.lobby_id, interaction.user.id)
             if not party:
                 await interaction.response.send_message(
-                    f"배그 듀오/스쿼드는 먼저 파티를 만들어야 참가할 수 있습니다.\n`/파티생성 로비ID:{self.lobby_id}` 또는 `/파티참가 로비ID:{self.lobby_id} 파티코드:코드` 를 사용하세요.",
+                    f"배그 듀오/스쿼드는 먼저 파티를 만들어야 참가할 수 있습니다.\n`/파티생성 로비아이디:{self.lobby_id}` 또는 `/파티참가 로비아이디:{self.lobby_id} 파티코드:코드` 를 사용하세요.",
                     ephemeral=True,
                 )
                 return
@@ -481,12 +481,12 @@ class Recruit(commands.Cog):
         if send_list_on_ambiguous:
             embed = build_lobby_list_embed(interaction.channel, lobbies)
             await interaction.response.send_message(
-                content="같은 채널에 여러 로비가 있습니다. `로비ID`를 함께 입력해주세요.",
+                content="같은 채널에 여러 로비가 있습니다. `로비아이디`를 함께 입력해주세요.",
                 embed=embed,
                 ephemeral=True,
             )
         else:
-            await interaction.response.send_message("같은 채널에 여러 로비가 있습니다. `로비ID`를 함께 입력해주세요.", ephemeral=True)
+            await interaction.response.send_message("같은 채널에 여러 로비가 있습니다. `로비아이디`를 함께 입력해주세요.", ephemeral=True)
         return None
 
     @tasks.loop(minutes=1)
@@ -862,7 +862,7 @@ class Recruit(commands.Cog):
 
     @app_commands.command(name="내전시간수정", description="현재 내전의 날짜/시간과 모집 마감 시간을 수정합니다.")
     @app_commands.describe(
-        로비ID="수정할 로비 ID",
+        로비아이디="수정할 로비 ID",
         날짜="내전 날짜 (YYYY-MM-DD)",
         시간="내전 시간 (HH:MM)",
         모집마감날짜="모집 마감 날짜 (YYYY-MM-DD)",
@@ -875,10 +875,10 @@ class Recruit(commands.Cog):
         시간: str | None = None,
         모집마감날짜: str | None = None,
         모집마감시간: str | None = None,
-        로비ID: int | None = None,
+        로비아이디: int | None = None,
     ):
         try:
-            lobby = await self.resolve_lobby(interaction, 로비ID)
+            lobby = await self.resolve_lobby(interaction, 로비아이디)
             if not lobby:
                 return
 
@@ -895,10 +895,10 @@ class Recruit(commands.Cog):
             await interaction.response.send_message(f"오류 발생: {e}", ephemeral=True)
 
     @app_commands.command(name="파티생성", description="배그 듀오/스쿼드 파티를 생성합니다.")
-    @app_commands.describe(로비ID="파티를 만들 로비 ID")
-    async def create_party(self, interaction: discord.Interaction, 로비ID: int | None = None):
+    @app_commands.describe(로비아이디="파티를 만들 로비 ID")
+    async def create_party(self, interaction: discord.Interaction, 로비아이디: int | None = None):
         try:
-            lobby = await self.resolve_lobby(interaction, 로비ID)
+            lobby = await self.resolve_lobby(interaction, 로비아이디)
             if not lobby:
                 return
 
@@ -918,7 +918,7 @@ class Recruit(commands.Cog):
                 f"로비 ID: `{lobby['lobby_id']}`\n"
                 f"파티 코드: `{party['party_code']}`\n"
                 f"정원: {party['mode_size']}명\n"
-                f"다른 멤버는 `/파티참가 로비ID:{lobby['lobby_id']} 파티코드:{party['party_code']}` 로 들어오면 됩니다.",
+                f"다른 멤버는 `/파티참가 로비아이디:{lobby['lobby_id']} 파티코드:{party['party_code']}` 로 들어오면 됩니다.",
                 ephemeral=True,
             )
 
@@ -934,10 +934,10 @@ class Recruit(commands.Cog):
             await interaction.response.send_message(f"오류 발생: {e}", ephemeral=True)
 
     @app_commands.command(name="파티참가", description="배그 듀오/스쿼드 파티 코드로 파티에 참가합니다.")
-    @app_commands.describe(로비ID="참가할 로비 ID", 파티코드="파티 코드 입력")
-    async def join_party(self, interaction: discord.Interaction, 파티코드: str, 로비ID: int | None = None):
+    @app_commands.describe(로비아이디="참가할 로비 ID", 파티코드="파티 코드 입력")
+    async def join_party(self, interaction: discord.Interaction, 파티코드: str, 로비아이디: int | None = None):
         try:
-            lobby = await self.resolve_lobby(interaction, 로비ID)
+            lobby = await self.resolve_lobby(interaction, 로비아이디)
             if not lobby:
                 return
 
@@ -974,10 +974,10 @@ class Recruit(commands.Cog):
             await interaction.response.send_message(f"오류 발생: {e}", ephemeral=True)
 
     @app_commands.command(name="파티나가기", description="현재 배그 파티에서 나갑니다.")
-    @app_commands.describe(로비ID="나갈 로비 ID")
-    async def leave_party(self, interaction: discord.Interaction, 로비ID: int | None = None):
+    @app_commands.describe(로비아이디="나갈 로비 ID")
+    async def leave_party(self, interaction: discord.Interaction, 로비아이디: int | None = None):
         try:
-            lobby = await self.resolve_lobby(interaction, 로비ID)
+            lobby = await self.resolve_lobby(interaction, 로비아이디)
             if not lobby:
                 return
 
@@ -1010,9 +1010,9 @@ class Recruit(commands.Cog):
             await interaction.response.send_message(f"오류 발생: {e}", ephemeral=True)
 
     @app_commands.command(name="파티상태", description="현재 채널의 배그 파티 상태를 확인합니다.")
-    @app_commands.describe(로비ID="확인할 로비 ID")
-    async def party_status(self, interaction: discord.Interaction, 로비ID: int | None = None):
-        lobby = await self.resolve_lobby(interaction, 로비ID)
+    @app_commands.describe(로비아이디="확인할 로비 ID")
+    async def party_status(self, interaction: discord.Interaction, 로비아이디: int | None = None):
+        lobby = await self.resolve_lobby(interaction, 로비아이디)
         if not lobby:
             return
 
@@ -1031,9 +1031,9 @@ class Recruit(commands.Cog):
         )
 
     @app_commands.command(name="내전상태", description="현재 채널 로비 상태를 확인합니다.")
-    @app_commands.describe(로비ID="확인할 로비 ID")
-    async def lobby_status(self, interaction: discord.Interaction, 로비ID: int | None = None):
-        if 로비ID is None:
+    @app_commands.describe(로비아이디="확인할 로비 ID")
+    async def lobby_status(self, interaction: discord.Interaction, 로비아이디: int | None = None):
+        if 로비아이디 is None:
             lobbies = self.get_channel_lobbies(interaction.channel_id, interaction.guild_id, active_only=True)
             if not lobbies:
                 lobbies = self.get_channel_lobbies(interaction.channel_id, interaction.guild_id, active_only=False)
@@ -1045,7 +1045,7 @@ class Recruit(commands.Cog):
             if len(lobbies) > 1:
                 embed = build_lobby_list_embed(interaction.channel, lobbies)
                 await interaction.response.send_message(
-                    content="같은 채널에 여러 로비가 있습니다. `로비ID`를 지정해서 다시 확인해주세요.",
+                    content="같은 채널에 여러 로비가 있습니다. `로비아이디`를 지정해서 다시 확인해주세요.",
                     embed=embed,
                     ephemeral=True,
                 )
@@ -1053,7 +1053,7 @@ class Recruit(commands.Cog):
 
             lobby = lobbies[0]
         else:
-            lobby = await self.resolve_lobby(interaction, 로비ID, send_list_on_ambiguous=False)
+            lobby = await self.resolve_lobby(interaction, 로비아이디, send_list_on_ambiguous=False)
             if not lobby:
                 return
 

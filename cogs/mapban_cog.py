@@ -250,20 +250,20 @@ class MapPick(commands.Cog):
         if isinstance(interaction.channel, discord.TextChannel):
             embed = build_lobby_list_embed(interaction.channel, lobbies)
             await interaction.response.send_message(
-                content="같은 채널에 여러 로비가 있습니다. `로비ID`를 함께 입력해주세요.",
+                content="같은 채널에 여러 로비가 있습니다. `로비아이디`를 함께 입력해주세요.",
                 embed=embed,
                 ephemeral=True,
             )
         else:
             await interaction.response.send_message(
-                "같은 채널에 여러 로비가 있습니다. `로비ID`를 함께 입력해주세요.",
+                "같은 채널에 여러 로비가 있습니다. `로비아이디`를 함께 입력해주세요.",
                 ephemeral=True,
             )
         return None
 
     @app_commands.command(name="맵뽑기", description="현재 로비 게임 기준으로 맵을 랜덤 뽑기합니다. (프리미엄)")
-    @app_commands.describe(로비ID="맵을 뽑을 로비 ID")
-    async def pick_map(self, interaction: discord.Interaction, 로비ID: int | None = None):
+    @app_commands.describe(로비아이디="맵을 뽑을 로비 ID")
+    async def pick_map(self, interaction: discord.Interaction, 로비아이디: int | None = None):
         try:
             if not self._has_supporter_or_higher(interaction.guild_id):
                 current_name = self._current_plan_label(interaction.guild_id)
@@ -273,7 +273,7 @@ class MapPick(commands.Cog):
                 )
                 return
 
-            lobby = await self.resolve_lobby(interaction, 로비ID)
+            lobby = await self.resolve_lobby(interaction, 로비아이디)
             if not lobby:
                 return
 
@@ -328,10 +328,10 @@ class MapPick(commands.Cog):
                 await interaction.response.send_message(f"오류 발생: {e}", ephemeral=True)
 
     @app_commands.command(name="맵뽑기상태", description="현재 로비의 맵 뽑기 결과를 확인합니다.")
-    @app_commands.describe(로비ID="확인할 로비 ID")
-    async def map_pick_status(self, interaction: discord.Interaction, 로비ID: int | None = None):
+    @app_commands.describe(로비아이디="확인할 로비 ID")
+    async def map_pick_status(self, interaction: discord.Interaction, 로비아이디: int | None = None):
         try:
-            lobby = await self.resolve_lobby(interaction, 로비ID)
+            lobby = await self.resolve_lobby(interaction, 로비아이디)
             if not lobby:
                 return
 
@@ -355,10 +355,10 @@ class MapPick(commands.Cog):
                 await interaction.response.send_message(f"오류 발생: {e}", ephemeral=True)
 
     @app_commands.command(name="맵뽑기초기화", description="현재 로비의 맵 뽑기 결과를 초기화합니다.")
-    @app_commands.describe(로비ID="초기화할 로비 ID")
-    async def reset_map_pick(self, interaction: discord.Interaction, 로비ID: int | None = None):
+    @app_commands.describe(로비아이디="초기화할 로비 ID")
+    async def reset_map_pick(self, interaction: discord.Interaction, 로비아이디: int | None = None):
         try:
-            lobby = await self.resolve_lobby(interaction, 로비ID)
+            lobby = await self.resolve_lobby(interaction, 로비아이디)
             if not lobby:
                 return
 

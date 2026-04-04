@@ -169,13 +169,13 @@ class Team(commands.Cog):
         if send_list_on_ambiguous and isinstance(interaction.channel, discord.TextChannel):
             embed = build_lobby_list_embed(interaction.channel, lobbies)
             await interaction.response.send_message(
-                content="같은 채널에 여러 로비가 있습니다. `로비ID`를 함께 입력해주세요.",
+                content="같은 채널에 여러 로비가 있습니다. `로비아이디`를 함께 입력해주세요.",
                 embed=embed,
                 ephemeral=True,
             )
         else:
             await interaction.response.send_message(
-                "같은 채널에 여러 로비가 있습니다. `로비ID`를 함께 입력해주세요.",
+                "같은 채널에 여러 로비가 있습니다. `로비아이디`를 함께 입력해주세요.",
                 ephemeral=True,
             )
         return None
@@ -197,10 +197,10 @@ class Team(commands.Cog):
             pass
 
     @app_commands.command(name="밸런스팀", description="MMR 기준으로 자동 팀 분배를 합니다.")
-    @app_commands.describe(로비ID="팀 분배할 로비 ID")
-    async def balance_team(self, interaction: discord.Interaction, 로비ID: int | None = None):
+    @app_commands.describe(로비아이디="팀 분배할 로비 ID")
+    async def balance_team(self, interaction: discord.Interaction, 로비아이디: int | None = None):
         try:
-            lobby = await self.resolve_lobby(interaction, 로비ID, active_preferred=True)
+            lobby = await self.resolve_lobby(interaction, 로비아이디, active_preferred=True)
             if not lobby:
                 return
 
@@ -260,8 +260,8 @@ class Team(commands.Cog):
                 await interaction.response.send_message(f"오류 발생: {e}", ephemeral=True)
 
     @app_commands.command(name="결과기록", description="경기 결과를 반영하고 ELO를 계산합니다.")
-    @app_commands.describe(승리팀="A 또는 B", 로비ID="결과를 기록할 로비 ID")
-    async def record_result(self, interaction: discord.Interaction, 승리팀: str, 로비ID: int | None = None):
+    @app_commands.describe(승리팀="A 또는 B", 로비아이디="결과를 기록할 로비 ID")
+    async def record_result(self, interaction: discord.Interaction, 승리팀: str, 로비아이디: int | None = None):
         try:
             if not db.is_premium_guild(interaction.guild_id):
                 await interaction.response.send_message(
@@ -270,7 +270,7 @@ class Team(commands.Cog):
                 )
                 return
 
-            lobby = await self.resolve_lobby(interaction, 로비ID, active_preferred=True)
+            lobby = await self.resolve_lobby(interaction, 로비아이디, active_preferred=True)
             if not lobby:
                 return
 
@@ -354,10 +354,10 @@ class Team(commands.Cog):
                 await interaction.response.send_message(f"오류 발생: {e}", ephemeral=True)
 
     @app_commands.command(name="내전종료", description="통화방 정리 후 현재 채널 로비를 종료합니다.")
-    @app_commands.describe(로비ID="종료할 로비 ID")
-    async def close_scrim(self, interaction: discord.Interaction, 로비ID: int | None = None):
+    @app_commands.describe(로비아이디="종료할 로비 ID")
+    async def close_scrim(self, interaction: discord.Interaction, 로비아이디: int | None = None):
         try:
-            lobby = await self.resolve_lobby(interaction, 로비ID, active_preferred=False)
+            lobby = await self.resolve_lobby(interaction, 로비아이디, active_preferred=False)
             if not lobby:
                 return
 
