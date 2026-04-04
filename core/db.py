@@ -1901,3 +1901,980 @@ class DB:
             cur.execute(query, params)
             rows = cur.fetchall()
             return [dict(row) for row in rows]
+
+# =========================================================
+# Recruit multi-lobby overrides
+# =========================================================
+RECRUIT_ACTIVE_STATUSES = ("open", "balanced", "started")
+
+
+def _recruit_table_exists(table_name: str) -> bool:
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("""
+            SELECT 1
+            FROM information_schema.tables
+            WHERE table_schema = 'public' AND table_name = %s
+            LIMIT 1
+        """, (table_name,))
+        return cur.fetchone() is not None
+
+
+def _fetch_scalar(query: str, params: tuple = ()):
+    with db_cursor() as (_, cur):
+        cur.execute(query, params)
+        row = cur.fetchone()
+        return row[0] if row else None
+
+
+def _fetch_lobby_rows(where_sql: str = "", params: tuple = (), order_sql: str = ""):
+    init_recruit_tables()
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute(f"""
+            SELECT
+                lobby_id, channel_id, guild_id, host_id, game, team_size, total_slots, status,
+                message_id, waiting_voice_id, team_a_voice_id, team_b_voice_id,
+                scheduled_at, recruit_close_at, close_notice_sent, created_at
+            FROM scrim_lobbies
+            {where_sql}
+            {order_sql}
+        """, params)
+        return [dict(row) for row in cur.fetchall()]
+
+
+def _fetch_one_lobby(where_sql: str, params: tuple = ()):
+    rows = _fetch_lobby_rows(where_sql, params, "LIMIT 1")
+    return rows[0] if rows else None
+
+
+def _resolve_default_lobby_id(channel_id: int, guild_id: Optional[int] = None):
+    init_recruit_tables()
+    params = [channel_id]
+    guild_sql = ""
+    if guild_id is not None:
+        guild_sql = "AND guild_id = %s"
+        params.append(guild_id)
+
+    active_statuses = tuple(RECRUIT_ACTIVE_STATUSES)
+    rows = _fetch_lobby_rows(
+        f"""
+        WHERE channel_id = %s
+          {guild_sql}
+          AND status = ANY(%s)
+        """,
+        tuple(params + [list(active_statuses)]),
+        "ORDER BY created_at DESC, lobby_id DESC"
+    )
+    if rows:
+        return rows[0]["lobby_id"]
+
+    rows = _fetch_lobby_rows(
+        f"""
+        WHERE channel_id = %s
+          {guild_sql}
+        """,
+        tuple(params),
+        "ORDER BY created_at DESC, lobby_id DESC"
+    )
+    return rows[0]["lobby_id"] if rows else None
+
+
+def _migrate_legacy_recruit_data_once():
+    if not _recruit_table_exists("lobbies"):
+        return
+
+    if _fetch_scalar("SELECT COUNT(*) FROM scrim_lobbies") not in (0, None):
+        return
+
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("""
+            SELECT
+                channel_id, guild_id, host_id, game, team_size, total_slots, status,
+                message_id, waiting_voice_id, team_a_voice_id, team_b_voice_id,
+                scheduled_at, recruit_close_at, close_notice_sent, created_at
+            FROM lobbies
+            ORDER BY created_at ASC, channel_id ASC
+        """)
+        legacy_lobbies = [dict(row) for row in cur.fetchall()]
+
+    if not legacy_lobbies:
+        return
+
+    for legacy in legacy_lobbies:
+        with db_cursor(dict_cursor=True) as (_, cur):
+            cur.execute("""
+                INSERT INTO scrim_lobbies (
+                    channel_id, guild_id, host_id, game, team_size, total_slots, status,
+                    message_id, waiting_voice_id, team_a_voice_id, team_b_voice_id,
+                    scheduled_at, recruit_close_at, close_notice_sent, created_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING lobby_id
+            """, (
+                legacy["channel_id"],
+                legacy["guild_id"],
+                legacy["host_id"],
+                legacy["game"],
+                legacy["team_size"],
+                legacy.get("total_slots"),
+                legacy.get("status", "open"),
+                legacy.get("message_id"),
+                legacy.get("waiting_voice_id"),
+                legacy.get("team_a_voice_id"),
+                legacy.get("team_b_voice_id"),
+                legacy.get("scheduled_at"),
+                legacy.get("recruit_close_at"),
+                legacy.get("close_notice_sent", False),
+                legacy.get("created_at"),
+            ))
+            new_lobby = cur.fetchone()
+            lobby_id = int(new_lobby["lobby_id"])
+
+        if _recruit_table_exists("lobby_players"):
+            with db_cursor() as (_, cur):
+                cur.execute("""
+                    INSERT INTO scrim_lobby_players (
+                        lobby_id, user_id, display_name, mmr, position, sub_position, ow_role, party_id, joined_at
+                    )
+                    SELECT
+                        %s, user_id, display_name, mmr, position, sub_position, ow_role, party_id, joined_at
+                    FROM lobby_players
+                    WHERE channel_id = %s
+                    ON CONFLICT (lobby_id, user_id) DO NOTHING
+                """, (lobby_id, legacy["channel_id"]))
+
+        if _recruit_table_exists("lobby_teams"):
+            with db_cursor() as (_, cur):
+                cur.execute("""
+                    INSERT INTO scrim_lobby_teams (lobby_id, team, user_id)
+                    SELECT %s, team, user_id
+                    FROM lobby_teams
+                    WHERE channel_id = %s
+                    ON CONFLICT (lobby_id, team, user_id) DO NOTHING
+                """, (lobby_id, legacy["channel_id"]))
+
+        legacy_party_id_map = {}
+        if _recruit_table_exists("lobby_parties"):
+            with db_cursor(dict_cursor=True) as (_, cur):
+                cur.execute("""
+                    SELECT id, leader_user_id, party_code, mode_size, created_at
+                    FROM lobby_parties
+                    WHERE channel_id = %s
+                    ORDER BY id ASC
+                """, (legacy["channel_id"],))
+                party_rows = [dict(row) for row in cur.fetchall()]
+
+            for party in party_rows:
+                with db_cursor(dict_cursor=True) as (_, cur):
+                    cur.execute("""
+                        INSERT INTO scrim_lobby_parties (
+                            lobby_id, leader_user_id, party_code, mode_size, created_at
+                        )
+                        VALUES (%s, %s, %s, %s, %s)
+                        RETURNING id
+                    """, (
+                        lobby_id,
+                        party["leader_user_id"],
+                        party["party_code"],
+                        party["mode_size"],
+                        party["created_at"],
+                    ))
+                    created_party = cur.fetchone()
+                    legacy_party_id_map[int(party["id"])] = int(created_party["id"])
+
+        if _recruit_table_exists("lobby_party_members") and legacy_party_id_map:
+            with db_cursor(dict_cursor=True) as (_, cur):
+                cur.execute("""
+                    SELECT party_id, user_id, display_name, joined_at
+                    FROM lobby_party_members
+                    WHERE channel_id = %s
+                    ORDER BY joined_at ASC, user_id ASC
+                """, (legacy["channel_id"],))
+                member_rows = [dict(row) for row in cur.fetchall()]
+
+            for member in member_rows:
+                new_party_id = legacy_party_id_map.get(int(member["party_id"]))
+                if not new_party_id:
+                    continue
+                with db_cursor() as (_, cur):
+                    cur.execute("""
+                        INSERT INTO scrim_lobby_party_members (
+                            lobby_id, party_id, user_id, display_name, joined_at
+                        )
+                        VALUES (%s, %s, %s, %s, %s)
+                        ON CONFLICT (lobby_id, user_id) DO NOTHING
+                    """, (
+                        lobby_id,
+                        new_party_id,
+                        member["user_id"],
+                        member["display_name"],
+                        member["joined_at"],
+                    ))
+
+        if legacy_party_id_map:
+            with db_cursor() as (_, cur):
+                for old_party_id, new_party_id in legacy_party_id_map.items():
+                    cur.execute("""
+                        UPDATE scrim_lobby_players
+                        SET party_id = %s
+                        WHERE lobby_id = %s AND party_id = %s
+                    """, (new_party_id, lobby_id, old_party_id))
+
+
+def init_recruit_tables():
+    with db_cursor() as (_, cur):
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS scrim_lobbies (
+                lobby_id BIGSERIAL PRIMARY KEY,
+                channel_id BIGINT NOT NULL,
+                guild_id BIGINT NOT NULL,
+                host_id BIGINT NOT NULL,
+                game VARCHAR(50) NOT NULL,
+                team_size INTEGER NOT NULL,
+                total_slots INTEGER,
+                status VARCHAR(30) NOT NULL DEFAULT 'open',
+                message_id BIGINT,
+                waiting_voice_id BIGINT,
+                team_a_voice_id BIGINT,
+                team_b_voice_id BIGINT,
+                scheduled_at TIMESTAMP,
+                recruit_close_at TIMESTAMP,
+                close_notice_sent BOOLEAN NOT NULL DEFAULT FALSE,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_scrim_lobbies_message_id_unique ON scrim_lobbies (message_id) WHERE message_id IS NOT NULL")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_scrim_lobbies_channel_created ON scrim_lobbies (channel_id, created_at DESC)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_scrim_lobbies_guild_status ON scrim_lobbies (guild_id, status, created_at DESC)")
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS scrim_lobby_players (
+                lobby_id BIGINT NOT NULL,
+                user_id BIGINT NOT NULL,
+                display_name VARCHAR(100) NOT NULL,
+                mmr INTEGER NOT NULL,
+                position VARCHAR(50) NOT NULL,
+                sub_position VARCHAR(50),
+                ow_role VARCHAR(20),
+                party_id BIGINT,
+                joined_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (lobby_id, user_id)
+            )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_scrim_lobby_players_party ON scrim_lobby_players (lobby_id, party_id)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_scrim_lobby_players_joined ON scrim_lobby_players (lobby_id, joined_at ASC)")
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS scrim_lobby_teams (
+                lobby_id BIGINT NOT NULL,
+                team VARCHAR(1) NOT NULL,
+                user_id BIGINT NOT NULL,
+                PRIMARY KEY (lobby_id, team, user_id)
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS players (
+                guild_id BIGINT NOT NULL,
+                user_id BIGINT NOT NULL,
+                display_name VARCHAR(100),
+                mmr INTEGER NOT NULL DEFAULT 1000,
+                win INTEGER NOT NULL DEFAULT 0,
+                lose INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (guild_id, user_id)
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS player_game_stats (
+                guild_id BIGINT NOT NULL,
+                user_id BIGINT NOT NULL,
+                game VARCHAR(50) NOT NULL,
+                display_name VARCHAR(100),
+                mmr INTEGER NOT NULL DEFAULT 1000,
+                win INTEGER NOT NULL DEFAULT 0,
+                lose INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (guild_id, user_id, game)
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS overwatch_role_mmr (
+                guild_id BIGINT NOT NULL,
+                user_id BIGINT NOT NULL,
+                role VARCHAR(20) NOT NULL,
+                display_name VARCHAR(100),
+                mmr INTEGER NOT NULL DEFAULT 1000,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (guild_id, user_id, role)
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS scrim_lobby_parties (
+                id BIGSERIAL PRIMARY KEY,
+                lobby_id BIGINT NOT NULL,
+                leader_user_id BIGINT NOT NULL,
+                party_code VARCHAR(12) NOT NULL,
+                mode_size INTEGER NOT NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (lobby_id, party_code)
+            )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_scrim_lobby_parties_lobby ON scrim_lobby_parties (lobby_id, id ASC)")
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS scrim_lobby_party_members (
+                lobby_id BIGINT NOT NULL,
+                party_id BIGINT NOT NULL,
+                user_id BIGINT NOT NULL,
+                display_name VARCHAR(100) NOT NULL,
+                joined_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (lobby_id, user_id)
+            )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_scrim_lobby_party_members_party ON scrim_lobby_party_members (lobby_id, party_id, joined_at ASC)")
+
+    _migrate_legacy_recruit_data_once()
+
+
+def get_lobby_by_id(lobby_id: int):
+    return _fetch_one_lobby("WHERE lobby_id = %s", (lobby_id,))
+
+
+def get_lobby_by_message_id(message_id: int):
+    return _fetch_one_lobby("WHERE message_id = %s", (message_id,))
+
+
+def get_channel_lobbies(channel_id: int, guild_id: Optional[int] = None, active_only: bool = False, limit: int = 20):
+    params = [channel_id]
+    where_parts = ["channel_id = %s"]
+    if guild_id is not None:
+        where_parts.append("guild_id = %s")
+        params.append(guild_id)
+    if active_only:
+        where_parts.append("status = ANY(%s)")
+        params.append(list(RECRUIT_ACTIVE_STATUSES))
+    params.append(limit)
+    return _fetch_lobby_rows(
+        "WHERE " + " AND ".join(where_parts),
+        tuple(params),
+        "ORDER BY created_at DESC, lobby_id DESC LIMIT %s"
+    )
+
+
+def get_lobby(channel_id: int):
+    lobby_id = _resolve_default_lobby_id(channel_id)
+    if not lobby_id:
+        return None
+    return get_lobby_by_id(lobby_id)
+
+
+def create_lobby(
+    channel_id: int,
+    guild_id: int,
+    host_id: int,
+    game: str,
+    team_size: int,
+    total_slots: Optional[int] = None,
+    scheduled_at: Optional[datetime] = None,
+    recruit_close_at: Optional[datetime] = None
+):
+    init_recruit_tables()
+    register_guild(guild_id)
+
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("""
+            INSERT INTO scrim_lobbies (
+                channel_id, guild_id, host_id, game, team_size, total_slots,
+                scheduled_at, recruit_close_at, close_notice_sent, status
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, FALSE, 'open')
+            RETURNING
+                lobby_id, channel_id, guild_id, host_id, game, team_size, total_slots, status,
+                message_id, waiting_voice_id, team_a_voice_id, team_b_voice_id,
+                scheduled_at, recruit_close_at, close_notice_sent, created_at
+        """, (channel_id, guild_id, host_id, game, team_size, total_slots, scheduled_at, recruit_close_at))
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def set_lobby_message_by_id(lobby_id: int, message_id: int):
+    with db_cursor() as (_, cur):
+        cur.execute("""
+            UPDATE scrim_lobbies
+            SET message_id = %s
+            WHERE lobby_id = %s
+        """, (message_id, lobby_id))
+
+
+def set_lobby_message(channel_id: int, message_id: int):
+    lobby_id = _resolve_default_lobby_id(channel_id)
+    if lobby_id:
+        set_lobby_message_by_id(lobby_id, message_id)
+
+
+def set_lobby_status_by_id(lobby_id: int, status: str):
+    with db_cursor() as (_, cur):
+        cur.execute("""
+            UPDATE scrim_lobbies
+            SET status = %s
+            WHERE lobby_id = %s
+        """, (status, lobby_id))
+
+
+def set_lobby_status(channel_id: int, status: str):
+    lobby_id = _resolve_default_lobby_id(channel_id)
+    if lobby_id:
+        set_lobby_status_by_id(lobby_id, status)
+
+
+def set_voice_channels_by_id(lobby_id: int, waiting_voice_id: int, team_a_voice_id: int, team_b_voice_id: int):
+    with db_cursor() as (_, cur):
+        cur.execute("""
+            UPDATE scrim_lobbies
+            SET waiting_voice_id = %s,
+                team_a_voice_id = %s,
+                team_b_voice_id = %s
+            WHERE lobby_id = %s
+        """, (waiting_voice_id, team_a_voice_id, team_b_voice_id, lobby_id))
+
+
+def set_voice_channels(channel_id: int, waiting_voice_id: int, team_a_voice_id: int, team_b_voice_id: int):
+    lobby_id = _resolve_default_lobby_id(channel_id)
+    if lobby_id:
+        set_voice_channels_by_id(lobby_id, waiting_voice_id, team_a_voice_id, team_b_voice_id)
+
+
+def get_lobby_players_by_id(lobby_id: int):
+    init_recruit_tables()
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("""
+            SELECT lobby_id, user_id, display_name, mmr, position, sub_position, ow_role, party_id, joined_at
+            FROM scrim_lobby_players
+            WHERE lobby_id = %s
+            ORDER BY joined_at ASC, user_id ASC
+        """, (lobby_id,))
+        return [dict(row) for row in cur.fetchall()]
+
+
+def get_lobby_players(channel_id: int):
+    lobby_id = _resolve_default_lobby_id(channel_id)
+    if not lobby_id:
+        return []
+    return get_lobby_players_by_id(lobby_id)
+
+
+def add_lobby_player_by_id(
+    lobby_id: int,
+    user_id: int,
+    display_name: str,
+    mmr: int,
+    position: str,
+    sub_position: Optional[str] = None,
+    ow_role: Optional[str] = None,
+    party_id: Optional[int] = None
+):
+    with db_cursor() as (_, cur):
+        cur.execute("""
+            INSERT INTO scrim_lobby_players (lobby_id, user_id, display_name, mmr, position, sub_position, ow_role, party_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (lobby_id, user_id)
+            DO UPDATE SET
+                display_name = EXCLUDED.display_name,
+                mmr = EXCLUDED.mmr,
+                position = EXCLUDED.position,
+                sub_position = EXCLUDED.sub_position,
+                ow_role = EXCLUDED.ow_role,
+                party_id = EXCLUDED.party_id
+        """, (lobby_id, user_id, display_name, mmr, position, sub_position, ow_role, party_id))
+
+
+def add_lobby_player(
+    channel_id: int,
+    user_id: int,
+    display_name: str,
+    mmr: int,
+    position: str,
+    sub_position: Optional[str] = None,
+    ow_role: Optional[str] = None,
+    party_id: Optional[int] = None
+):
+    lobby_id = _resolve_default_lobby_id(channel_id)
+    if lobby_id:
+        add_lobby_player_by_id(lobby_id, user_id, display_name, mmr, position, sub_position, ow_role, party_id)
+
+
+def has_lobby_player_by_id(lobby_id: int, user_id: int) -> bool:
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("""
+            SELECT 1
+            FROM scrim_lobby_players
+            WHERE lobby_id = %s AND user_id = %s
+        """, (lobby_id, user_id))
+        return cur.fetchone() is not None
+
+
+def has_lobby_player(channel_id: int, user_id: int) -> bool:
+    lobby_id = _resolve_default_lobby_id(channel_id)
+    if not lobby_id:
+        return False
+    return has_lobby_player_by_id(lobby_id, user_id)
+
+
+def remove_lobby_player_by_id(lobby_id: int, user_id: int):
+    with db_cursor() as (_, cur):
+        cur.execute("""
+            DELETE FROM scrim_lobby_players
+            WHERE lobby_id = %s AND user_id = %s
+        """, (lobby_id, user_id))
+
+
+def remove_lobby_player(channel_id: int, user_id: int):
+    lobby_id = _resolve_default_lobby_id(channel_id)
+    if lobby_id:
+        remove_lobby_player_by_id(lobby_id, user_id)
+
+
+def clear_teams_by_id(lobby_id: int):
+    with db_cursor() as (_, cur):
+        cur.execute("""
+            DELETE FROM scrim_lobby_teams
+            WHERE lobby_id = %s
+        """, (lobby_id,))
+
+
+def clear_teams(channel_id: int):
+    lobby_id = _resolve_default_lobby_id(channel_id)
+    if lobby_id:
+        clear_teams_by_id(lobby_id)
+
+
+def add_team_member_by_id(lobby_id: int, team: str, user_id: int):
+    with db_cursor() as (_, cur):
+        cur.execute("""
+            INSERT INTO scrim_lobby_teams (lobby_id, team, user_id)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (lobby_id, team, user_id) DO NOTHING
+        """, (lobby_id, team, user_id))
+
+
+def add_team_member(channel_id: int, team: str, user_id: int):
+    lobby_id = _resolve_default_lobby_id(channel_id)
+    if lobby_id:
+        add_team_member_by_id(lobby_id, team, user_id)
+
+
+def get_team_members_by_id(lobby_id: int, team: str):
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("""
+            SELECT user_id
+            FROM scrim_lobby_teams
+            WHERE lobby_id = %s AND team = %s
+            ORDER BY user_id ASC
+        """, (lobby_id, team))
+        return [row["user_id"] for row in cur.fetchall()]
+
+
+def get_team_members(channel_id: int, team: str):
+    lobby_id = _resolve_default_lobby_id(channel_id)
+    if not lobby_id:
+        return []
+    return get_team_members_by_id(lobby_id, team)
+
+
+def create_lobby_party_by_id(lobby_id: int, leader_user_id: int, leader_name: str, mode_size: int):
+    init_recruit_tables()
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("""
+            SELECT party_id
+            FROM scrim_lobby_party_members
+            WHERE lobby_id = %s AND user_id = %s
+        """, (lobby_id, leader_user_id))
+        if cur.fetchone():
+            raise ValueError("이미 파티에 속해 있습니다.")
+
+        party_code = None
+        for _ in range(10):
+            test_code = generate_party_code()
+            cur.execute("""
+                SELECT id
+                FROM scrim_lobby_parties
+                WHERE lobby_id = %s AND party_code = %s
+            """, (lobby_id, test_code))
+            if cur.fetchone() is None:
+                party_code = test_code
+                break
+
+        if not party_code:
+            raise ValueError("파티 코드 생성에 실패했습니다.")
+
+        cur.execute("""
+            INSERT INTO scrim_lobby_parties (lobby_id, leader_user_id, party_code, mode_size)
+            VALUES (%s, %s, %s, %s)
+            RETURNING id, lobby_id, leader_user_id, party_code, mode_size, created_at
+        """, (lobby_id, leader_user_id, party_code, mode_size))
+        party_row = cur.fetchone()
+
+        cur.execute("""
+            INSERT INTO scrim_lobby_party_members (lobby_id, party_id, user_id, display_name)
+            VALUES (%s, %s, %s, %s)
+        """, (lobby_id, party_row["id"], leader_user_id, leader_name))
+
+        return dict(party_row)
+
+
+def create_lobby_party(channel_id: int, leader_user_id: int, leader_name: str, mode_size: int):
+    lobby_id = _resolve_default_lobby_id(channel_id)
+    if not lobby_id:
+        raise ValueError("현재 채널에 로비가 없습니다.")
+    return create_lobby_party_by_id(lobby_id, leader_user_id, leader_name, mode_size)
+
+
+def get_party_by_code_by_id(lobby_id: int, party_code: str):
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("""
+            SELECT id, lobby_id, leader_user_id, party_code, mode_size, created_at
+            FROM scrim_lobby_parties
+            WHERE lobby_id = %s AND party_code = %s
+        """, (lobby_id, party_code.upper()))
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def get_party_by_code(channel_id: int, party_code: str):
+    lobby_id = _resolve_default_lobby_id(channel_id)
+    if not lobby_id:
+        return None
+    return get_party_by_code_by_id(lobby_id, party_code)
+
+
+def get_user_party_by_id(lobby_id: int, user_id: int):
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("""
+            SELECT
+                p.id, p.lobby_id, p.leader_user_id, p.party_code, p.mode_size, p.created_at
+            FROM scrim_lobby_parties p
+            JOIN scrim_lobby_party_members m ON p.id = m.party_id
+            WHERE m.lobby_id = %s AND m.user_id = %s
+        """, (lobby_id, user_id))
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def get_user_party(channel_id: int, user_id: int):
+    lobby_id = _resolve_default_lobby_id(channel_id)
+    if not lobby_id:
+        return None
+    return get_user_party_by_id(lobby_id, user_id)
+
+
+def get_party_members_by_id(lobby_id: int, party_id: int):
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("""
+            SELECT lobby_id, party_id, user_id, display_name, joined_at
+            FROM scrim_lobby_party_members
+            WHERE lobby_id = %s AND party_id = %s
+            ORDER BY joined_at ASC, user_id ASC
+        """, (lobby_id, party_id))
+        return [dict(row) for row in cur.fetchall()]
+
+
+def get_party_members(channel_id: int, party_id: int):
+    lobby_id = _resolve_default_lobby_id(channel_id)
+    if not lobby_id:
+        return []
+    return get_party_members_by_id(lobby_id, party_id)
+
+
+def join_lobby_party_by_id(lobby_id: int, party_code: str, user_id: int, display_name: str):
+    init_recruit_tables()
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("""
+            SELECT party_id
+            FROM scrim_lobby_party_members
+            WHERE lobby_id = %s AND user_id = %s
+        """, (lobby_id, user_id))
+        if cur.fetchone():
+            raise ValueError("이미 다른 파티에 속해 있습니다.")
+
+        cur.execute("""
+            SELECT id, lobby_id, leader_user_id, party_code, mode_size, created_at
+            FROM scrim_lobby_parties
+            WHERE lobby_id = %s AND party_code = %s
+        """, (lobby_id, party_code.upper()))
+        party = cur.fetchone()
+
+        if not party:
+            raise ValueError("파티 코드를 찾을 수 없습니다.")
+
+        cur.execute("""
+            SELECT COUNT(*) AS cnt
+            FROM scrim_lobby_party_members
+            WHERE lobby_id = %s AND party_id = %s
+        """, (lobby_id, party["id"]))
+        member_count = cur.fetchone()["cnt"]
+
+        if member_count >= party["mode_size"]:
+            raise ValueError("해당 파티는 이미 정원이 찼습니다.")
+
+        cur.execute("""
+            INSERT INTO scrim_lobby_party_members (lobby_id, party_id, user_id, display_name)
+            VALUES (%s, %s, %s, %s)
+        """, (lobby_id, party["id"], user_id, display_name))
+
+        return dict(party)
+
+
+def join_lobby_party(channel_id: int, party_code: str, user_id: int, display_name: str):
+    lobby_id = _resolve_default_lobby_id(channel_id)
+    if not lobby_id:
+        raise ValueError("현재 채널에 로비가 없습니다.")
+    return join_lobby_party_by_id(lobby_id, party_code, user_id, display_name)
+
+
+def leave_lobby_party_by_id(lobby_id: int, user_id: int):
+    init_recruit_tables()
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("""
+            SELECT
+                p.id, p.lobby_id, p.leader_user_id, p.party_code, p.mode_size
+            FROM scrim_lobby_parties p
+            JOIN scrim_lobby_party_members m ON p.id = m.party_id
+            WHERE m.lobby_id = %s AND m.user_id = %s
+        """, (lobby_id, user_id))
+        party = cur.fetchone()
+
+        if not party:
+            return {"action": "none"}
+
+        if party["leader_user_id"] == user_id:
+            cur.execute("""
+                SELECT user_id
+                FROM scrim_lobby_party_members
+                WHERE lobby_id = %s AND party_id = %s
+            """, (lobby_id, party["id"]))
+            member_ids = [row["user_id"] for row in cur.fetchall()]
+
+            cur.execute("""
+                DELETE FROM scrim_lobby_players
+                WHERE lobby_id = %s AND party_id = %s
+            """, (lobby_id, party["id"]))
+
+            cur.execute("""
+                DELETE FROM scrim_lobby_party_members
+                WHERE lobby_id = %s AND party_id = %s
+            """, (lobby_id, party["id"]))
+
+            cur.execute("""
+                DELETE FROM scrim_lobby_parties
+                WHERE id = %s
+            """, (party["id"],))
+
+            return {
+                "action": "disbanded",
+                "party_code": party["party_code"],
+                "member_ids": member_ids,
+            }
+
+        cur.execute("""
+            DELETE FROM scrim_lobby_players
+            WHERE lobby_id = %s AND user_id = %s
+        """, (lobby_id, user_id))
+
+        cur.execute("""
+            DELETE FROM scrim_lobby_party_members
+            WHERE lobby_id = %s AND user_id = %s
+        """, (lobby_id, user_id))
+
+        return {"action": "left", "party_code": party["party_code"]}
+
+
+def leave_lobby_party(channel_id: int, user_id: int):
+    lobby_id = _resolve_default_lobby_id(channel_id)
+    if not lobby_id:
+        return {"action": "none"}
+    return leave_lobby_party_by_id(lobby_id, user_id)
+
+
+def get_lobby_parties_by_id(lobby_id: int):
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("""
+            SELECT id, lobby_id, leader_user_id, party_code, mode_size, created_at
+            FROM scrim_lobby_parties
+            WHERE lobby_id = %s
+            ORDER BY id ASC
+        """, (lobby_id,))
+        parties = [dict(row) for row in cur.fetchall()]
+
+    result = []
+    for party in parties:
+        members = get_party_members_by_id(lobby_id, party["id"])
+        result.append({**party, "members": members})
+    return result
+
+
+def get_lobby_parties(channel_id: int):
+    lobby_id = _resolve_default_lobby_id(channel_id)
+    if not lobby_id:
+        return []
+    return get_lobby_parties_by_id(lobby_id)
+
+
+def update_lobby_times_by_id(lobby_id: int, scheduled_at: Optional[datetime] = None, recruit_close_at: Optional[datetime] = None):
+    with db_cursor() as (_, cur):
+        cur.execute("""
+            UPDATE scrim_lobbies
+            SET scheduled_at = %s, recruit_close_at = %s, close_notice_sent = FALSE
+            WHERE lobby_id = %s
+        """, (scheduled_at, recruit_close_at, lobby_id))
+
+
+def update_lobby_times(channel_id: int, scheduled_at: Optional[datetime] = None, recruit_close_at: Optional[datetime] = None):
+    lobby_id = _resolve_default_lobby_id(channel_id)
+    if lobby_id:
+        update_lobby_times_by_id(lobby_id, scheduled_at, recruit_close_at)
+
+
+def count_active_guild_lobbies(guild_id: int) -> int:
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("""
+            SELECT COUNT(*) AS cnt
+            FROM scrim_lobbies
+            WHERE guild_id = %s AND status = ANY(%s)
+        """, (guild_id, list(RECRUIT_ACTIVE_STATUSES)))
+        row = cur.fetchone()
+        return int(row["cnt"]) if row else 0
+
+
+def get_due_close_notice_lobbies():
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("""
+            SELECT
+                lobby_id, channel_id, guild_id, host_id, game, team_size, total_slots, status,
+                message_id, waiting_voice_id, team_a_voice_id, team_b_voice_id,
+                scheduled_at, recruit_close_at, close_notice_sent, created_at
+            FROM scrim_lobbies
+            WHERE status = 'open'
+              AND recruit_close_at IS NOT NULL
+              AND close_notice_sent = FALSE
+              AND recruit_close_at <= (CURRENT_TIMESTAMP + INTERVAL '10 minutes')
+              AND recruit_close_at > CURRENT_TIMESTAMP
+            ORDER BY recruit_close_at ASC, lobby_id ASC
+        """)
+        return [dict(r) for r in cur.fetchall()]
+
+
+def mark_close_notice_sent_by_id(lobby_id: int):
+    with db_cursor() as (_, cur):
+        cur.execute("""
+            UPDATE scrim_lobbies
+            SET close_notice_sent = TRUE
+            WHERE lobby_id = %s
+        """, (lobby_id,))
+
+
+def mark_close_notice_sent(channel_id: int):
+    lobby_id = _resolve_default_lobby_id(channel_id)
+    if lobby_id:
+        mark_close_notice_sent_by_id(lobby_id)
+
+
+def get_due_close_lobbies():
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute("""
+            SELECT
+                lobby_id, channel_id, guild_id, host_id, game, team_size, total_slots, status,
+                message_id, waiting_voice_id, team_a_voice_id, team_b_voice_id,
+                scheduled_at, recruit_close_at, close_notice_sent, created_at
+            FROM scrim_lobbies
+            WHERE status = 'open'
+              AND recruit_close_at IS NOT NULL
+              AND recruit_close_at <= CURRENT_TIMESTAMP
+            ORDER BY recruit_close_at ASC, lobby_id ASC
+        """)
+        return [dict(r) for r in cur.fetchall()]
+
+
+def delete_lobby_by_id(lobby_id: int):
+    with db_cursor() as (_, cur):
+        cur.execute("SELECT channel_id FROM scrim_lobbies WHERE lobby_id = %s", (lobby_id,))
+        row = cur.fetchone()
+        channel_id = row[0] if row else None
+
+        if _recruit_table_exists("scrim_map_pick_sessions"):
+            cur.execute("DELETE FROM scrim_map_pick_sessions WHERE lobby_id = %s", (lobby_id,))
+
+        if channel_id and _recruit_table_exists("map_pick_sessions"):
+            cur.execute("DELETE FROM map_pick_sessions WHERE channel_id = %s", (channel_id,))
+
+        cur.execute("DELETE FROM scrim_lobby_players WHERE lobby_id = %s", (lobby_id,))
+        cur.execute("DELETE FROM scrim_lobby_teams WHERE lobby_id = %s", (lobby_id,))
+        cur.execute("DELETE FROM scrim_lobby_party_members WHERE lobby_id = %s", (lobby_id,))
+        cur.execute("DELETE FROM scrim_lobby_parties WHERE lobby_id = %s", (lobby_id,))
+        cur.execute("DELETE FROM scrim_lobbies WHERE lobby_id = %s", (lobby_id,))
+
+
+def _handle_legacy_channel_delete(query: str, params: tuple):
+    normalized = " ".join(query.strip().lower().split())
+    if len(params) != 1:
+        return False
+
+    delete_map = {
+        "delete from lobby_players where channel_id = %s": "scrim_lobby_players",
+        "delete from lobby_teams where channel_id = %s": "scrim_lobby_teams",
+        "delete from lobby_party_members where channel_id = %s": "scrim_lobby_party_members",
+        "delete from lobby_parties where channel_id = %s": "scrim_lobby_parties",
+        "delete from lobbies where channel_id = %s": "scrim_lobbies",
+    }
+    target_table = delete_map.get(normalized)
+    if not target_table:
+        return False
+
+    channel_id = int(params[0])
+    lobby_id = _resolve_default_lobby_id(channel_id)
+    if not lobby_id:
+        return True
+
+    with db_cursor() as (_, cur):
+        if target_table == "scrim_lobbies":
+            cur.execute(f"DELETE FROM {target_table} WHERE lobby_id = %s", (lobby_id,))
+        else:
+            cur.execute(f"DELETE FROM {target_table} WHERE lobby_id = %s", (lobby_id,))
+    return True
+
+
+DB.get_lobby_by_id = staticmethod(get_lobby_by_id)
+DB.get_lobby_by_message_id = staticmethod(get_lobby_by_message_id)
+DB.get_channel_lobbies = staticmethod(get_channel_lobbies)
+DB.set_lobby_message_by_id = staticmethod(set_lobby_message_by_id)
+DB.set_lobby_status_by_id = staticmethod(set_lobby_status_by_id)
+DB.set_voice_channels_by_id = staticmethod(set_voice_channels_by_id)
+DB.get_lobby_players_by_id = staticmethod(get_lobby_players_by_id)
+DB.add_lobby_player_by_id = staticmethod(add_lobby_player_by_id)
+DB.has_lobby_player_by_id = staticmethod(has_lobby_player_by_id)
+DB.remove_lobby_player_by_id = staticmethod(remove_lobby_player_by_id)
+DB.clear_teams_by_id = staticmethod(clear_teams_by_id)
+DB.add_team_member_by_id = staticmethod(add_team_member_by_id)
+DB.get_team_members_by_id = staticmethod(get_team_members_by_id)
+DB.create_lobby_party_by_id = staticmethod(create_lobby_party_by_id)
+DB.get_party_by_code_by_id = staticmethod(get_party_by_code_by_id)
+DB.get_user_party_by_id = staticmethod(get_user_party_by_id)
+DB.get_party_members_by_id = staticmethod(get_party_members_by_id)
+DB.join_lobby_party_by_id = staticmethod(join_lobby_party_by_id)
+DB.leave_lobby_party_by_id = staticmethod(leave_lobby_party_by_id)
+DB.get_lobby_parties_by_id = staticmethod(get_lobby_parties_by_id)
+DB.update_lobby_times_by_id = staticmethod(update_lobby_times_by_id)
+DB.mark_close_notice_sent_by_id = staticmethod(mark_close_notice_sent_by_id)
+DB.delete_lobby_by_id = staticmethod(delete_lobby_by_id)
+
+_original_db_execute = DB.execute
+
+
+def _db_execute_with_multi_lobby_compat(query: str, params: tuple = ()):
+    if _handle_legacy_channel_delete(query, params):
+        return
+    with db_cursor() as (_, cur):
+        cur.execute(query, params)
+
+
+DB.execute = staticmethod(_db_execute_with_multi_lobby_compat)
