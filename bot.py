@@ -31,6 +31,7 @@ async def load_extensions():
         "cogs.mapban_cog",
         "cogs.season_cog",
         "cogs.premium_cog",
+        "cogs.growth_cog",
     ]
 
     for ext in cogs:
