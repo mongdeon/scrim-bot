@@ -803,7 +803,7 @@ def get_lobby(channel_id: int):
             SELECT
                 channel_id, guild_id, host_id, game, team_size, total_slots, status,
                 message_id, waiting_voice_id, team_a_voice_id, team_b_voice_id,
-                scheduled_at, recruit_close_at, close_notice_sent, created_at
+                scheduled_at, recruit_close_at, close_notice_sent, full_notice_sent, created_at
             FROM lobbies
             WHERE channel_id = %s
         """, (channel_id,))
@@ -1933,7 +1933,7 @@ def _fetch_lobby_rows(where_sql: str = "", params: tuple = (), order_sql: str = 
             SELECT
                 lobby_id, channel_id, guild_id, host_id, game, team_size, total_slots, status,
                 message_id, waiting_voice_id, team_a_voice_id, team_b_voice_id,
-                scheduled_at, recruit_close_at, close_notice_sent, created_at
+                scheduled_at, recruit_close_at, close_notice_sent, full_notice_sent, created_at
             FROM scrim_lobbies
             {where_sql}
             {order_sql}
@@ -1990,7 +1990,7 @@ def _migrate_legacy_recruit_data_once():
             SELECT
                 channel_id, guild_id, host_id, game, team_size, total_slots, status,
                 message_id, waiting_voice_id, team_a_voice_id, team_b_voice_id,
-                scheduled_at, recruit_close_at, close_notice_sent, created_at
+                scheduled_at, recruit_close_at, close_notice_sent, full_notice_sent, created_at
             FROM lobbies
             ORDER BY created_at ASC, channel_id ASC
         """)
@@ -2005,7 +2005,7 @@ def _migrate_legacy_recruit_data_once():
                 INSERT INTO scrim_lobbies (
                     channel_id, guild_id, host_id, game, team_size, total_slots, status,
                     message_id, waiting_voice_id, team_a_voice_id, team_b_voice_id,
-                    scheduled_at, recruit_close_at, close_notice_sent, created_at
+                    scheduled_at, recruit_close_at, close_notice_sent, full_notice_sent, created_at
                 )
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING lobby_id
@@ -2139,12 +2139,14 @@ def init_recruit_tables():
                 scheduled_at TIMESTAMP,
                 recruit_close_at TIMESTAMP,
                 close_notice_sent BOOLEAN NOT NULL DEFAULT FALSE,
+                full_notice_sent BOOLEAN NOT NULL DEFAULT FALSE,
                 created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
         """)
         cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_scrim_lobbies_message_id_unique ON scrim_lobbies (message_id) WHERE message_id IS NOT NULL")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_scrim_lobbies_channel_created ON scrim_lobbies (channel_id, created_at DESC)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_scrim_lobbies_guild_status ON scrim_lobbies (guild_id, status, created_at DESC)")
+        cur.execute("ALTER TABLE scrim_lobbies ADD COLUMN IF NOT EXISTS full_notice_sent BOOLEAN NOT NULL DEFAULT FALSE")
 
         cur.execute("""
             CREATE TABLE IF NOT EXISTS scrim_lobby_players (
@@ -2292,7 +2294,7 @@ def create_lobby(
             RETURNING
                 lobby_id, channel_id, guild_id, host_id, game, team_size, total_slots, status,
                 message_id, waiting_voice_id, team_a_voice_id, team_b_voice_id,
-                scheduled_at, recruit_close_at, close_notice_sent, created_at
+                scheduled_at, recruit_close_at, close_notice_sent, full_notice_sent, created_at
         """, (channel_id, guild_id, host_id, game, team_size, total_slots, scheduled_at, recruit_close_at))
         row = cur.fetchone()
         return dict(row) if row else None
@@ -2724,9 +2726,27 @@ def update_lobby_times_by_id(lobby_id: int, scheduled_at: Optional[datetime] = N
     with db_cursor() as (_, cur):
         cur.execute("""
             UPDATE scrim_lobbies
-            SET scheduled_at = %s, recruit_close_at = %s, close_notice_sent = FALSE
+            SET scheduled_at = %s, recruit_close_at = %s, close_notice_sent = FALSE, full_notice_sent = FALSE
             WHERE lobby_id = %s
         """, (scheduled_at, recruit_close_at, lobby_id))
+
+
+def mark_full_notice_sent_by_id(lobby_id: int):
+    with db_cursor() as (_, cur):
+        cur.execute("""
+            UPDATE scrim_lobbies
+            SET full_notice_sent = TRUE
+            WHERE lobby_id = %s
+        """, (lobby_id,))
+
+
+def reset_full_notice_sent_by_id(lobby_id: int):
+    with db_cursor() as (_, cur):
+        cur.execute("""
+            UPDATE scrim_lobbies
+            SET full_notice_sent = FALSE
+            WHERE lobby_id = %s
+        """, (lobby_id,))
 
 
 def update_lobby_times(channel_id: int, scheduled_at: Optional[datetime] = None, recruit_close_at: Optional[datetime] = None):
@@ -2752,7 +2772,7 @@ def get_due_close_notice_lobbies():
             SELECT
                 lobby_id, channel_id, guild_id, host_id, game, team_size, total_slots, status,
                 message_id, waiting_voice_id, team_a_voice_id, team_b_voice_id,
-                scheduled_at, recruit_close_at, close_notice_sent, created_at
+                scheduled_at, recruit_close_at, close_notice_sent, full_notice_sent, created_at
             FROM scrim_lobbies
             WHERE status = 'open'
               AND recruit_close_at IS NOT NULL
@@ -2785,7 +2805,7 @@ def get_due_close_lobbies():
             SELECT
                 lobby_id, channel_id, guild_id, host_id, game, team_size, total_slots, status,
                 message_id, waiting_voice_id, team_a_voice_id, team_b_voice_id,
-                scheduled_at, recruit_close_at, close_notice_sent, created_at
+                scheduled_at, recruit_close_at, close_notice_sent, full_notice_sent, created_at
             FROM scrim_lobbies
             WHERE status = 'open'
               AND recruit_close_at IS NOT NULL
@@ -2865,6 +2885,8 @@ DB.leave_lobby_party_by_id = staticmethod(leave_lobby_party_by_id)
 DB.get_lobby_parties_by_id = staticmethod(get_lobby_parties_by_id)
 DB.update_lobby_times_by_id = staticmethod(update_lobby_times_by_id)
 DB.mark_close_notice_sent_by_id = staticmethod(mark_close_notice_sent_by_id)
+DB.mark_full_notice_sent_by_id = staticmethod(mark_full_notice_sent_by_id)
+DB.reset_full_notice_sent_by_id = staticmethod(reset_full_notice_sent_by_id)
 DB.delete_lobby_by_id = staticmethod(delete_lobby_by_id)
 
 _original_db_execute = DB.execute

@@ -1,10 +1,9 @@
 import discord
-from discord.ext import commands, tasks
+from discord.ext import commands
 from discord import app_commands
 
 from core.db import DB
 from datetime import datetime
-from core.matchmaking import auto_balance_players
 
 db = DB()
 db.init_recruit_tables()
@@ -201,9 +200,6 @@ def build_lobby_embed(lobby: dict, players: list[dict], team_a=None, team_b=None
 
     if lobby.get("scheduled_at"):
         embed.add_field(name="내전 시간", value=format_lobby_datetime(lobby["scheduled_at"]), inline=True)
-    if lobby.get("recruit_close_at"):
-        embed.add_field(name="모집 마감", value=format_lobby_datetime(lobby["recruit_close_at"]), inline=True)
-
     if is_pubg_lobby(lobby) and lobby["team_size"] in [2, 4]:
         party_lines = build_party_lines(lobby["lobby_id"])
         if party_lines:
@@ -224,14 +220,17 @@ def build_lobby_embed(lobby: dict, players: list[dict], team_a=None, team_b=None
             else:
                 embed.set_footer(text=f"로비아이디 {lobby['lobby_id']} | 배그 듀오/스쿼드는 먼저 파티를 만든 뒤 참가하세요. 정원이 차면 대기방으로 자동 이동합니다.")
         else:
-            embed.set_footer(text=f"로비아이디 {lobby['lobby_id']} | 참가 버튼을 눌러 포지션과 MMR을 입력하세요.")
+            if len(players) >= need:
+                embed.set_footer(text=f"로비아이디 {lobby['lobby_id']} | 정원이 모두 찼습니다. /밸런스팀 로비아이디:{lobby['lobby_id']} 를 실행해주세요.")
+            else:
+                embed.set_footer(text=f"로비아이디 {lobby['lobby_id']} | 참가 버튼을 눌러 포지션과 MMR을 입력하세요.")
     elif lobby["status"] == "started":
         if is_pubg_lobby(lobby):
             embed.set_footer(text=f"로비아이디 {lobby['lobby_id']} | 배그 모집이 완료되어 대기방으로 이동되었습니다.")
         else:
             embed.set_footer(text=f"로비아이디 {lobby['lobby_id']} | 정원이 차서 자동 팀 분배 + 자동 음성 이동이 완료되었습니다.")
     elif lobby["status"] == "closed":
-        embed.set_footer(text=f"로비아이디 {lobby['lobby_id']} | 모집 시간이 종료된 로비입니다.")
+        embed.set_footer(text=f"로비아이디 {lobby['lobby_id']} | 종료된 로비입니다.")
     else:
         embed.set_footer(text=f"로비아이디 {lobby['lobby_id']} | 내전 상태를 확인하세요.")
 
@@ -401,6 +400,9 @@ class LeaveButton(discord.ui.Button):
             return
 
         db.remove_lobby_player_by_id(lobby["lobby_id"], interaction.user.id)
+        players_after = db.get_lobby_players_by_id(lobby["lobby_id"])
+        if not is_pubg_lobby(lobby) and len(players_after) < get_lobby_need_count(lobby):
+            db.reset_full_notice_sent_by_id(lobby["lobby_id"])
         await interaction.response.send_message(f"참가 취소 완료 (로비 ID: {lobby['lobby_id']})", ephemeral=True)
         await self.cog.refresh_lobby_message(interaction.channel, lobby["lobby_id"])
 
@@ -434,10 +436,9 @@ class RecruitView(discord.ui.View):
 class Recruit(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.recruit_close_loop.start()
 
     def cog_unload(self):
-        self.recruit_close_loop.cancel()
+        pass
 
     def get_channel_lobbies(self, channel_id: int, guild_id: int, active_only: bool = False):
         return db.get_channel_lobbies(channel_id, guild_id=guild_id, active_only=active_only)
@@ -488,29 +489,6 @@ class Recruit(commands.Cog):
         else:
             await interaction.response.send_message("같은 채널에 여러 로비가 있습니다. `로비아이디`를 함께 입력해주세요.", ephemeral=True)
         return None
-
-    @tasks.loop(minutes=1)
-    async def recruit_close_loop(self):
-        for lobby in db.get_due_close_notice_lobbies():
-            guild = self.bot.get_guild(lobby["guild_id"])
-            channel = guild.get_channel(lobby["channel_id"]) if guild else None
-            if channel:
-                await channel.send(
-                    f"⏰ 인원 모집 마감 10분 전입니다. 로비 ID: **{lobby['lobby_id']}** | 마감 시간: **{format_lobby_datetime(lobby['recruit_close_at'])}**"
-                )
-            db.mark_close_notice_sent_by_id(lobby["lobby_id"])
-
-        for lobby in db.get_due_close_lobbies():
-            guild = self.bot.get_guild(lobby["guild_id"])
-            channel = guild.get_channel(lobby["channel_id"]) if guild else None
-            db.set_lobby_status_by_id(lobby["lobby_id"], "closed")
-            if channel:
-                await self.refresh_lobby_message(channel, lobby["lobby_id"])
-                await channel.send(f"🔒 인원 모집 시간이 종료되었습니다. (로비 ID: {lobby['lobby_id']})")
-
-    @recruit_close_loop.before_loop
-    async def before_recruit_close_loop(self):
-        await self.bot.wait_until_ready()
 
     async def refresh_lobby_message(self, channel: discord.TextChannel, lobby_id: int):
         lobby = db.get_lobby_by_id(lobby_id)
@@ -678,41 +656,18 @@ class Recruit(commands.Cog):
                 )
             return
 
-        selected = players[:need]
-        (team_a, team_b), mode_text = auto_balance_players(lobby["game"], selected, lobby["team_size"])
+        if lobby.get("full_notice_sent"):
+            await self.refresh_lobby_message(channel, lobby_id)
+            return
 
-        db.clear_teams_by_id(lobby_id)
-        for p in team_a:
-            db.add_team_member_by_id(lobby_id, "A", p["user_id"])
-        for p in team_b:
-            db.add_team_member_by_id(lobby_id, "B", p["user_id"])
-
-        waiting, team_a_ch, team_b_ch = await self.ensure_voice_channels(channel.guild, lobby)
-
-        db.set_lobby_status_by_id(lobby_id, "started")
-
-        team_a_ids = [p["user_id"] for p in team_a]
-        team_b_ids = [p["user_id"] for p in team_b]
-
-        if team_a_ch and team_b_ch:
-            await self.move_members(channel.guild, team_a_ids, team_a_ch)
-            await self.move_members(channel.guild, team_b_ids, team_b_ch)
-
+        db.mark_full_notice_sent_by_id(lobby_id)
         await self.refresh_lobby_message(channel, lobby_id)
 
-        a_sum = sum(p["mmr"] for p in team_a)
-        b_sum = sum(p["mmr"] for p in team_b)
-
         await channel.send(
-            f"정원이 차서 자동 팀 분배 + 자동 음성 이동이 완료되었습니다. ({mode_text})\n"
-            f"로비 ID: **{lobby_id}**\n\n"
-            f"**A팀 총합:** {a_sum}\n"
-            + "\n".join(f"{p['display_name']} ({p['mmr']}, {p['position']})" for p in team_a)
-            + f"\n\n**B팀 총합:** {b_sum}\n"
-            + "\n".join(f"{p['display_name']} ({p['mmr']}, {p['position']})" for p in team_b)
-            + f"\n\n차이: {abs(a_sum - b_sum)}"
+            f"✅ 인원이 모두 모였습니다.\n"
+            f"로비 ID: **{lobby_id}**\n"
+            f"`/밸런스팀 로비아이디:{lobby_id}` 를 실행해주세요."
         )
-
     @app_commands.command(name="내전목록", description="현재 채널의 내전 로비 목록을 확인합니다.")
     async def lobby_list(self, interaction: discord.Interaction):
         await self.send_lobby_list(interaction, active_only=False)
@@ -723,8 +678,6 @@ class Recruit(commands.Cog):
         팀인원="한 팀 인원 수 (배그는 입력하지 않음)",
         날짜="내전 날짜 (YYYY-MM-DD)",
         시간="내전 시간 (HH:MM)",
-        모집마감날짜="인원 모집 마감 날짜 (YYYY-MM-DD)",
-        모집마감시간="인원 모집 마감 시간 (HH:MM)",
         배그형식="배그일 때 솔로 / 듀오 / 스쿼드",
         모집인원="배그 총 모집 인원",
     )
@@ -736,8 +689,6 @@ class Recruit(commands.Cog):
         팀인원: int | None = None,
         날짜: str | None = None,
         시간: str | None = None,
-        모집마감날짜: str | None = None,
-        모집마감시간: str | None = None,
         배그형식: app_commands.Choice[str] | None = None,
         모집인원: int | None = None,
     ):
@@ -759,11 +710,6 @@ class Recruit(commands.Cog):
                 return
 
             scheduled_at = parse_date_time(날짜, 시간)
-            recruit_close_at = parse_date_time(모집마감날짜, 모집마감시간)
-            if recruit_close_at and scheduled_at and recruit_close_at >= scheduled_at:
-                await interaction.response.send_message("모집 마감 시간은 내전 시간보다 이전이어야 합니다.", ephemeral=True)
-                return
-
             final_team_size: int | None = 팀인원
             final_total_slots: int | None = None
 
@@ -822,7 +768,6 @@ class Recruit(commands.Cog):
                 final_team_size,
                 total_slots=final_total_slots,
                 scheduled_at=scheduled_at,
-                recruit_close_at=recruit_close_at,
             )
 
             players = db.get_lobby_players_by_id(lobby["lobby_id"])
@@ -860,21 +805,17 @@ class Recruit(commands.Cog):
             else:
                 await interaction.response.send_message(f"오류 발생: {e}", ephemeral=True)
 
-    @app_commands.command(name="내전시간수정", description="현재 내전의 날짜/시간과 모집 마감 시간을 수정합니다.")
+    @app_commands.command(name="내전시간수정", description="현재 내전의 날짜/시간을 수정합니다.")
     @app_commands.describe(
         로비아이디="수정할 로비 ID",
         날짜="내전 날짜 (YYYY-MM-DD)",
         시간="내전 시간 (HH:MM)",
-        모집마감날짜="모집 마감 날짜 (YYYY-MM-DD)",
-        모집마감시간="모집 마감 시간 (HH:MM)",
     )
     async def edit_lobby_time(
         self,
         interaction: discord.Interaction,
         날짜: str | None = None,
         시간: str | None = None,
-        모집마감날짜: str | None = None,
-        모집마감시간: str | None = None,
         로비아이디: int | None = None,
     ):
         try:
@@ -883,14 +824,9 @@ class Recruit(commands.Cog):
                 return
 
             scheduled_at = parse_date_time(날짜, 시간)
-            recruit_close_at = parse_date_time(모집마감날짜, 모집마감시간)
-            if recruit_close_at and scheduled_at and recruit_close_at >= scheduled_at:
-                await interaction.response.send_message("모집 마감 시간은 내전 시간보다 이전이어야 합니다.", ephemeral=True)
-                return
-
-            db.update_lobby_times_by_id(lobby["lobby_id"], scheduled_at, recruit_close_at)
+            db.update_lobby_times_by_id(lobby["lobby_id"], scheduled_at, None)
             await self.refresh_lobby_message(interaction.channel, lobby["lobby_id"])
-            await interaction.response.send_message(f"내전 시간/모집 마감 시간이 수정되었습니다. (로비 ID: {lobby['lobby_id']})", ephemeral=True)
+            await interaction.response.send_message(f"내전 시간이 수정되었습니다. (로비 ID: {lobby['lobby_id']})", ephemeral=True)
         except Exception as e:
             await interaction.response.send_message(f"오류 발생: {e}", ephemeral=True)
 
