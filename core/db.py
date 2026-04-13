@@ -2211,6 +2211,19 @@ def init_recruit_tables():
             )
         """)
 
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS registered_game_mmr (
+                guild_id BIGINT NOT NULL,
+                user_id BIGINT NOT NULL,
+                game VARCHAR(50) NOT NULL,
+                display_name VARCHAR(100),
+                mmr INTEGER NOT NULL DEFAULT 1000,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (guild_id, user_id, game)
+            )
+        """)
+
         cur.execute("""
             CREATE TABLE IF NOT EXISTS scrim_lobby_parties (
                 id BIGSERIAL PRIMARY KEY,
@@ -2863,6 +2876,69 @@ def _handle_legacy_channel_delete(query: str, params: tuple):
     return True
 
 
+REGISTERED_TIER_MMR_VALUES = {
+    "valorant": {
+        100, 150, 200, 250, 300, 350, 400, 450, 500, 550, 600, 650,
+        700, 750, 800, 850, 900, 950, 1000, 1050, 1100, 1150, 1200, 1250, 1350,
+    },
+    "lol": {
+        100, 150, 200, 250, 300, 350, 400, 450, 500, 550, 600, 650,
+        700, 750, 800, 850, 900, 950, 1000, 1050, 1100, 1150, 1200, 1250,
+        1300, 1350, 1400, 1450, 1550, 1700, 1900,
+    },
+}
+
+
+def set_registered_game_mmr(guild_id: int, user_id: int, game: str, mmr: int, display_name: Optional[str] = None):
+    init_recruit_tables()
+    register_guild(guild_id)
+
+    with db_cursor() as (_, cur):
+        cur.execute(
+            """
+            INSERT INTO registered_game_mmr (guild_id, user_id, game, display_name, mmr, updated_at)
+            VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+            ON CONFLICT (guild_id, user_id, game)
+            DO UPDATE SET
+                display_name = COALESCE(EXCLUDED.display_name, registered_game_mmr.display_name),
+                mmr = EXCLUDED.mmr,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (guild_id, user_id, game, display_name, mmr),
+        )
+
+
+def get_registered_game_mmr(guild_id: int, user_id: int, game: str):
+    init_recruit_tables()
+    game = (game or "").strip().lower()
+
+    with db_cursor(dict_cursor=True) as (_, cur):
+        cur.execute(
+            "SELECT mmr FROM registered_game_mmr WHERE guild_id = %s AND user_id = %s AND game = %s",
+            (guild_id, user_id, game),
+        )
+        row = cur.fetchone()
+        if row:
+            return int(row["mmr"])
+
+        allowed_values = REGISTERED_TIER_MMR_VALUES.get(game)
+        if not allowed_values:
+            return None
+
+        cur.execute(
+            "SELECT mmr FROM player_game_stats WHERE guild_id = %s AND user_id = %s AND game = %s",
+            (guild_id, user_id, game),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+
+        mmr = int(row["mmr"])
+        if mmr in allowed_values:
+            return mmr
+        return None
+
+
 DB.get_lobby_by_id = staticmethod(get_lobby_by_id)
 DB.get_lobby_by_message_id = staticmethod(get_lobby_by_message_id)
 DB.get_channel_lobbies = staticmethod(get_channel_lobbies)
@@ -2888,6 +2964,8 @@ DB.mark_close_notice_sent_by_id = staticmethod(mark_close_notice_sent_by_id)
 DB.mark_full_notice_sent_by_id = staticmethod(mark_full_notice_sent_by_id)
 DB.reset_full_notice_sent_by_id = staticmethod(reset_full_notice_sent_by_id)
 DB.delete_lobby_by_id = staticmethod(delete_lobby_by_id)
+DB.set_registered_game_mmr = staticmethod(set_registered_game_mmr)
+DB.get_registered_game_mmr = staticmethod(get_registered_game_mmr)
 
 _original_db_execute = DB.execute
 

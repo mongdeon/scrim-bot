@@ -94,6 +94,7 @@ class Profile(commands.Cog):
         db.ensure_player_game(guild_id, user_id, game, 1000, display_name)
         db.execute("UPDATE players SET mmr=%s, display_name=COALESCE(%s, display_name) WHERE guild_id=%s AND user_id=%s", (mmr, display_name, guild_id, user_id))
         db.execute("UPDATE player_game_stats SET mmr=%s, display_name=COALESCE(%s, display_name) WHERE guild_id=%s AND user_id=%s AND game=%s", (mmr, display_name, guild_id, user_id, game))
+        db.set_registered_game_mmr(guild_id, user_id, game, mmr, display_name)
 
     def _recalc_overwatch_general_mmr(self, guild_id: int, user_id: int, display_name: str):
         role_mmrs = db.get_all_overwatch_role_mmr(guild_id, user_id)
