@@ -180,20 +180,26 @@ def build_lobby_embed(lobby: dict, players: list[dict], team_a=None, team_b=None
             group_idx = 1
 
             for _, members in grouped.items():
-                member_text = " / ".join(f"{m['display_name']} ({m['mmr']})" for m in members)
+                member_text = " / ".join(f"{m['display_name']}" for m in members)
                 lines.append(f"[파티 {group_idx}] {member_text}")
                 group_idx += 1
 
             for player in no_party_rows:
                 pos_text = player["position"] if not player.get("sub_position") else f"{player['position']} / {player['sub_position']}"
-                lines.append(f"{player['display_name']} | MMR {player['mmr']} | {pos_text}")
+                if is_pubg_lobby(lobby):
+                    lines.append(f"{player['display_name']} | {pos_text}")
+                else:
+                    lines.append(f"{player['display_name']} | MMR {player['mmr']} | {pos_text}")
 
             embed.add_field(name="참가자", value="\n".join(lines[:25]), inline=False)
         else:
             lines = []
             for idx, player in enumerate(players, start=1):
                 pos_text = player["position"] if not player.get("sub_position") else f"{player['position']} / {player['sub_position']}"
-                lines.append(f"{idx}. {player['display_name']} | MMR {player['mmr']} | {pos_text}")
+                if is_pubg_lobby(lobby):
+                    lines.append(f"{idx}. {player['display_name']} | {pos_text}")
+                else:
+                    lines.append(f"{idx}. {player['display_name']} | MMR {player['mmr']} | {pos_text}")
             embed.add_field(name="참가자", value="\n".join(lines[:25]), inline=False)
     else:
         embed.add_field(name="참가자", value="아직 없음", inline=False)
@@ -223,7 +229,7 @@ def build_lobby_embed(lobby: dict, players: list[dict], team_a=None, team_b=None
             if len(players) >= need:
                 embed.set_footer(text=f"로비아이디 {lobby['lobby_id']} | 정원이 모두 찼습니다. /밸런스팀 로비아이디:{lobby['lobby_id']} 를 실행해주세요.")
             else:
-                embed.set_footer(text=f"로비아이디 {lobby['lobby_id']} | 참가 버튼을 눌러 포지션과 MMR을 입력하세요.")
+                embed.set_footer(text=f"로비아이디 {lobby['lobby_id']} | 참가 버튼을 눌러 포지션을 입력하세요. MMR은 티어등록값이 자동 반영됩니다.")
     elif lobby["status"] == "started":
         if is_pubg_lobby(lobby):
             embed.set_footer(text=f"로비아이디 {lobby['lobby_id']} | 배그 모집이 완료되어 대기방으로 이동되었습니다.")
@@ -275,9 +281,6 @@ class JoinModal(discord.ui.Modal, title="내전 참가"):
         self.add_item(self.main_position)
         self.add_item(self.sub_position)
 
-        if game_key != "overwatch":
-            self.mmr = discord.ui.TextInput(label="MMR", placeholder="예: 1000", required=True, max_length=10)
-            self.add_item(self.mmr)
 
     async def on_submit(self, interaction: discord.Interaction):
         lobby = db.get_lobby_by_id(self.lobby_id)
@@ -306,20 +309,27 @@ class JoinModal(discord.ui.Modal, title="내전 참가"):
             mmr = db.get_overwatch_role_mmr(interaction.guild_id, interaction.user.id, main_position)
             if mmr is None:
                 await interaction.response.send_message(
-                    "오버워치는 역할군별 MMR 등록이 필요합니다. `/옵치티어등록 역할군:<주포지션> 티어:<티어>` 를 먼저 사용해주세요.",
+                    "오버워치는 역할군별 티어등록 기반으로만 참가할 수 있습니다. `/옵치티어등록 역할군:<주포지션> 티어:<티어>` 를 먼저 사용해주세요.",
                     ephemeral=True,
                 )
                 return
             ow_role = main_position
+        elif self.game_key in ["valorant", "lol"]:
+            mmr = db.get_registered_game_mmr(interaction.guild_id, interaction.user.id, self.game_key)
+            if mmr is None:
+                guide_map = {
+                    "valorant": "`/발로티어등록 티어:<티어>`",
+                    "lol": "`/롤티어등록 티어:<티어>`",
+                }
+                await interaction.response.send_message(
+                    f"이 게임은 티어등록 기반 MMR로만 참가할 수 있습니다. 먼저 {guide_map[self.game_key]} 명령어를 사용해주세요.",
+                    ephemeral=True,
+                )
+                return
+            ow_role = None
         else:
-            mmr_raw = self.mmr.value.strip()
-            if not mmr_raw.isdigit():
-                await interaction.response.send_message("MMR은 숫자로 입력해주세요.", ephemeral=True)
-                return
-            mmr = int(mmr_raw)
-            if mmr < 1 or mmr > 9999:
-                await interaction.response.send_message("MMR은 1~9999 사이로 입력해주세요.", ephemeral=True)
-                return
+            # 배그는 MMR을 사용하지 않으므로 0으로 저장하고 표시에서도 제외합니다.
+            mmr = 0
             ow_role = None
 
         party_id = None
@@ -652,7 +662,7 @@ class Recruit(commands.Cog):
                     f"로비 ID: **{lobby_id}**\n"
                     f"형식: **{get_pubg_mode_label(lobby['team_size'])}**\n"
                     f"총 인원: **{need}명**\n\n"
-                    + "\n".join(f"- {p['display_name']} ({p['mmr']}, {p['position']})" for p in players[:need])
+                    + "\n".join(f"- {p['display_name']} ({p['position']})" for p in players[:need])
                 )
             return
 
