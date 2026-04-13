@@ -54,6 +54,10 @@ async def sync_commands():
 
 @bot.event
 async def on_ready():
+    await bot.change_presence(
+        status=discord.Status.online,
+        activity=discord.Game(name="/도움말")
+    )
     print(f"로그인 완료: {bot.user} ({bot.user.id})")
     await sync_commands()
 
