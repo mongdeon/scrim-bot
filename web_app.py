@@ -227,6 +227,54 @@ BASE_STYLE = """
         line-height: 1.7;
     }
 
+    .tab-row {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin: 14px 0 0;
+    }
+
+    .tab-link {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 10px 16px;
+        border-radius: 999px;
+        background: #324766;
+        color: #e2e8f0;
+        font-weight: 700;
+        text-decoration: none;
+        border: 1px solid transparent;
+    }
+
+    .tab-link.active {
+        background: var(--brand-color);
+        color: #ffffff;
+    }
+
+    .stat-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 14px;
+    }
+
+    .stat-card {
+        background: #394b67;
+        border-radius: 16px;
+        padding: 16px;
+    }
+
+    .stat-label {
+        font-size: 13px;
+        color: #cbd5e1;
+        margin-bottom: 8px;
+    }
+
+    .stat-value {
+        font-size: 24px;
+        font-weight: 800;
+    }
+
     .grid-2 {
         display: grid;
         grid-template-columns: 1fr 1fr;
@@ -403,6 +451,27 @@ def get_selected_guild_brand(guild_id_raw: str):
     return get_clan_branding(int(guild_id_raw))
 
 
+OVERWATCH_ROLE_TABS = [
+    {"value": "all", "label": "전체"},
+    {"value": "돌격", "label": "돌격"},
+    {"value": "딜러", "label": "딜러"},
+    {"value": "지원", "label": "지원"},
+]
+
+
+def normalize_overwatch_role_tab(value: str | None) -> str:
+    value = (value or "all").strip()
+    allowed = {"all", "돌격", "딜러", "지원"}
+    return value if value in allowed else "all"
+
+
+def get_overwatch_role_tab_label(value: str) -> str:
+    for item in OVERWATCH_ROLE_TABS:
+        if item["value"] == value:
+            return item["label"]
+    return "전체"
+
+
 INDEX_HTML = """
 <!DOCTYPE html>
 <html lang="ko">
@@ -463,6 +532,19 @@ INDEX_HTML = """
             <input type="text" name="q" placeholder="닉네임 또는 유저 ID 검색" value="{{ q or '' }}" style="max-width:320px;">
             <button type="submit" class="submit-btn">적용</button>
         </form>
+
+        {% if selected_game == 'overwatch' %}
+        <div class="tab-row">
+            {% for tab in overwatch_role_tabs %}
+            <a
+                href="/?guild_id={{ selected_guild_id or '' }}&game=overwatch&q={{ q or '' }}&ow_role={{ tab.value }}"
+                class="tab-link {% if selected_ow_role == tab.value %}active{% endif %}"
+            >
+                {{ tab.label }}
+            </a>
+            {% endfor %}
+        </div>
+        {% endif %}
     </div>
 
     {% if ranking|length >= 1 %}
@@ -470,7 +552,7 @@ INDEX_HTML = """
         {% for row in ranking[:3] %}
         <div class="top-card">
             <h3>#{{ loop.index }} {{ row.display_name or row.user_id }}</h3>
-            <p>MMR {{ row.mmr }}</p>
+            <p>{{ mmr_column_label }} {{ row.mmr }}</p>
             <p>{{ row.win }}승 {{ row.lose }}패 | 승률 {{ row.winrate }}%</p>
         </div>
         {% endfor %}
@@ -493,7 +575,7 @@ INDEX_HTML = """
                     <th>#</th>
                     <th>닉네임</th>
                     <th>유저 ID</th>
-                    <th>MMR</th>
+                    <th>{{ mmr_column_label }}</th>
                     <th>승</th>
                     <th>패</th>
                     <th>승률</th>
@@ -510,7 +592,7 @@ INDEX_HTML = """
                     <td>{{ row.win }}</td>
                     <td>{{ row.lose }}</td>
                     <td>{{ row.winrate }}%</td>
-                    <td><a href="/player/{{ row.guild_id }}/{{ row.user_id }}">보기</a></td>
+                    <td><a href="/player/{{ row.guild_id }}/{{ row.user_id }}{% if selected_game == 'overwatch' %}?ow_role={{ selected_ow_role }}{% endif %}">보기</a></td>
                 </tr>
                 {% endfor %}
             </tbody>
@@ -941,6 +1023,79 @@ PLAYER_HTML = """
         <p>전체 승률: {{ winrate }}%</p>
     </div>
 
+    {% if has_overwatch_data %}
+    <div class="card">
+        <h2 class="section-title">🛡️ 오버워치 상세 전적</h2>
+        <div class="tab-row">
+            {% for tab in overwatch_role_tabs %}
+            <a
+                href="/player/{{ player.guild_id }}/{{ player.user_id }}?ow_role={{ tab.value }}"
+                class="tab-link {% if selected_ow_role == tab.value %}active{% endif %}"
+            >
+                {{ tab.label }}
+            </a>
+            {% endfor %}
+        </div>
+
+        {% if selected_ow_role == 'all' %}
+        <div class="stat-grid" style="margin-top:16px;">
+            <div class="stat-card">
+                <div class="stat-label">오버워치 평균 MMR</div>
+                <div class="stat-value">{{ overwatch_summary_mmr }}</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">오버워치 승</div>
+                <div class="stat-value">{{ overwatch_summary_win }}</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">오버워치 패</div>
+                <div class="stat-value">{{ overwatch_summary_lose }}</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">오버워치 승률</div>
+                <div class="stat-value">{{ overwatch_summary_winrate }}%</div>
+            </div>
+        </div>
+        <table style="margin-top:16px;">
+            <thead>
+                <tr>
+                    <th>역할군</th>
+                    <th>MMR</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in overwatch_role_rows %}
+                <tr>
+                    <td>{{ row.role }}</td>
+                    <td>{{ row.mmr }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="stat-grid" style="margin-top:16px;">
+            <div class="stat-card">
+                <div class="stat-label">{{ selected_ow_role_label }} MMR</div>
+                <div class="stat-value">{{ selected_overwatch_role_mmr if selected_overwatch_role_mmr is not none else '-' }}</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">오버워치 전체 승</div>
+                <div class="stat-value">{{ overwatch_summary_win }}</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">오버워치 전체 패</div>
+                <div class="stat-value">{{ overwatch_summary_lose }}</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">오버워치 전체 승률</div>
+                <div class="stat-value">{{ overwatch_summary_winrate }}%</div>
+            </div>
+        </div>
+        <p class="muted" style="margin-top:14px;">역할군별 승/패는 저장되지 않아 승/패/승률은 오버워치 전체 전적 기준으로 표시됩니다.</p>
+        {% endif %}
+    </div>
+    {% endif %}
+
     <div class="card">
         <h2 class="section-title">🎯 게임별 전적</h2>
         <table>
@@ -1161,16 +1316,22 @@ def index():
     selected_guild_id = request.args.get("guild_id", "").strip()
     selected_game = request.args.get("game", "").strip()
     q = request.args.get("q", "").strip()
+    selected_ow_role = normalize_overwatch_role_tab(request.args.get("ow_role", "all"))
 
-    guilds = get_registered_guilds(active_only=True)
+    if selected_game != "overwatch":
+        selected_ow_role = "all"
 
     with get_conn() as conn:
         with conn.cursor() as cur:
+            guilds = get_registered_guilds(active_only=True)
             cur.execute("SELECT DISTINCT game FROM player_game_stats ORDER BY game ASC")
             games = [row["game"] for row in cur.fetchall()]
 
-            params = []
+            ranking = []
+            matches = []
+
             filters = []
+            params = []
 
             if selected_guild_id:
                 filters.append("guild_id = %s")
@@ -1185,7 +1346,51 @@ def index():
                 params.append(f"%{q}%")
                 params.append(f"%{q}%")
 
-            if selected_game:
+            mmr_column_label = "MMR"
+
+            if selected_game == "overwatch" and selected_ow_role != "all":
+                where_parts = []
+                ranking_params = []
+
+                if selected_guild_id:
+                    where_parts.append("orm.guild_id = %s")
+                    ranking_params.append(int(selected_guild_id))
+
+                if q:
+                    where_parts.append("(COALESCE(orm.display_name, pgs.display_name, p.display_name) ILIKE %s OR CAST(orm.user_id AS TEXT) ILIKE %s)")
+                    ranking_params.append(f"%{q}%")
+                    ranking_params.append(f"%{q}%")
+
+                where_parts.append("orm.role = %s")
+                ranking_params.append(selected_ow_role)
+
+                where_clause = "WHERE " + " AND ".join(where_parts) if where_parts else ""
+
+                ranking_sql = f"""
+                    SELECT
+                        orm.guild_id,
+                        orm.user_id,
+                        COALESCE(orm.display_name, pgs.display_name, p.display_name) AS display_name,
+                        orm.mmr,
+                        COALESCE(pgs.win, 0) AS win,
+                        COALESCE(pgs.lose, 0) AS lose,
+                        CASE
+                            WHEN (COALESCE(pgs.win, 0) + COALESCE(pgs.lose, 0)) = 0 THEN 0
+                            ELSE ROUND((CAST(COALESCE(pgs.win, 0) AS NUMERIC) / (COALESCE(pgs.win, 0) + COALESCE(pgs.lose, 0))) * 100, 1)
+                        END AS winrate
+                    FROM overwatch_role_mmr orm
+                    LEFT JOIN player_game_stats pgs
+                        ON orm.guild_id = pgs.guild_id AND orm.user_id = pgs.user_id AND pgs.game = 'overwatch'
+                    LEFT JOIN players p
+                        ON orm.guild_id = p.guild_id AND orm.user_id = p.user_id
+                    {where_clause}
+                    ORDER BY orm.mmr DESC, COALESCE(pgs.win, 0) DESC
+                    LIMIT 50
+                """
+                cur.execute(ranking_sql, tuple(ranking_params))
+                ranking = cur.fetchall()
+                mmr_column_label = f"{get_overwatch_role_tab_label(selected_ow_role)} MMR"
+            elif selected_game:
                 where_clause = ""
                 if filters:
                     safe_filters = []
@@ -1216,6 +1421,8 @@ def index():
                     ORDER BY pgs.mmr DESC, pgs.win DESC
                     LIMIT 50
                 """
+                cur.execute(ranking_sql, tuple(params))
+                ranking = cur.fetchall()
             else:
                 where_clause = ""
                 if filters:
@@ -1238,9 +1445,8 @@ def index():
                     ORDER BY mmr DESC, win DESC
                     LIMIT 50
                 """
-
-            cur.execute(ranking_sql, tuple(params))
-            ranking = cur.fetchall()
+                cur.execute(ranking_sql, tuple(params))
+                ranking = cur.fetchall()
 
             match_params = []
             match_filters = []
@@ -1280,12 +1486,16 @@ def index():
         games=games,
         selected_guild_id=selected_guild_id,
         selected_game=selected_game,
+        selected_ow_role=selected_ow_role,
+        overwatch_role_tabs=OVERWATCH_ROLE_TABS,
+        mmr_column_label=mmr_column_label,
         q=q,
         premium_price=PREMIUM_PRICE,
         premium_days=PREMIUM_DAYS,
         active_premium_count=active_premium_count,
         brand=brand,
     )
+
 
 
 @app.route("/guide")
@@ -1368,6 +1578,8 @@ def player_page(guild_id, user_id):
             required_plan_label=get_plan_label("supporter")
         )
 
+    selected_ow_role = normalize_overwatch_role_tab(request.args.get("ow_role", "all"))
+
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -1395,11 +1607,40 @@ def player_page(guild_id, user_id):
             )
             game_rows = cur.fetchall()
 
+            cur.execute(
+                """
+                SELECT role, mmr
+                FROM overwatch_role_mmr
+                WHERE guild_id = %s AND user_id = %s
+                ORDER BY CASE role
+                    WHEN '돌격' THEN 1
+                    WHEN '딜러' THEN 2
+                    WHEN '지원' THEN 3
+                    ELSE 99
+                END ASC
+                """,
+                (guild_id, user_id)
+            )
+            overwatch_role_rows = cur.fetchall()
+
     if not player:
         abort(404)
 
     total = player["win"] + player["lose"]
     winrate = round((player["win"] / total) * 100, 1) if total > 0 else 0.0
+
+    overwatch_row = next((row for row in game_rows if row["game"] == "overwatch"), None)
+    role_mmr_map = {row["role"]: row["mmr"] for row in overwatch_role_rows}
+    has_overwatch_data = bool(overwatch_row or overwatch_role_rows)
+
+    if selected_ow_role != "all" and selected_ow_role not in role_mmr_map:
+        selected_ow_role = "all"
+
+    selected_overwatch_role_mmr = role_mmr_map.get(selected_ow_role) if selected_ow_role != "all" else None
+    overwatch_summary_mmr = overwatch_row["mmr"] if overwatch_row else 0
+    overwatch_summary_win = overwatch_row["win"] if overwatch_row else 0
+    overwatch_summary_lose = overwatch_row["lose"] if overwatch_row else 0
+    overwatch_summary_winrate = overwatch_row["winrate"] if overwatch_row else 0
 
     brand = get_clan_branding(guild_id)
 
@@ -1408,8 +1649,19 @@ def player_page(guild_id, user_id):
         player=player,
         winrate=winrate,
         game_rows=game_rows,
-        brand=brand
+        brand=brand,
+        has_overwatch_data=has_overwatch_data,
+        overwatch_role_tabs=OVERWATCH_ROLE_TABS,
+        selected_ow_role=selected_ow_role,
+        selected_ow_role_label=get_overwatch_role_tab_label(selected_ow_role),
+        overwatch_role_rows=overwatch_role_rows,
+        selected_overwatch_role_mmr=selected_overwatch_role_mmr,
+        overwatch_summary_mmr=overwatch_summary_mmr,
+        overwatch_summary_win=overwatch_summary_win,
+        overwatch_summary_lose=overwatch_summary_lose,
+        overwatch_summary_winrate=overwatch_summary_winrate,
     )
+
 
 
 @app.route("/admin/premium")
