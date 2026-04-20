@@ -279,15 +279,12 @@ def build_lobby_embed(lobby: dict, players: list[dict], team_a=None, team_b=None
             else:
                 embed.set_footer(text=f"로비아이디 {lobby['lobby_id']} | 참가 버튼을 눌러 포지션을 입력하세요. MMR은 티어등록값이 자동 반영됩니다.")
     elif lobby["status"] == "balanced":
-        if is_pubg_lobby(lobby):
-            embed.set_footer(text=f"로비아이디 {lobby['lobby_id']} | 배그 팀 배분이 완료되었습니다.")
-        else:
-            embed.set_footer(text=f"로비아이디 {lobby['lobby_id']} | 팀 분배가 끝났습니다. 경기 후 /결과기록 로비아이디:{lobby['lobby_id']} 승리팀:A 또는 B 로 세트 결과를 기록해주세요.")
+        embed.set_footer(text=f"로비아이디 {lobby['lobby_id']} | 팀 분배가 완료되었습니다. 모집 메시지의 '내전시작' 버튼을 누르면 통화방 생성과 팀 이동이 진행됩니다.")
     elif lobby["status"] == "started":
         if is_pubg_lobby(lobby):
             embed.set_footer(text=f"로비아이디 {lobby['lobby_id']} | 배그 모집이 완료되어 대기방으로 이동되었습니다.")
         else:
-            embed.set_footer(text=f"로비아이디 {lobby['lobby_id']} | 세트 스코어를 확인하면서 /결과기록 로비아이디:{lobby['lobby_id']} 승리팀:A 또는 B 로 진행해주세요.")
+            embed.set_footer(text=f"로비아이디 {lobby['lobby_id']} | 내전이 시작되었습니다. 세트 스코어를 확인하면서 /결과기록 로비아이디:{lobby['lobby_id']} 승리팀:A 또는 B 로 진행해주세요.")
     elif lobby["status"] == "closed":
         embed.set_footer(text=f"로비아이디 {lobby['lobby_id']} | 종료된 로비입니다.")
     elif lobby["status"] == "finished":
@@ -495,12 +492,61 @@ class StatusButton(discord.ui.Button):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
+class StartMatchButton(discord.ui.Button):
+    def __init__(self, cog):
+        super().__init__(label="내전시작", style=discord.ButtonStyle.primary, custom_id="scrim_start_match_button")
+        self.cog = cog
+
+    async def callback(self, interaction: discord.Interaction):
+        lobby = db.get_lobby_by_message_id(interaction.message.id) if interaction.message else None
+        if not lobby:
+            await interaction.response.send_message("이 모집 메시지에 연결된 로비를 찾을 수 없습니다.", ephemeral=True)
+            return
+
+        if lobby["game"] == "pubg":
+            await interaction.response.send_message("배그는 배틀로얄 모집형이라 내전시작 버튼을 사용하지 않습니다.", ephemeral=True)
+            return
+
+        if interaction.user.id != lobby["host_id"] and not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("호스트 또는 관리자만 내전을 시작할 수 있습니다.", ephemeral=True)
+            return
+
+        if lobby["status"] == "started":
+            await interaction.response.send_message("이미 시작된 내전입니다.", ephemeral=True)
+            return
+
+        if lobby["status"] != "balanced":
+            await interaction.response.send_message("먼저 /밸런스팀으로 팀 분배를 완료해주세요.", ephemeral=True)
+            return
+
+        result = await self.cog.start_balanced_lobby(interaction, lobby)
+        if result is None:
+            return
+
+        moved_a, moved_b, skipped = result
+        team_a_count = len(db.get_team_members_by_id(lobby["lobby_id"], "A"))
+        team_b_count = len(db.get_team_members_by_id(lobby["lobby_id"], "B"))
+
+        message = (
+            f"내전 시작 완료\n"
+            f"로비 ID: **{lobby['lobby_id']}**\n"
+            f"A팀 이동: **{moved_a}/{team_a_count}명**\n"
+            f"B팀 이동: **{moved_b}/{team_b_count}명**"
+        )
+        if skipped:
+            mentions = " ".join(f"<@{uid}>" for uid in skipped)
+            message += f"\n\n음성채널에 없어 자동 이동하지 못한 인원: {mentions}"
+
+        await interaction.response.send_message(message)
+
+
 class RecruitView(discord.ui.View):
     def __init__(self, cog):
         super().__init__(timeout=None)
         self.add_item(JoinButton(cog))
         self.add_item(LeaveButton(cog))
         self.add_item(StatusButton(cog))
+        self.add_item(StartMatchButton(cog))
 
 
 class Recruit(commands.Cog):
@@ -584,14 +630,14 @@ class Recruit(commands.Cog):
     async def ensure_voice_channels(self, guild: discord.Guild, lobby: dict):
         settings = db.get_settings(guild.id)
         if not settings or not settings["category_id"] or not settings["recruit_role_id"]:
-            return None, None, None
+            return None, None
 
         category = guild.get_channel(settings["category_id"])
         role = guild.get_role(settings["recruit_role_id"])
         me = guild.me or guild.get_member(self.bot.user.id)
 
         if not category or not role or not me:
-            return None, None, None
+            return None, None
 
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(view_channel=False, connect=False),
@@ -603,18 +649,11 @@ class Recruit(commands.Cog):
         if host_member:
             overwrites[host_member] = discord.PermissionOverwrite(view_channel=True, connect=True, speak=True, move_members=True)
 
-        waiting = guild.get_channel(lobby["waiting_voice_id"]) if lobby["waiting_voice_id"] else None
         team_a_ch = guild.get_channel(lobby["team_a_voice_id"]) if lobby["team_a_voice_id"] else None
         team_b_ch = guild.get_channel(lobby["team_b_voice_id"]) if lobby["team_b_voice_id"] else None
 
         base_name = f"{lobby['game']}-{lobby['lobby_id']}"
 
-        if waiting is None:
-            waiting = await guild.create_voice_channel(
-                name=f"{base_name}-대기방",
-                category=category,
-                overwrites=overwrites,
-            )
         if team_a_ch is None:
             team_a_ch = await guild.create_voice_channel(
                 name=f"{base_name}-A팀",
@@ -628,8 +667,8 @@ class Recruit(commands.Cog):
                 overwrites=overwrites,
             )
 
-        db.set_voice_channels_by_id(lobby["lobby_id"], waiting.id, team_a_ch.id, team_b_ch.id)
-        return waiting, team_a_ch, team_b_ch
+        db.set_voice_channels_by_id(lobby["lobby_id"], 0, team_a_ch.id, team_b_ch.id)
+        return team_a_ch, team_b_ch
 
     async def ensure_pubg_waiting_channel(self, guild: discord.Guild, lobby: dict):
         settings = db.get_settings(guild.id)
@@ -672,6 +711,57 @@ class Recruit(commands.Cog):
                     await member.move_to(target_channel)
                 except Exception:
                     pass
+
+    async def move_members_with_result(self, guild: discord.Guild, user_ids, target_channel):
+        moved_count = 0
+        skipped_ids = []
+
+        for uid in user_ids:
+            member = guild.get_member(uid)
+            if not member or not member.voice or not member.voice.channel:
+                skipped_ids.append(uid)
+                continue
+
+            try:
+                await member.move_to(target_channel)
+                moved_count += 1
+            except Exception:
+                skipped_ids.append(uid)
+
+        return moved_count, skipped_ids
+
+    async def start_balanced_lobby(self, interaction: discord.Interaction, lobby: dict):
+        team_a_ids = db.get_team_members_by_id(lobby["lobby_id"], "A")
+        team_b_ids = db.get_team_members_by_id(lobby["lobby_id"], "B")
+
+        if not team_a_ids or not team_b_ids:
+            await interaction.response.send_message("먼저 /밸런스팀으로 팀 분배를 완료해주세요.", ephemeral=True)
+            return None
+
+        team_a_ch, team_b_ch = await self.ensure_voice_channels(interaction.guild, lobby)
+        if not team_a_ch or not team_b_ch:
+            await interaction.response.send_message(
+                "음성채널 생성에 필요한 설정이 없습니다. `/설정카테고리`와 `/설정역할`을 먼저 설정해주세요.",
+                ephemeral=True,
+            )
+            return None
+
+        moved_a, skipped_a = await self.move_members_with_result(interaction.guild, team_a_ids, team_a_ch)
+        moved_b, skipped_b = await self.move_members_with_result(interaction.guild, team_b_ids, team_b_ch)
+
+        db.set_lobby_status_by_id(lobby["lobby_id"], "started")
+        await self.refresh_lobby_message(interaction.channel, lobby["lobby_id"])
+
+        await send_operation_log(
+            interaction.guild,
+            "운영 로그 · 내전 시작",
+            f"실행자: {interaction.user.mention}\n채널: {interaction.channel.mention}\n"
+            f"로비 ID: {lobby['lobby_id']}\n게임: {lobby['game']}\n"
+            f"A팀 이동: {moved_a}/{len(team_a_ids)}명\nB팀 이동: {moved_b}/{len(team_b_ids)}명",
+            discord.Color.blurple(),
+        )
+
+        return moved_a, moved_b, skipped_a + skipped_b
 
     async def try_auto_balance_and_start(self, channel: discord.TextChannel, lobby_id: int):
         lobby = db.get_lobby_by_id(lobby_id)
@@ -736,7 +826,7 @@ class Recruit(commands.Cog):
         await channel.send(
             f"✅ 인원이 모두 모였습니다.\n"
             f"로비 ID: **{lobby_id}**\n"
-            f"`/밸런스팀 로비아이디:{lobby_id}` 를 실행해주세요."
+            f"`/밸런스팀 로비아이디:{lobby_id}` 로 팀을 정한 뒤, 모집 메시지의 **내전시작** 버튼을 눌러 통화방 생성과 자동 이동을 진행해주세요."
         )
     @app_commands.command(name="내전목록", description="현재 채널의 내전 로비 목록을 확인합니다.")
     async def lobby_list(self, interaction: discord.Interaction):
