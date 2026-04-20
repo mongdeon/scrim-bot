@@ -17,6 +17,25 @@ def format_team_block(team: list[dict]):
     )
 
 
+def get_match_format_label(lobby: dict) -> str:
+    if lobby.get("game") == "pubg":
+        return "배틀로얄"
+    return "토너먼트형식" if lobby.get("match_format") == "tournament" else "내전형식"
+
+
+def get_series_label(series_target: int | None) -> str:
+    target = int(series_target or 1)
+    if target <= 1:
+        return "단판"
+    return f"{target}선승제"
+
+
+def get_tournament_stage_label(lobby: dict) -> str:
+    if lobby.get("match_format") != "tournament":
+        return "-"
+    return "결승전" if lobby.get("tournament_stage") == "final" else "일반전"
+
+
 async def send_operation_log(
     guild: discord.Guild,
     title: str,
@@ -43,7 +62,8 @@ async def send_operation_log(
 
 
 def ensure_matches_table():
-    db.execute("""
+    db.execute(
+        """
         CREATE TABLE IF NOT EXISTS matches (
             id BIGSERIAL PRIMARY KEY,
             guild_id BIGINT NOT NULL,
@@ -55,7 +75,8 @@ def ensure_matches_table():
             team_b_avg INTEGER NOT NULL,
             created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
-    """)
+        """
+    )
     db.execute("ALTER TABLE matches ADD COLUMN IF NOT EXISTS lobby_id BIGINT")
 
 
@@ -69,10 +90,13 @@ def add_match(
     team_b_avg: int,
 ):
     ensure_matches_table()
-    db.execute("""
+    db.execute(
+        """
         INSERT INTO matches (guild_id, lobby_id, channel_id, game, winner_team, team_a_avg, team_b_avg)
         VALUES (%s, %s, %s, %s, %s, %s, %s)
-    """, (guild_id, lobby_id, channel_id, game, winner_team, team_a_avg, team_b_avg))
+        """,
+        (guild_id, lobby_id, channel_id, game, winner_team, team_a_avg, team_b_avg),
+    )
 
 
 def apply_match_result(
@@ -89,46 +113,58 @@ def apply_match_result(
         db.ensure_player(guild_id, uid, 1000, display_name)
         db.ensure_player_game(guild_id, uid, game, 1000, display_name)
 
-        db.execute("""
+        db.execute(
+            """
             UPDATE players
             SET
                 mmr = GREATEST(0, mmr + %s),
                 win = win + 1,
                 display_name = COALESCE(%s, display_name)
             WHERE guild_id = %s AND user_id = %s
-        """, (winner_delta, display_name, guild_id, uid))
+            """,
+            (winner_delta, display_name, guild_id, uid),
+        )
 
-        db.execute("""
+        db.execute(
+            """
             UPDATE player_game_stats
             SET
                 mmr = GREATEST(0, mmr + %s),
                 win = win + 1,
                 display_name = COALESCE(%s, display_name)
             WHERE guild_id = %s AND user_id = %s AND game = %s
-        """, (winner_delta, display_name, guild_id, uid, game))
+            """,
+            (winner_delta, display_name, guild_id, uid, game),
+        )
 
     for uid in losers:
         display_name = name_map.get(uid)
         db.ensure_player(guild_id, uid, 1000, display_name)
         db.ensure_player_game(guild_id, uid, game, 1000, display_name)
 
-        db.execute("""
+        db.execute(
+            """
             UPDATE players
             SET
                 mmr = GREATEST(0, mmr + %s),
                 lose = lose + 1,
                 display_name = COALESCE(%s, display_name)
             WHERE guild_id = %s AND user_id = %s
-        """, (loser_delta, display_name, guild_id, uid))
+            """,
+            (loser_delta, display_name, guild_id, uid),
+        )
 
-        db.execute("""
+        db.execute(
+            """
             UPDATE player_game_stats
             SET
                 mmr = GREATEST(0, mmr + %s),
                 lose = lose + 1,
                 display_name = COALESCE(%s, display_name)
             WHERE guild_id = %s AND user_id = %s AND game = %s
-        """, (loser_delta, display_name, guild_id, uid, game))
+            """,
+            (loser_delta, display_name, guild_id, uid, game),
+        )
 
 
 class Team(commands.Cog):
@@ -225,6 +261,7 @@ class Team(commands.Cog):
             (team_a, team_b), mode_text = auto_balance_players(lobby["game"], selected, lobby["team_size"])
 
             db.clear_teams_by_id(lobby["lobby_id"])
+            db.reset_lobby_series_by_id(lobby["lobby_id"])
             for p in team_a:
                 db.add_team_member_by_id(lobby["lobby_id"], "A", p["user_id"])
             for p in team_b:
@@ -234,10 +271,14 @@ class Team(commands.Cog):
 
             a_sum = sum(p["mmr"] for p in team_a)
             b_sum = sum(p["mmr"] for p in team_b)
+            format_text = f"{get_match_format_label(lobby)} / {get_series_label(lobby.get('series_target'))}"
+            if lobby.get("match_format") == "tournament":
+                format_text += f" / {get_tournament_stage_label(lobby)}"
 
             await interaction.response.send_message(
                 f"팀 분배 완료 ({mode_text})\n"
-                f"로비 ID: **{lobby['lobby_id']}**\n\n"
+                f"로비 ID: **{lobby['lobby_id']}**\n"
+                f"형식: **{format_text}**\n\n"
                 f"**A팀 총합:** {a_sum}\n{format_team_block(team_a)}\n\n"
                 f"**B팀 총합:** {b_sum}\n{format_team_block(team_b)}\n\n"
                 f"차이: {abs(a_sum - b_sum)}"
@@ -248,7 +289,7 @@ class Team(commands.Cog):
                 "운영 로그 · 팀 분배",
                 f"실행자: {interaction.user.mention}\n채널: {interaction.channel.mention}\n"
                 f"로비 ID: {lobby['lobby_id']}\n게임: {lobby['game']}\n"
-                f"A팀 총합: {a_sum}\nB팀 총합: {b_sum}\n차이: {abs(a_sum - b_sum)}",
+                f"형식: {format_text}\nA팀 총합: {a_sum}\nB팀 총합: {b_sum}\n차이: {abs(a_sum - b_sum)}",
                 discord.Color.orange(),
             )
 
@@ -259,17 +300,10 @@ class Team(commands.Cog):
             else:
                 await interaction.response.send_message(f"오류 발생: {e}", ephemeral=True)
 
-    @app_commands.command(name="결과기록", description="경기 결과를 반영하고 ELO를 계산합니다.")
+    @app_commands.command(name="결과기록", description="세트 결과를 기록하고 선승제/토너먼트 진행 상황을 반영합니다.")
     @app_commands.describe(승리팀="A 또는 B", 로비아이디="결과를 기록할 로비 ID")
     async def record_result(self, interaction: discord.Interaction, 승리팀: str, 로비아이디: int | None = None):
         try:
-            if not db.is_premium_guild(interaction.guild_id):
-                await interaction.response.send_message(
-                    "⚠️ ELO 기능은 프리미엄 서버 전용입니다.",
-                    ephemeral=True,
-                )
-                return
-
             lobby = await self.resolve_lobby(interaction, 로비아이디, active_preferred=True)
             if not lobby:
                 return
@@ -288,7 +322,6 @@ class Team(commands.Cog):
 
             team_a_ids = db.get_team_members_by_id(lobby["lobby_id"], "A")
             team_b_ids = db.get_team_members_by_id(lobby["lobby_id"], "B")
-
             if not team_a_ids or not team_b_ids:
                 await interaction.response.send_message("먼저 팀 분배를 완료하세요.", ephemeral=True)
                 return
@@ -300,13 +333,7 @@ class Team(commands.Cog):
             avg_a = round(sum(mmr_map[uid] for uid in team_a_ids) / len(team_a_ids))
             avg_b = round(sum(mmr_map[uid] for uid in team_b_ids) / len(team_b_ids))
 
-            delta_a, delta_b = calc_elo_delta(avg_a, avg_b, winner)
-
-            if winner == "A":
-                apply_match_result(interaction.guild_id, lobby["game"], team_a_ids, team_b_ids, delta_a, delta_b, name_map)
-            else:
-                apply_match_result(interaction.guild_id, lobby["game"], team_b_ids, team_a_ids, delta_b, delta_a, name_map)
-
+            lobby = db.add_lobby_win_by_id(lobby["lobby_id"], winner)
             add_match(
                 interaction.guild_id,
                 lobby["lobby_id"],
@@ -316,33 +343,81 @@ class Team(commands.Cog):
                 avg_a,
                 avg_b,
             )
+
+            target = int(lobby.get("series_target") or 1)
+            a_wins = int(lobby.get("team_a_wins") or 0)
+            b_wins = int(lobby.get("team_b_wins") or 0)
+            series_done = a_wins >= target or b_wins >= target
+
+            if not series_done:
+                db.set_lobby_status_by_id(lobby["lobby_id"], "started")
+                await self.refresh_lobby_message(interaction.channel, lobby["lobby_id"])
+                await interaction.response.send_message(
+                    f"세트 결과 기록 완료\n"
+                    f"로비 ID: **{lobby['lobby_id']}**\n"
+                    f"이번 세트 승리팀: **{winner}팀**\n"
+                    f"진행 형식: **{get_match_format_label(lobby)} / {get_series_label(target)}**\n"
+                    f"현재 스코어: **A팀 {a_wins} : {b_wins} B팀**\n"
+                    f"다음 세트도 끝나면 `/결과기록 로비아이디:{lobby['lobby_id']} 승리팀:A 또는 B` 로 이어서 기록해주세요."
+                )
+                await send_operation_log(
+                    interaction.guild,
+                    "운영 로그 · 세트 결과 기록",
+                    f"실행자: {interaction.user.mention}\n채널: {interaction.channel.mention}\n"
+                    f"로비 ID: {lobby['lobby_id']}\n게임: {lobby['game']}\n승리팀: {winner}팀\n"
+                    f"현재 스코어: A팀 {a_wins} : {b_wins} B팀",
+                    discord.Color.green(),
+                )
+                return
+
             db.set_lobby_status_by_id(lobby["lobby_id"], "finished")
 
-            lines = []
-            for uid in team_a_ids:
-                delta = delta_a
-                sign = "+" if delta >= 0 else ""
-                lines.append(f"{name_map.get(uid, uid)}: {sign}{delta}")
-            for uid in team_b_ids:
-                delta = delta_b
-                sign = "+" if delta >= 0 else ""
-                lines.append(f"{name_map.get(uid, uid)}: {sign}{delta}")
+            apply_mmr = lobby.get("match_format") == "scrim" and db.has_premium_plan(interaction.guild_id, "supporter")
+            delta_a, delta_b = calc_elo_delta(avg_a, avg_b, winner)
+            lines: list[str] = []
 
-            await interaction.response.send_message(
-                f"결과 기록 완료\n"
+            if apply_mmr:
+                if winner == "A":
+                    apply_match_result(interaction.guild_id, lobby["game"], team_a_ids, team_b_ids, delta_a, delta_b, name_map)
+                else:
+                    apply_match_result(interaction.guild_id, lobby["game"], team_b_ids, team_a_ids, delta_b, delta_a, name_map)
+
+                for uid in team_a_ids:
+                    sign = "+" if delta_a >= 0 else ""
+                    lines.append(f"{name_map.get(uid, uid)}: {sign}{delta_a}")
+                for uid in team_b_ids:
+                    sign = "+" if delta_b >= 0 else ""
+                    lines.append(f"{name_map.get(uid, uid)}: {sign}{delta_b}")
+                result_notice = "서포터 이상 패키지 적용으로 MMR/승패가 반영되었습니다."
+            elif lobby.get("match_format") == "tournament":
+                result_notice = "토너먼트형식은 결과 스코어만 기록되고 MMR/승패는 반영되지 않습니다."
+            else:
+                result_notice = "내전형식이지만 서포터 이상 패키지가 아니라 MMR/승패는 반영되지 않습니다."
+
+            await self.refresh_lobby_message(interaction.channel, lobby["lobby_id"])
+
+            content = (
+                f"시리즈 종료\n"
                 f"로비 ID: **{lobby['lobby_id']}**\n"
-                f"승리팀: **{winner}팀**\n"
+                f"최종 승리팀: **{winner}팀**\n"
+                f"진행 형식: **{get_match_format_label(lobby)} / {get_series_label(target)}**\n"
+                f"최종 스코어: **A팀 {a_wins} : {b_wins} B팀**\n"
                 f"A팀 평균: {avg_a}\n"
                 f"B팀 평균: {avg_b}\n\n"
-                f"**ELO/MMR 변동**\n" + "\n".join(lines)
+                f"{result_notice}"
             )
-            await self.refresh_lobby_message(interaction.channel, lobby["lobby_id"])
+            if lines:
+                content += "\n\n**MMR 변동**\n" + "\n".join(lines)
+
+            await interaction.response.send_message(content)
             await send_operation_log(
                 interaction.guild,
-                "운영 로그 · 결과 기록",
+                "운영 로그 · 시리즈 종료",
                 f"실행자: {interaction.user.mention}\n채널: {interaction.channel.mention}\n"
-                f"로비 ID: {lobby['lobby_id']}\n게임: {lobby['game']}\n승리팀: {winner}팀\n"
-                f"A팀 평균: {avg_a}\nB팀 평균: {avg_b}",
+                f"로비 ID: {lobby['lobby_id']}\n게임: {lobby['game']}\n"
+                f"형식: {get_match_format_label(lobby)} / {get_series_label(target)}\n"
+                f"최종 스코어: A팀 {a_wins} : {b_wins} B팀\n"
+                f"최종 승리팀: {winner}팀",
                 discord.Color.green(),
             )
 
