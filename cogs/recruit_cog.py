@@ -230,11 +230,13 @@ def build_lobby_embed(lobby: dict, players: list[dict], team_a=None, team_b=None
                 embed.set_footer(text=f"로비아이디 {lobby['lobby_id']} | 정원이 모두 찼습니다. /밸런스팀 로비아이디:{lobby['lobby_id']} 를 실행해주세요.")
             else:
                 embed.set_footer(text=f"로비아이디 {lobby['lobby_id']} | 참가 버튼을 눌러 포지션을 입력하세요. MMR은 티어등록값이 자동 반영됩니다.")
+    elif lobby["status"] == "balanced":
+        embed.set_footer(text=f"로비아이디 {lobby['lobby_id']} | 팀 분배가 완료되었습니다. 아래 내전시작 버튼을 눌러 팀 음성채널로 이동하세요.")
     elif lobby["status"] == "started":
         if is_pubg_lobby(lobby):
             embed.set_footer(text=f"로비아이디 {lobby['lobby_id']} | 배그 모집이 완료되어 대기방으로 이동되었습니다.")
         else:
-            embed.set_footer(text=f"로비아이디 {lobby['lobby_id']} | 정원이 차서 자동 팀 분배 + 자동 음성 이동이 완료되었습니다.")
+            embed.set_footer(text=f"로비아이디 {lobby['lobby_id']} | 내전이 시작되어 팀 음성채널로 이동되었습니다.")
     elif lobby["status"] == "closed":
         embed.set_footer(text=f"로비아이디 {lobby['lobby_id']} | 종료된 로비입니다.")
     else:
@@ -435,12 +437,50 @@ class StatusButton(discord.ui.Button):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
+
+class StartButton(discord.ui.Button):
+    def __init__(self, cog):
+        super().__init__(label="내전시작", style=discord.ButtonStyle.gray, custom_id="scrim_start_button")
+        self.cog = cog
+
+    async def callback(self, interaction: discord.Interaction):
+        lobby = db.get_lobby_by_message_id(interaction.message.id) if interaction.message else None
+        if not lobby:
+            await interaction.response.send_message("이 모집 메시지에 연결된 로비를 찾을 수 없습니다.", ephemeral=True)
+            return
+
+        if lobby["game"] == "pubg":
+            await interaction.response.send_message("배그는 내전시작 버튼을 사용하지 않습니다.", ephemeral=True)
+            return
+
+        if lobby["status"] == "open":
+            await interaction.response.send_message(
+                f"먼저 `/밸런스팀 로비아이디:{lobby['lobby_id']}` 를 실행해주세요.",
+                ephemeral=True,
+            )
+            return
+
+        if lobby["status"] == "started":
+            await interaction.response.send_message("이미 시작된 로비입니다.", ephemeral=True)
+            return
+
+        if lobby["status"] != "balanced":
+            await interaction.response.send_message("현재 이 로비는 내전시작 버튼을 사용할 수 없는 상태입니다.", ephemeral=True)
+            return
+
+        if interaction.user.id != lobby["host_id"] and not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("호스트 또는 관리자만 내전을 시작할 수 있습니다.", ephemeral=True)
+            return
+
+        await self.cog.start_scrim_from_interaction(interaction, lobby)
+
 class RecruitView(discord.ui.View):
     def __init__(self, cog):
         super().__init__(timeout=None)
         self.add_item(JoinButton(cog))
         self.add_item(LeaveButton(cog))
         self.add_item(StatusButton(cog))
+        self.add_item(StartButton(cog))
 
 
 class Recruit(commands.Cog):
@@ -612,6 +652,60 @@ class Recruit(commands.Cog):
                     await member.move_to(target_channel)
                 except Exception:
                     pass
+
+
+    async def start_scrim_from_interaction(self, interaction: discord.Interaction, lobby: dict):
+        if lobby["game"] == "pubg":
+            await interaction.response.send_message("배그는 내전시작 버튼을 사용하지 않습니다.", ephemeral=True)
+            return
+
+        if lobby["status"] == "started":
+            await interaction.response.send_message("이미 시작된 로비입니다.", ephemeral=True)
+            return
+
+        if lobby["status"] != "balanced":
+            await interaction.response.send_message(
+                f"먼저 `/밸런스팀 로비아이디:{lobby['lobby_id']}` 를 실행해주세요.",
+                ephemeral=True,
+            )
+            return
+
+        team_a_ids = db.get_team_members_by_id(lobby["lobby_id"], "A")
+        team_b_ids = db.get_team_members_by_id(lobby["lobby_id"], "B")
+        if not team_a_ids or not team_b_ids:
+            await interaction.response.send_message("팀 정보가 없습니다. 먼저 `/밸런스팀`을 다시 실행해주세요.", ephemeral=True)
+            return
+
+        waiting, team_a_ch, team_b_ch = await self.ensure_voice_channels(interaction.guild, lobby)
+        if not waiting or not team_a_ch or not team_b_ch:
+            await interaction.response.send_message(
+                "음성채널을 만들 수 없습니다. `/설정카테고리` 와 `/설정역할` 이 올바른지 확인해주세요.",
+                ephemeral=True,
+            )
+            return
+
+        await self.move_members(interaction.guild, team_a_ids, team_a_ch)
+        await self.move_members(interaction.guild, team_b_ids, team_b_ch)
+
+        db.set_lobby_status_by_id(lobby["lobby_id"], "started")
+        await self.refresh_lobby_message(interaction.channel, lobby["lobby_id"])
+
+        await interaction.response.send_message(
+            f"내전 시작 완료\n"
+            f"로비 ID: **{lobby['lobby_id']}**\n"
+            f"대기방: {waiting.mention}\n"
+            f"A팀: {team_a_ch.mention}\n"
+            f"B팀: {team_b_ch.mention}"
+        )
+
+        await send_operation_log(
+            interaction.guild,
+            "운영 로그 · 내전 시작",
+            f"실행자: {interaction.user.mention}\n채널: {interaction.channel.mention}\n"
+            f"로비 ID: {lobby['lobby_id']}\n게임: {lobby['game']}\n"
+            f"대기방: {waiting.mention}\nA팀: {team_a_ch.mention}\nB팀: {team_b_ch.mention}",
+            discord.Color.blurple(),
+        )
 
     async def try_auto_balance_and_start(self, channel: discord.TextChannel, lobby_id: int):
         lobby = db.get_lobby_by_id(lobby_id)

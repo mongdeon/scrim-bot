@@ -180,6 +180,65 @@ class Team(commands.Cog):
             )
         return None
 
+    async def ensure_voice_channels(self, guild: discord.Guild, lobby: dict):
+        settings = db.get_settings(guild.id)
+        if not settings or not settings["category_id"] or not settings["recruit_role_id"]:
+            return None, None, None
+
+        category = guild.get_channel(settings["category_id"])
+        role = guild.get_role(settings["recruit_role_id"])
+        me = guild.me or guild.get_member(self.bot.user.id)
+
+        if not category or not role or not me:
+            return None, None, None
+
+        overwrites = {
+            guild.default_role: discord.PermissionOverwrite(view_channel=False, connect=False),
+            role: discord.PermissionOverwrite(view_channel=True, connect=True, speak=True),
+            me: discord.PermissionOverwrite(view_channel=True, connect=True, speak=True, move_members=True, manage_channels=True),
+        }
+
+        host_member = guild.get_member(lobby["host_id"])
+        if host_member:
+            overwrites[host_member] = discord.PermissionOverwrite(view_channel=True, connect=True, speak=True, move_members=True)
+
+        waiting = guild.get_channel(lobby["waiting_voice_id"]) if lobby["waiting_voice_id"] else None
+        team_a_ch = guild.get_channel(lobby["team_a_voice_id"]) if lobby["team_a_voice_id"] else None
+        team_b_ch = guild.get_channel(lobby["team_b_voice_id"]) if lobby["team_b_voice_id"] else None
+
+        base_name = f"{lobby['game']}-{lobby['lobby_id']}"
+
+        if waiting is None:
+            waiting = await guild.create_voice_channel(
+                name=f"{base_name}-대기방",
+                category=category,
+                overwrites=overwrites,
+            )
+        if team_a_ch is None:
+            team_a_ch = await guild.create_voice_channel(
+                name=f"{base_name}-A팀",
+                category=category,
+                overwrites=overwrites,
+            )
+        if team_b_ch is None:
+            team_b_ch = await guild.create_voice_channel(
+                name=f"{base_name}-B팀",
+                category=category,
+                overwrites=overwrites,
+            )
+
+        db.set_voice_channels_by_id(lobby["lobby_id"], waiting.id, team_a_ch.id, team_b_ch.id)
+        return waiting, team_a_ch, team_b_ch
+
+    async def move_members(self, guild: discord.Guild, user_ids, target_channel):
+        for uid in user_ids:
+            member = guild.get_member(uid)
+            if member and member.voice and member.voice.channel:
+                try:
+                    await member.move_to(target_channel)
+                except Exception:
+                    pass
+
     async def refresh_lobby_message(self, channel: discord.TextChannel, lobby_id: int):
         lobby = db.get_lobby_by_id(lobby_id)
         if not lobby or not lobby.get("message_id"):
@@ -235,12 +294,27 @@ class Team(commands.Cog):
             a_sum = sum(p["mmr"] for p in team_a)
             b_sum = sum(p["mmr"] for p in team_b)
 
+            waiting, team_a_ch, team_b_ch = await self.ensure_voice_channels(interaction.guild, lobby)
+            if waiting and team_a_ch and team_b_ch:
+                extra_text = (
+                    f"\n\n대기방: {waiting.mention}"
+                    f"\nA팀방: {team_a_ch.mention}"
+                    f"\nB팀방: {team_b_ch.mention}"
+                    f"\n\n아래 모집 메시지의 **내전시작** 버튼을 눌러 팀 채널로 이동하세요."
+                )
+            else:
+                extra_text = (
+                    "\n\n음성채널 자동 생성에 실패했습니다."
+                    "\n`/설정카테고리` 와 `/설정역할` 설정을 확인해주세요."
+                )
+
             await interaction.response.send_message(
                 f"팀 분배 완료 ({mode_text})\n"
                 f"로비 ID: **{lobby['lobby_id']}**\n\n"
                 f"**A팀 총합:** {a_sum}\n{format_team_block(team_a)}\n\n"
                 f"**B팀 총합:** {b_sum}\n{format_team_block(team_b)}\n\n"
                 f"차이: {abs(a_sum - b_sum)}"
+                f"{extra_text}"
             )
             await self.refresh_lobby_message(interaction.channel, lobby["lobby_id"])
             await send_operation_log(
