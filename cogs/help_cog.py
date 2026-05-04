@@ -5,27 +5,23 @@ from discord import app_commands
 class GuideView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
-        # 웹 대시보드로 바로 이동할 수 있는 버튼 추가
-        # 실제 운영하시는 도메인으로 URL을 변경해주세요.
         self.add_item(discord.ui.Button(
             label="웹 대시보드 (전적 및 랭킹)", 
-            url="https://your-domain.com/", 
+            url="https://elegant-cooperation-production-03d5.up.railway.app/", 
             style=discord.ButtonStyle.link
         ))
         self.add_item(discord.ui.Button(
             label="프리미엄 후원 안내", 
-            url="https://your-domain.com/support", 
+            url="https://elegant-cooperation-production-03d5.up.railway.app/support", 
             style=discord.ButtonStyle.link
         ))
 
-class GuideCog(commands.Cog):
+class HelpCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
     @commands.Cog.listener()
     async def on_guild_join(self, guild: discord.Guild):
-        """봇이 새로운 서버에 초대되었을 때 실행되는 이벤트"""
-        # 메시지를 보낼 수 있는 첫 번째 텍스트 채널을 찾습니다.
         target_channel = guild.system_channel
         if target_channel is None or not target_channel.permissions_for(guild.me).send_messages:
             for channel in guild.text_channels:
@@ -37,11 +33,11 @@ class GuideCog(commands.Cog):
             embed = discord.Embed(
                 title="내전봇이 서버에 추가되었습니다!",
                 description=(
-                    "초대해 주셔서 감사합니다. 공정한 팀 분배와 전적 관리를 시작해 보세요.\n\n"
+                    "공정한 팀 분배와 전적 관리를 시작해 보세요.\n\n"
                     "**[초기 설정 방법]**\n"
                     "원활한 사용을 위해 관리자 분은 아래 명령어로 서버를 세팅해 주세요."
                 ),
-                color=0x2563eb # 브랜드 컬러 (파란색 계열)
+                color=0x2563eb
             )
             embed.add_field(
                 name="1. 기본 채널 설정",
@@ -64,7 +60,6 @@ class GuideCog(commands.Cog):
 
     @app_commands.command(name="도움말", description="내전봇의 사용 방법과 전체 명령어 목록을 확인합니다.")
     async def help_command(self, interaction: discord.Interaction):
-        """사용자가 언제든 호출할 수 있는 도움말 명령어"""
         embed = discord.Embed(
             title="내전봇 사용 가이드",
             description="아래 카테고리별 명령어를 확인하시고, 상세 전적은 웹사이트에서 확인하세요.",
@@ -96,6 +91,5 @@ class GuideCog(commands.Cog):
 
         await interaction.response.send_message(embed=embed, view=GuideView(), ephemeral=True)
 
-
 async def setup(bot: commands.Bot):
-    await bot.add_cog(GuideCog(bot))
+    await bot.add_cog(HelpCog(bot))
