@@ -1,56 +1,313 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
+
 from core.db import DB
 from datetime import datetime
+
+# 자동 밸런싱 모듈 임포트 추가
+from core.matchmaking import auto_balance_players
 
 db = DB()
 db.init_recruit_tables()
 
-# 한글 입력값을 DB용 영문 값으로 변환하는 매퍼
+GAME_OPTIONS = [
+    app_commands.Choice(name="VALORANT", value="valorant"),
+    app_commands.Choice(name="League of Legends", value="lol"),
+    app_commands.Choice(name="PUBG", value="pubg"),
+    app_commands.Choice(name="Overwatch 2", value="overwatch"),
+]
+
+PUBG_MODE_OPTIONS = [
+    app_commands.Choice(name="솔로", value="solo"),
+    app_commands.Choice(name="듀오", value="duo"),
+    app_commands.Choice(name="스쿼드", value="squad"),
+]
+
+POSITION_MAP = {
+    "valorant": ["타격대", "척후대", "감시자", "전략가", "상관없음"],
+    "lol": ["탑", "정글", "미드", "원딜", "서폿", "상관없음"],
+    "pubg": ["IGL", "Entry", "Support", "Scout", "상관없음"],
+    "overwatch": ["돌격", "딜러", "지원"],
+}
+
+OVERWATCH_ROLES = ["돌격", "딜러", "지원"]
+
 FORMAT_MAPPER = {
     "내전": "scrim", "내전형식": "scrim",
     "토너먼트": "tournament", "토너먼트형식": "tournament",
     "솔로": "solo", "듀오": "duo", "스쿼드": "squad"
 }
 
-# --- 도우미 함수 ---
+def parse_date_time(date_text: str | None, time_text: str | None):
+    if not date_text and not time_text:
+        return None
+    if not date_text or not time_text:
+        raise ValueError("날짜와 시간은 함께 입력해야 합니다.")
+    return datetime.strptime(f"{date_text.strip()} {time_text.strip()}", "%Y-%m-%d %H:%M")
 
-def get_game_display_name(game_val: str) -> str:
-    return {
-        "valorant": "VALORANT", "lol": "League of Legends",
-        "pubg": "PUBG", "overwatch": "Overwatch 2",
-    }.get(game_val, game_val)
+
+async def send_operation_log(
+    guild: discord.Guild,
+    title: str,
+    description: str,
+    color: discord.Color = discord.Color.blue()
+):
+    settings = db.get_settings(guild.id)
+    if not settings:
+        return
+
+    channel_id = settings.get("log_channel_id")
+    if not channel_id:
+        return
+
+    channel = guild.get_channel(channel_id)
+    if not isinstance(channel, discord.TextChannel):
+        return
+
+    embed = discord.Embed(title=title, description=description, color=color)
+    try:
+        await channel.send(embed=embed)
+    except Exception:
+        pass
+
+
+def member_has_access(member: discord.Member) -> bool:
+    if member.guild_permissions.administrator:
+        return True
+
+    settings = db.get_settings(member.guild.id)
+    if not settings or not settings["recruit_role_id"]:
+        return False
+
+    return any(role.id == settings["recruit_role_id"] for role in member.roles)
+
+
+def is_pubg_lobby(lobby: dict) -> bool:
+    return lobby["game"] == "pubg"
+
+
+def get_pubg_mode_label(team_size: int) -> str:
+    if team_size == 1:
+        return "솔로"
+    if team_size == 2:
+        return "듀오"
+    if team_size == 4:
+        return "스쿼드"
+    return f"{team_size}인"
+
 
 def get_lobby_need_count(lobby: dict) -> int:
-    if lobby["game"] == "pubg":
-        return int(lobby.get("total_slots") or 8)
+    if is_pubg_lobby(lobby):
+        if lobby.get("total_slots") is not None:
+            return int(lobby["total_slots"])
+
+        if lobby["team_size"] == 1:
+            return 8
+        if lobby["team_size"] == 2:
+            return 8
+        if lobby["team_size"] == 4:
+            return 16
+
     return lobby["team_size"] * 2
 
-def build_lobby_list_embed(channel: discord.TextChannel, lobbies: list[dict]) -> discord.Embed:
-    embed = discord.Embed(title="현재 채널 내전 로비 목록", color=discord.Color.blurple())
-    if not lobbies:
-        embed.description = "현재 표시할 로비가 없습니다."
-        return embed
-    lines = [f"• `ID {lb['lobby_id']}` | {lb['game'].upper()} | 상태 `{lb['status']}`" for lb in lobbies]
-    embed.description = "\n".join(lines)
-    return embed
 
-def build_lobby_embed(lobby: dict, players: list[dict]) -> discord.Embed:
-    game_name = get_game_display_name(lobby['game'])
-    embed = discord.Embed(title=f"⚔️ {game_name} 내전 모집", color=discord.Color.green())
+def get_game_display_name(lobby: dict) -> str:
+    if lobby["game"] == "pubg":
+        return f"PUBG 배틀로얄 ({get_pubg_mode_label(lobby['team_size'])})"
+
+    return {
+        "valorant": "VALORANT",
+        "lol": "League of Legends",
+        "pubg": "PUBG",
+        "overwatch": "Overwatch 2",
+    }.get(lobby["game"], lobby["game"])
+
+
+def format_lobby_datetime(value):
+    if not value:
+        return "-"
+    return str(value)[:16]
+
+
+def get_match_format_label(lobby: dict) -> str:
+    if lobby["game"] == "pubg":
+        return "배틀로얄"
+    return "토너먼트형식" if lobby.get("match_format") == "tournament" else "내전형식"
+
+
+def get_series_label(target: int | None) -> str:
+    target = int(target or 1)
+    if target == 2:
+        return "3판 2선승"
+    elif target >= 3:
+        return "5판 3선승"
+    return "단판"
+
+
+def get_tournament_stage_label(lobby: dict) -> str:
+    if lobby.get("match_format") != "tournament":
+        return "-"
+    return "결승전" if lobby.get("tournament_stage") == "final" else "일반전"
+
+
+def build_party_lines(lobby_id: int) -> list[str]:
+    parties = db.get_lobby_parties_by_id(lobby_id)
+    lines = []
+
+    for idx, party in enumerate(parties, start=1):
+        members = party["members"]
+        member_names = ", ".join(m["display_name"] for m in members)
+        lines.append(
+            f"{idx}. 코드 `{party['party_code']}` | {len(members)}/{party['mode_size']}명 | {member_names}"
+        )
+
+    return lines
+
+
+def build_lobby_embed(lobby: dict, players: list[dict], team_a=None, team_b=None) -> discord.Embed:
+    game_name = get_game_display_name(lobby)
+    need = get_lobby_need_count(lobby)
+
+    color = discord.Color.green()
+    if lobby["status"] == "balanced":
+        color = discord.Color.orange()
+    elif lobby["status"] == "started":
+        color = discord.Color.blurple()
+    elif lobby["status"] == "finished":
+        color = discord.Color.red()
+    elif lobby["status"] == "closed":
+        color = discord.Color.dark_grey()
+
+    embed = discord.Embed(title=f"⚔️ {game_name} 내전 모집", color=color)
     embed.add_field(name="로비 ID", value=str(lobby["lobby_id"]), inline=True)
-    time_str = lobby["scheduled_at"].strftime("%Y-%m-%d %H:%M") if lobby.get("scheduled_at") else "즉시 시작"
-    embed.add_field(name="시작 시간", value=time_str, inline=True)
-    
-    # 세트 규칙 표시 추가
-    series_text = f"{lobby.get('series_target', 1)}선승제" if lobby.get('series_target', 1) > 1 else "단판"
-    embed.add_field(name="세트 규칙", value=series_text, inline=True)
-    
-    embed.add_field(name="인원", value=f"{len(players)} / {get_lobby_need_count(lobby)}", inline=True)
+    embed.add_field(name="상태", value=lobby["status"], inline=True)
+    embed.add_field(name="생성 채널", value=f"<#{lobby['channel_id']}>", inline=True)
+
+    if is_pubg_lobby(lobby):
+        embed.add_field(name="배그 형식", value=get_pubg_mode_label(lobby["team_size"]), inline=True)
+        embed.add_field(name="총 모집 인원", value=str(need), inline=True)
+        embed.add_field(name="현재 참가 인원", value=f"{len(players)} / {need}", inline=False)
+    else:
+        embed.add_field(name="진행 형식", value=get_match_format_label(lobby), inline=True)
+        embed.add_field(name="세트 형식", value=get_series_label(lobby.get("series_target")), inline=True)
+        if lobby.get("match_format") == "tournament":
+            embed.add_field(name="토너먼트 라운드", value=get_tournament_stage_label(lobby), inline=True)
+        else:
+            embed.add_field(name="팀 인원", value=f"{lobby['team_size']} vs {lobby['team_size']}", inline=True)
+        embed.add_field(name="현재 인원", value=f"{len(players)} / {need}", inline=True)
+        embed.add_field(name="호스트", value=f"<@{lobby['host_id']}>", inline=True)
+        embed.add_field(name="세트 스코어", value=f"A팀 {int(lobby.get('team_a_wins', 0))} : {int(lobby.get('team_b_wins', 0))} B팀", inline=True)
+
+    if players:
+        if is_pubg_lobby(lobby) and lobby["team_size"] in [2, 4]:
+            grouped = {}
+            no_party_rows = []
+
+            for player in players:
+                party_id = player.get("party_id")
+                if party_id:
+                    grouped.setdefault(party_id, []).append(player)
+                else:
+                    no_party_rows.append(player)
+
+            lines = []
+            group_idx = 1
+
+            for _, members in grouped.items():
+                member_text = " / ".join(f"{m['display_name']}" for m in members)
+                lines.append(f"[파티 {group_idx}] {member_text}")
+                group_idx += 1
+
+            for player in no_party_rows:
+                pos_text = player["position"] if not player.get("sub_position") else f"{player['position']} / {player['sub_position']}"
+                lines.append(f"{player['display_name']} | {pos_text}")
+
+            embed.add_field(name="참가자", value="\n".join(lines[:25]), inline=False)
+        else:
+            lines = []
+            for idx, player in enumerate(players, start=1):
+                pos_text = player["position"] if not player.get("sub_position") else f"{player['position']} / {player['sub_position']}"
+                if is_pubg_lobby(lobby):
+                    lines.append(f"{idx}. {player['display_name']} | {pos_text}")
+                else:
+                    lines.append(f"{idx}. {player['display_name']} | MMR {player['mmr']} | {pos_text}")
+            embed.add_field(name="참가자", value="\n".join(lines[:25]), inline=False)
+    else:
+        embed.add_field(name="참가자", value="아직 없음", inline=False)
+
+    if lobby.get("scheduled_at"):
+        embed.add_field(name="내전 시간", value=format_lobby_datetime(lobby["scheduled_at"]), inline=True)
+    if is_pubg_lobby(lobby) and lobby["team_size"] in [2, 4]:
+        party_lines = build_party_lines(lobby["lobby_id"])
+        if party_lines:
+            embed.add_field(name="현재 파티", value="\n".join(party_lines[:20]), inline=False)
+        else:
+            embed.add_field(name="현재 파티", value="아직 없음", inline=False)
+
+    if not is_pubg_lobby(lobby):
+        if team_a:
+            embed.add_field(name="A팀", value="\n".join(f"<@{uid}>" for uid in team_a), inline=True)
+        if team_b:
+            embed.add_field(name="B팀", value="\n".join(f"<@{uid}>" for uid in team_b), inline=True)
+
+    if lobby["status"] == "open":
+        if is_pubg_lobby(lobby):
+            if lobby["team_size"] == 1:
+                embed.set_footer(text=f"로비아이디 {lobby['lobby_id']} | 배그 솔로는 개인 참가형입니다. 정원이 차면 대기방으로 자동 이동합니다.")
+            else:
+                embed.set_footer(text=f"로비아이디 {lobby['lobby_id']} | 배그 듀오/스쿼드는 먼저 파티를 만든 뒤 참가하세요. 정원이 차면 대기방으로 자동 이동합니다.")
+        else:
+            if len(players) >= need:
+                embed.set_footer(text=f"로비아이디 {lobby['lobby_id']} | 정원이 모두 찼습니다. '내전시작' 버튼을 눌러주세요.")
+            else:
+                embed.set_footer(text=f"로비아이디 {lobby['lobby_id']} | 참가 버튼을 눌러 포지션을 입력하세요. MMR은 티어등록값이 자동 반영됩니다.")
+    elif lobby["status"] == "balanced":
+        embed.set_footer(text=f"로비아이디 {lobby['lobby_id']} | 팀 분배가 완료되었습니다. '내전시작' 버튼을 누르면 통화방이 생성됩니다.")
+    elif lobby["status"] == "started":
+        if is_pubg_lobby(lobby):
+            embed.set_footer(text=f"로비아이디 {lobby['lobby_id']} | 배그 모집이 완료되어 대기방으로 이동되었습니다.")
+        else:
+            embed.set_footer(text=f"로비아이디 {lobby['lobby_id']} | 내전이 시작되었습니다. 세트 스코어를 확인하면서 /결과기록 로비아이디:{lobby['lobby_id']} 승리팀:A 또는 B 로 진행해주세요.")
+    elif lobby["status"] == "closed":
+        embed.set_footer(text=f"로비아이디 {lobby['lobby_id']} | 종료된 로비입니다.")
+    elif lobby["status"] == "finished":
+        embed.set_footer(text=f"로비아이디 {lobby['lobby_id']} | 세트가 종료되었습니다.")
+    else:
+        embed.set_footer(text=f"로비아이디 {lobby['lobby_id']} | 내전 상태를 확인하세요.")
+
     return embed
 
-# --- 팝업창(Modal) 설정 ---
+
+def build_lobby_list_embed(channel: discord.TextChannel, lobbies: list[dict]) -> discord.Embed:
+    embed = discord.Embed(
+        title="현재 채널 내전 로비 목록",
+        description=f"채널: {channel.mention}",
+        color=discord.Color.blurple(),
+    )
+
+    if not lobbies:
+        embed.add_field(name="로비", value="현재 표시할 로비가 없습니다.", inline=False)
+        return embed
+
+    lines = []
+    for lobby in lobbies:
+        game_name = get_game_display_name(lobby)
+        need = get_lobby_need_count(lobby)
+        current = len(db.get_lobby_players_by_id(lobby["lobby_id"]))
+        extra = ""
+        if lobby["game"] != "pubg":
+            extra = f" | {get_match_format_label(lobby)} {get_series_label(lobby.get('series_target'))}"
+            if lobby.get("match_format") == "tournament":
+                extra += f" ({get_tournament_stage_label(lobby)})"
+        lines.append(
+            f"• `ID {lobby['lobby_id']}` | {game_name}{extra} | 상태 `{lobby['status']}` | 인원 {current}/{need} | 생성 {format_lobby_datetime(lobby['created_at'])}"
+        )
+
+    embed.add_field(name="로비 목록", value="\n".join(lines[:20]), inline=False)
+    embed.set_footer(text="여러 로비가 있으면 /내전상태 로비아이디:<번호> 형식으로 선택하세요.")
+    return embed
+
 
 class RecruitCreateModal(discord.ui.Modal):
     def __init__(self, cog, game_val: str, game_name: str):
@@ -58,7 +315,6 @@ class RecruitCreateModal(discord.ui.Modal):
         self.cog = cog
         self.game_val = game_val
 
-        # 1. 시작 시간
         self.time_input = discord.ui.TextInput(
             label="⏰ 시작 시간 (생략 시 '지금')",
             placeholder="예: 20:00 또는 2026-05-12 14:00",
@@ -66,7 +322,6 @@ class RecruitCreateModal(discord.ui.Modal):
         )
         self.add_item(self.time_input)
 
-        # 2. 진행 형식
         format_label = "⚔️ 형식 (내전 / 토너먼트)" if game_val != "pubg" else "🔫 배그 형식 (솔로 / 듀오 / 스쿼드)"
         self.format_input = discord.ui.TextInput(
             label=format_label,
@@ -75,7 +330,6 @@ class RecruitCreateModal(discord.ui.Modal):
         )
         self.add_item(self.format_input)
 
-        # 3. 인원 설정
         size_label = "👥 팀별 인원" if game_val != "pubg" else "🎯 총 모집 인원"
         self.size_input = discord.ui.TextInput(
             label=size_label,
@@ -84,17 +338,16 @@ class RecruitCreateModal(discord.ui.Modal):
         )
         self.add_item(self.size_input)
 
-        # 4. 선승제 설정 (새로 추가)
-        self.series_input = discord.ui.TextInput(
-            label="🏆 세트 규칙 (1: 단판, 2: 3판2선...)",
-            default="1",
-            placeholder="숫자만 입력 (예: 1, 2, 3)",
-            required=True,
-            max_length=1
-        )
-        self.add_item(self.series_input)
+        if game_val != "pubg":
+            self.series_input = discord.ui.TextInput(
+                label="🏆 세트 형식 (1:단판, 2:3판2선, 3:5판3선)",
+                default="1",
+                placeholder="숫자만 입력 (1, 2, 3 중 택 1)",
+                required=True,
+                max_length=1
+            )
+            self.add_item(self.series_input)
 
-        # 5. 메모
         self.memo_input = discord.ui.TextInput(
             label="📝 메모 (선택)",
             style=discord.TextStyle.paragraph,
@@ -105,7 +358,6 @@ class RecruitCreateModal(discord.ui.Modal):
         self.add_item(self.memo_input)
 
     async def on_submit(self, interaction: discord.Interaction):
-        # 시간 처리
         time_str = self.time_input.value.strip()
         scheduled_at = datetime.now()
         if time_str:
@@ -119,55 +371,820 @@ class RecruitCreateModal(discord.ui.Modal):
                 await interaction.response.send_message("❌ 시간 형식이 올바르지 않습니다.", ephemeral=True)
                 return
 
-        # 형식 및 인원 처리
         db_format = FORMAT_MAPPER.get(self.format_input.value.strip(), "scrim")
         try:
             val_size = int(self.size_input.value.strip())
-            series_target = int(self.series_input.value.strip())
+            series_target = int(self.series_input.value.strip()) if hasattr(self, 'series_input') else 1
         except ValueError:
-            await interaction.response.send_message("❌ 인원과 선승제는 숫자로 입력해주세요.", ephemeral=True)
+            await interaction.response.send_message("❌ 인원과 세트 형식은 숫자로 입력해주세요.", ephemeral=True)
             return
 
         final_team_size = val_size if self.game_val != "pubg" else (1 if db_format == "solo" else 2 if db_format == "duo" else 4)
         final_total_slots = val_size if self.game_val == "pubg" else None
+        match_format = db_format if self.game_val != "pubg" else "battle_royale"
 
-        # 로비 생성
         lobby = db.create_lobby(
             interaction.channel_id, interaction.guild_id, interaction.user.id,
             self.game_val, final_team_size, total_slots=final_total_slots,
-            scheduled_at=scheduled_at, match_format=db_format,
+            scheduled_at=scheduled_at, match_format=match_format,
             series_target=series_target, tournament_stage="general"
         )
 
         players = db.get_lobby_players_by_id(lobby["lobby_id"])
         embed = build_lobby_embed(lobby, players)
+        
         if self.memo_input.value:
-            embed.description = f"**[방장 메모]**\n{self.memo_input.value}"
+            embed.add_field(name="방장 메모", value=self.memo_input.value, inline=False)
 
-        await interaction.response.send_message(embed=embed, view=RecruitView(self.cog))
+        view = RecruitView(self.cog)
+        await interaction.response.send_message(embed=embed, view=view)
         msg = await interaction.original_response()
         db.set_lobby_message_by_id(lobby["lobby_id"], msg.id)
+
+
+class RecruitEditTimeModal(discord.ui.Modal, title="내전 시간 수정"):
+    def __init__(self, cog, lobby: dict):
+        super().__init__()
+        self.cog = cog
+        self.lobby = lobby
+        
+        current_time_str = ""
+        if lobby.get("scheduled_at"):
+            current_time_str = lobby["scheduled_at"].strftime("%Y-%m-%d %H:%M")
+
+        self.time_input = discord.ui.TextInput(
+            label="새로운 시작 시간",
+            style=discord.TextStyle.short,
+            placeholder="예: 20:00 (또는 YYYY-MM-DD HH:MM)",
+            default=current_time_str,
+            required=True,
+            max_length=20
+        )
+        self.add_item(self.time_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        time_str = self.time_input.value.strip()
+        try:
+            if ":" in time_str and len(time_str) <= 5:
+                now = datetime.now()
+                parsed_time = datetime.strptime(time_str, "%H:%M").time()
+                scheduled_at = datetime.combine(now.date(), parsed_time)
+            else:
+                scheduled_at = datetime.strptime(time_str, "%Y-%m-%d %H:%M")
+        except ValueError:
+            await interaction.response.send_message("시간 형식이 올바르지 않습니다. (예: 20:00 또는 2026-05-11 20:00)", ephemeral=True)
+            return
+
+        db.update_lobby_times_by_id(self.lobby["lobby_id"], scheduled_at, None)
+        await self.cog.refresh_lobby_message(interaction.channel, self.lobby["lobby_id"])
+        await interaction.response.send_message(
+            f"✅ 내전 시간이 성공적으로 수정되었습니다.\n변경 시간: **{scheduled_at.strftime('%Y-%m-%d %H:%M')}** (로비 ID: {self.lobby['lobby_id']})", 
+            ephemeral=True
+        )
+
+
+class JoinModal(discord.ui.Modal, title="내전 참가"):
+    def __init__(self, lobby_id: int, game_key: str, cog):
+        super().__init__()
+        self.lobby_id = lobby_id
+        self.game_key = game_key
+        self.cog = cog
+
+        pos_hint = ", ".join(POSITION_MAP.get(game_key, ["상관없음"]))
+        self.main_position = discord.ui.TextInput(label="주 포지션", placeholder=pos_hint, required=True, max_length=20)
+        self.sub_position = discord.ui.TextInput(label="부 포지션", placeholder=pos_hint, required=False, max_length=20)
+        self.add_item(self.main_position)
+        self.add_item(self.sub_position)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        lobby = db.get_lobby_by_id(self.lobby_id)
+        if not lobby:
+            await interaction.response.send_message("로비가 없습니다.", ephemeral=True)
+            return
+        if lobby["status"] != "open":
+            await interaction.response.send_message("현재 모집 중이 아닙니다.", ephemeral=True)
+            return
+
+        main_position = self.main_position.value.strip()
+        sub_position = self.sub_position.value.strip() or None
+        valid_positions = POSITION_MAP.get(self.game_key, [])
+
+        if main_position not in valid_positions:
+            await interaction.response.send_message(f"가능한 주 포지션: {', '.join(valid_positions)}", ephemeral=True)
+            return
+        if sub_position and sub_position not in valid_positions:
+            await interaction.response.send_message(f"가능한 부 포지션: {', '.join(valid_positions)}", ephemeral=True)
+            return
+        if sub_position and sub_position == main_position:
+            await interaction.response.send_message("주 포지션과 부 포지션은 다르게 입력해주세요.", ephemeral=True)
+            return
+
+        if self.game_key == "overwatch":
+            mmr = db.get_overwatch_role_mmr(interaction.guild_id, interaction.user.id, main_position)
+            if mmr is None:
+                await interaction.response.send_message(
+                    "오버워치는 역할군별 티어등록 기반으로만 참가할 수 있습니다. `/옵치티어등록 역할군:<주포지션> 티어:<티어>` 를 먼저 사용해주세요.",
+                    ephemeral=True,
+                )
+                return
+            ow_role = main_position
+        elif self.game_key in ["valorant", "lol"]:
+            mmr = db.get_registered_game_mmr(interaction.guild_id, interaction.user.id, self.game_key)
+            if mmr is None:
+                guide_map = {
+                    "valorant": "`/발로티어등록 티어:<티어>`",
+                    "lol": "`/롤티어등록 티어:<티어>`",
+                }
+                await interaction.response.send_message(
+                    f"이 게임은 티어등록 기반 MMR로만 참가할 수 있습니다. 먼저 {guide_map[self.game_key]} 명령어를 사용해주세요.",
+                    ephemeral=True,
+                )
+                return
+            ow_role = None
+        else:
+            mmr = 0
+            ow_role = None
+
+        party_id = None
+        if lobby["game"] == "pubg" and lobby["team_size"] in [2, 4]:
+            party = db.get_user_party_by_id(self.lobby_id, interaction.user.id)
+            if not party:
+                await interaction.response.send_message(
+                    f"배그 듀오/스쿼드는 먼저 파티를 만들어야 참가할 수 있습니다.\n`/파티생성 로비아이디:{self.lobby_id}` 또는 `/파티참가 로비아이디:{self.lobby_id} 파티코드:코드` 를 사용하세요.",
+                    ephemeral=True,
+                )
+                return
+            members = db.get_party_members_by_id(self.lobby_id, party["id"])
+            if len(members) != lobby["team_size"]:
+                await interaction.response.send_message(
+                    f"현재 파티 인원이 {len(members)}명입니다. {lobby['team_size']}명 파티를 완성한 뒤 참가하세요.",
+                    ephemeral=True,
+                )
+                return
+            party_id = party["id"]
+
+        db.add_lobby_player_by_id(
+            self.lobby_id,
+            interaction.user.id,
+            interaction.user.display_name,
+            mmr,
+            main_position,
+            sub_position=sub_position,
+            ow_role=ow_role,
+            party_id=party_id,
+        )
+        db.ensure_player(interaction.guild_id, interaction.user.id, mmr, interaction.user.display_name)
+        db.ensure_player_game(interaction.guild_id, interaction.user.id, lobby["game"], mmr, interaction.user.display_name)
+
+        await interaction.response.send_message(f"참가 완료 (로비 ID: {self.lobby_id})", ephemeral=True)
+        await self.cog.refresh_lobby_message(interaction.channel, self.lobby_id)
+        await self.cog.try_auto_balance_and_start(interaction.channel, self.lobby_id)
+
+
+class JoinButton(discord.ui.Button):
+    def __init__(self, cog):
+        super().__init__(label="참가", style=discord.ButtonStyle.green, custom_id="scrim_join_button")
+        self.cog = cog
+
+    async def callback(self, interaction: discord.Interaction):
+        if not isinstance(interaction.user, discord.Member) or not member_has_access(interaction.user):
+            await interaction.response.send_message("설정된 인증 역할이 있어야 참가할 수 있습니다.", ephemeral=True)
+            return
+
+        lobby = db.get_lobby_by_message_id(interaction.message.id) if interaction.message else None
+        if not lobby:
+            await interaction.response.send_message("이 모집 메시지에 연결된 로비를 찾을 수 없습니다.", ephemeral=True)
+            return
+
+        if lobby["status"] != "open":
+            await interaction.response.send_message("현재 모집 중이 아닙니다.", ephemeral=True)
+            return
+
+        await interaction.response.send_modal(JoinModal(lobby["lobby_id"], lobby["game"], self.cog))
+
+
+class LeaveButton(discord.ui.Button):
+    def __init__(self, cog):
+        super().__init__(label="참가취소", style=discord.ButtonStyle.red, custom_id="scrim_leave_button")
+        self.cog = cog
+
+    async def callback(self, interaction: discord.Interaction):
+        lobby = db.get_lobby_by_message_id(interaction.message.id) if interaction.message else None
+        if not lobby:
+            await interaction.response.send_message("이 모집 메시지에 연결된 로비를 찾을 수 없습니다.", ephemeral=True)
+            return
+
+        if lobby["status"] != "open":
+            await interaction.response.send_message("모집 완료 이후에는 참가취소를 사용할 수 없습니다.", ephemeral=True)
+            return
+
+        if not db.has_lobby_player_by_id(lobby["lobby_id"], interaction.user.id):
+            await interaction.response.send_message("참가 중이 아닙니다.", ephemeral=True)
+            return
+
+        db.remove_lobby_player_by_id(lobby["lobby_id"], interaction.user.id)
+        players_after = db.get_lobby_players_by_id(lobby["lobby_id"])
+        if not is_pubg_lobby(lobby) and len(players_after) < get_lobby_need_count(lobby):
+            db.reset_full_notice_sent_by_id(lobby["lobby_id"])
+        await interaction.response.send_message(f"참가 취소 완료 (로비 ID: {lobby['lobby_id']})", ephemeral=True)
+        await self.cog.refresh_lobby_message(interaction.channel, lobby["lobby_id"])
+
+
+class StatusButton(discord.ui.Button):
+    def __init__(self, cog):
+        super().__init__(label="상태보기", style=discord.ButtonStyle.blurple, custom_id="scrim_status_button")
+        self.cog = cog
+
+    async def callback(self, interaction: discord.Interaction):
+        lobby = db.get_lobby_by_message_id(interaction.message.id) if interaction.message else None
+        if not lobby:
+            await interaction.response.send_message("이 모집 메시지에 연결된 로비를 찾을 수 없습니다.", ephemeral=True)
+            return
+
+        players = db.get_lobby_players_by_id(lobby["lobby_id"])
+        team_a = db.get_team_members_by_id(lobby["lobby_id"], "A")
+        team_b = db.get_team_members_by_id(lobby["lobby_id"], "B")
+        embed = build_lobby_embed(lobby, players, team_a, team_b)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+class StartMatchButton(discord.ui.Button):
+    def __init__(self, cog):
+        super().__init__(label="내전시작", style=discord.ButtonStyle.primary, custom_id="scrim_start_match_button")
+        self.cog = cog
+
+    async def callback(self, interaction: discord.Interaction):
+        lobby = db.get_lobby_by_message_id(interaction.message.id) if interaction.message else None
+        if not lobby:
+            await interaction.response.send_message("이 모집 메시지에 연결된 로비를 찾을 수 없습니다.", ephemeral=True)
+            return
+
+        if lobby["game"] == "pubg":
+            await interaction.response.send_message("배그는 배틀로얄 모집형이라 내전시작 버튼을 사용하지 않습니다.", ephemeral=True)
+            return
+
+        if interaction.user.id != lobby["host_id"] and not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("호스트 또는 관리자만 내전을 시작할 수 있습니다.", ephemeral=True)
+            return
+
+        if lobby["status"] == "started":
+            await interaction.response.send_message("이미 시작된 내전입니다.", ephemeral=True)
+            return
+
+        # ===== 자동 팀 밸런싱 로직 추가 =====
+        if lobby["status"] == "open":
+            players = db.get_lobby_players_by_id(lobby["lobby_id"])
+            need = get_lobby_need_count(lobby)
+
+            if len(players) < need:
+                await interaction.response.send_message(f"인원이 부족하여 내전을 시작할 수 없습니다. (현재 {len(players)}/{need}명)", ephemeral=True)
+                return
+
+            # 팀 밸런싱 모듈 실행 (core.matchmaking)
+            selected = players[:need]
+            (team_a, team_b), mode_text = auto_balance_players(lobby["game"], selected, lobby["team_size"])
+
+            db.clear_teams_by_id(lobby["lobby_id"])
+            for p in team_a:
+                db.add_team_member_by_id(lobby["lobby_id"], "A", p["user_id"])
+            for p in team_b:
+                db.add_team_member_by_id(lobby["lobby_id"], "B", p["user_id"])
+
+            db.set_lobby_status_by_id(lobby["lobby_id"], "balanced")
+            lobby["status"] = "balanced"  # 현재 lobby 딕셔너리 업데이트
+        # =================================
+
+        # 통화방 생성 및 멤버 이동에 시간이 소요되므로 interaction 지연 처리
+        await interaction.response.defer()
+
+        result = await self.cog.start_balanced_lobby(interaction, lobby)
+        if result is None:
+            return
+
+        moved_a, moved_b, skipped = result
+        team_a_count = len(db.get_team_members_by_id(lobby["lobby_id"], "A"))
+        team_b_count = len(db.get_team_members_by_id(lobby["lobby_id"], "B"))
+
+        message = (
+            f"🎉 **내전 시작 완료! (자동 팀 분배 적용됨)**\n"
+            f"로비 ID: **{lobby['lobby_id']}**\n"
+            f"A팀 이동: **{moved_a}/{team_a_count}명**\n"
+            f"B팀 이동: **{moved_b}/{team_b_count}명**"
+        )
+        if skipped:
+            mentions = " ".join(f"<@{uid}>" for uid in skipped)
+            message += f"\n\n음성채널에 없어 자동 이동하지 못한 인원: {mentions}"
+
+        await interaction.followup.send(message)
+
 
 class RecruitView(discord.ui.View):
     def __init__(self, cog):
         super().__init__(timeout=None)
-        # 필요한 버튼들(참가 등)을 여기에 다시 추가하세요.
+        self.add_item(JoinButton(cog))
+        self.add_item(LeaveButton(cog))
+        self.add_item(StatusButton(cog))
+        self.add_item(StartMatchButton(cog))
 
-class RecruitCog(commands.Cog):
-    def __init__(self, bot: commands.Bot):
+
+class Recruit(commands.Cog):
+    def __init__(self, bot):
         self.bot = bot
 
+    def cog_unload(self):
+        pass
+
+    def get_channel_lobbies(self, channel_id: int, guild_id: int, active_only: bool = False):
+        return db.get_channel_lobbies(channel_id, guild_id=guild_id, active_only=active_only)
+
+    async def send_lobby_list(self, interaction: discord.Interaction, active_only: bool = False):
+        lobbies = self.get_channel_lobbies(interaction.channel_id, interaction.guild_id, active_only=active_only)
+        embed = build_lobby_list_embed(interaction.channel, lobbies)
+        if interaction.response.is_done():
+            await interaction.followup.send(embed=embed, ephemeral=True)
+        else:
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    async def resolve_lobby(
+        self,
+        interaction: discord.Interaction,
+        lobby_id: int | None,
+        active_preferred: bool = True,
+        send_list_on_ambiguous: bool = True,
+    ):
+        if lobby_id is not None:
+            lobby = db.get_lobby_by_id(lobby_id)
+            if not lobby:
+                await interaction.response.send_message("해당 로비 ID를 찾을 수 없습니다.", ephemeral=True)
+                return None
+            if lobby["guild_id"] != interaction.guild_id or lobby["channel_id"] != interaction.channel_id:
+                await interaction.response.send_message("해당 로비는 현재 채널의 로비가 아닙니다.", ephemeral=True)
+                return None
+            return lobby
+
+        lobbies = self.get_channel_lobbies(interaction.channel_id, interaction.guild_id, active_only=active_preferred)
+        if not lobbies and active_preferred:
+            lobbies = self.get_channel_lobbies(interaction.channel_id, interaction.guild_id, active_only=False)
+
+        if not lobbies:
+            await interaction.response.send_message("현재 채널에 로비가 없습니다.", ephemeral=True)
+            return None
+
+        if len(lobbies) == 1:
+            return lobbies[0]
+
+        if send_list_on_ambiguous:
+            embed = build_lobby_list_embed(interaction.channel, lobbies)
+            await interaction.response.send_message(
+                content="같은 채널에 여러 로비가 있습니다. `로비아이디`를 함께 입력해주세요.",
+                embed=embed,
+                ephemeral=True,
+            )
+        else:
+            await interaction.response.send_message("같은 채널에 여러 로비가 있습니다. `로비아이디`를 함께 입력해주세요.", ephemeral=True)
+        return None
+
+    async def refresh_lobby_message(self, channel: discord.TextChannel, lobby_id: int):
+        lobby = db.get_lobby_by_id(lobby_id)
+        if not lobby:
+            return
+
+        players = db.get_lobby_players_by_id(lobby_id)
+        team_a = db.get_team_members_by_id(lobby_id, "A")
+        team_b = db.get_team_members_by_id(lobby_id, "B")
+        embed = build_lobby_embed(lobby, players, team_a, team_b)
+        view = RecruitView(self)
+
+        if not lobby["message_id"]:
+            return
+
+        try:
+            msg = await channel.fetch_message(lobby["message_id"])
+            await msg.edit(embed=embed, view=view)
+        except discord.NotFound:
+            new_msg = await channel.send(embed=embed, view=view)
+            db.set_lobby_message_by_id(lobby_id, new_msg.id)
+
+    async def ensure_voice_channels(self, guild: discord.Guild, lobby: dict):
+        settings = db.get_settings(guild.id)
+        if not settings or not settings["category_id"] or not settings["recruit_role_id"]:
+            return None, None
+
+        category = guild.get_channel(settings["category_id"])
+        role = guild.get_role(settings["recruit_role_id"])
+        me = guild.me or guild.get_member(self.bot.user.id)
+
+        if not category or not role or not me:
+            return None, None
+
+        overwrites = {
+            guild.default_role: discord.PermissionOverwrite(view_channel=False, connect=False),
+            role: discord.PermissionOverwrite(view_channel=True, connect=True, speak=True),
+            me: discord.PermissionOverwrite(view_channel=True, connect=True, speak=True, move_members=True, manage_channels=True),
+        }
+
+        host_member = guild.get_member(lobby["host_id"])
+        if host_member:
+            overwrites[host_member] = discord.PermissionOverwrite(view_channel=True, connect=True, speak=True, move_members=True)
+
+        team_a_ch = guild.get_channel(lobby["team_a_voice_id"]) if lobby["team_a_voice_id"] else None
+        team_b_ch = guild.get_channel(lobby["team_b_voice_id"]) if lobby["team_b_voice_id"] else None
+
+        base_name = f"{lobby['game']}-{lobby['lobby_id']}"
+
+        if team_a_ch is None:
+            team_a_ch = await guild.create_voice_channel(
+                name=f"{base_name}-A팀",
+                category=category,
+                overwrites=overwrites,
+            )
+        if team_b_ch is None:
+            team_b_ch = await guild.create_voice_channel(
+                name=f"{base_name}-B팀",
+                category=category,
+                overwrites=overwrites,
+            )
+
+        db.set_voice_channels_by_id(lobby["lobby_id"], 0, team_a_ch.id, team_b_ch.id)
+        return team_a_ch, team_b_ch
+
+    async def ensure_pubg_waiting_channel(self, guild: discord.Guild, lobby: dict):
+        settings = db.get_settings(guild.id)
+        if not settings or not settings["category_id"] or not settings["recruit_role_id"]:
+            return None
+
+        category = guild.get_channel(settings["category_id"])
+        role = guild.get_role(settings["recruit_role_id"])
+        me = guild.me or guild.get_member(self.bot.user.id)
+
+        if not category or not role or not me:
+            return None
+
+        overwrites = {
+            guild.default_role: discord.PermissionOverwrite(view_channel=False, connect=False),
+            role: discord.PermissionOverwrite(view_channel=True, connect=True, speak=True),
+            me: discord.PermissionOverwrite(view_channel=True, connect=True, speak=True, move_members=True, manage_channels=True),
+        }
+
+        host_member = guild.get_member(lobby["host_id"])
+        if host_member:
+            overwrites[host_member] = discord.PermissionOverwrite(view_channel=True, connect=True, speak=True, move_members=True)
+
+        waiting = guild.get_channel(lobby["waiting_voice_id"]) if lobby["waiting_voice_id"] else None
+        if waiting is None:
+            waiting = await guild.create_voice_channel(
+                name=f"pubg-{lobby['lobby_id']}-{get_pubg_mode_label(lobby['team_size'])}-대기방",
+                category=category,
+                overwrites=overwrites,
+            )
+
+        db.set_voice_channels_by_id(lobby["lobby_id"], waiting.id, 0, 0)
+        return waiting
+
+    async def move_members(self, guild: discord.Guild, user_ids, target_channel):
+        for uid in user_ids:
+            member = guild.get_member(uid)
+            if member and member.voice and member.voice.channel:
+                try:
+                    await member.move_to(target_channel)
+                except Exception:
+                    pass
+
+    async def move_members_with_result(self, guild: discord.Guild, user_ids, target_channel):
+        moved_count = 0
+        skipped_ids = []
+
+        for uid in user_ids:
+            member = guild.get_member(uid)
+            if not member or not member.voice or not member.voice.channel:
+                skipped_ids.append(uid)
+                continue
+
+            try:
+                await member.move_to(target_channel)
+                moved_count += 1
+            except Exception:
+                skipped_ids.append(uid)
+
+        return moved_count, skipped_ids
+
+    async def start_balanced_lobby(self, interaction: discord.Interaction, lobby: dict):
+        team_a_ids = db.get_team_members_by_id(lobby["lobby_id"], "A")
+        team_b_ids = db.get_team_members_by_id(lobby["lobby_id"], "B")
+
+        if not team_a_ids or not team_b_ids:
+            msg = "먼저 팀 분배가 완료되어야 합니다."
+            if interaction.response.is_done():
+                await interaction.followup.send(msg, ephemeral=True)
+            else:
+                await interaction.response.send_message(msg, ephemeral=True)
+            return None
+
+        team_a_ch, team_b_ch = await self.ensure_voice_channels(interaction.guild, lobby)
+        if not team_a_ch or not team_b_ch:
+            msg = "음성채널 생성에 필요한 설정이 없습니다. `/설정카테고리`와 `/설정역할`을 먼저 설정해주세요."
+            if interaction.response.is_done():
+                await interaction.followup.send(msg, ephemeral=True)
+            else:
+                await interaction.response.send_message(msg, ephemeral=True)
+            return None
+
+        moved_a, skipped_a = await self.move_members_with_result(interaction.guild, team_a_ids, team_a_ch)
+        moved_b, skipped_b = await self.move_members_with_result(interaction.guild, team_b_ids, team_b_ch)
+
+        db.set_lobby_status_by_id(lobby["lobby_id"], "started")
+        await self.refresh_lobby_message(interaction.channel, lobby["lobby_id"])
+
+        await send_operation_log(
+            interaction.guild,
+            "운영 로그 · 내전 시작",
+            f"실행자: {interaction.user.mention}\n채널: {interaction.channel.mention}\n"
+            f"로비 ID: {lobby['lobby_id']}\n게임: {lobby['game']}\n"
+            f"A팀 이동: {moved_a}/{len(team_a_ids)}명\nB팀 이동: {moved_b}/{len(team_b_ids)}명",
+            discord.Color.blurple(),
+        )
+
+        return moved_a, moved_b, skipped_a + skipped_b
+
+    async def try_auto_balance_and_start(self, channel: discord.TextChannel, lobby_id: int):
+        lobby = db.get_lobby_by_id(lobby_id)
+        if not lobby or lobby["status"] != "open":
+            return
+
+        players = db.get_lobby_players_by_id(lobby_id)
+        need = get_lobby_need_count(lobby)
+
+        if len(players) < need:
+            return
+
+        if is_pubg_lobby(lobby):
+            if lobby["team_size"] in [2, 4]:
+                parties = db.get_lobby_parties_by_id(lobby_id)
+
+                for party in parties:
+                    if len(party["members"]) != lobby["team_size"]:
+                        return
+
+                    joined_ids = {p["user_id"] for p in players}
+                    party_member_ids = {m["user_id"] for m in party["members"]}
+                    if not party_member_ids.issubset(joined_ids):
+                        return
+
+            waiting = await self.ensure_pubg_waiting_channel(channel.guild, lobby)
+
+            db.set_lobby_status_by_id(lobby_id, "started")
+            await self.refresh_lobby_message(channel, lobby_id)
+
+            player_ids = [p["user_id"] for p in players[:need]]
+            if waiting:
+                await self.move_members(channel.guild, player_ids, waiting)
+
+            if lobby["team_size"] in [2, 4]:
+                party_lines = build_party_lines(lobby_id)
+                party_text = "\n".join(party_lines) if party_lines else "없음"
+                await channel.send(
+                    f"배그 배틀로얄 모집 완료\n"
+                    f"로비 ID: **{lobby_id}**\n"
+                    f"형식: **{get_pubg_mode_label(lobby['team_size'])}**\n"
+                    f"총 인원: **{need}명**\n\n"
+                    f"파티 목록:\n{party_text}"
+                )
+            else:
+                await channel.send(
+                    f"배그 배틀로얄 모집 완료\n"
+                    f"로비 ID: **{lobby_id}**\n"
+                    f"형식: **{get_pubg_mode_label(lobby['team_size'])}**\n"
+                    f"총 인원: **{need}명**\n\n"
+                    + "\n".join(f"- {p['display_name']} ({p['position']})" for p in players[:need])
+                )
+            return
+
+        if lobby.get("full_notice_sent"):
+            await self.refresh_lobby_message(channel, lobby_id)
+            return
+
+        db.mark_full_notice_sent_by_id(lobby_id)
+        await self.refresh_lobby_message(channel, lobby_id)
+
+        # 사용자 안내 메시지 변경 (밸런스팀 명령어 안내 제거)
+        await channel.send(
+            f"✅ 인원이 모두 모였습니다.\n"
+            f"로비 ID: **{lobby_id}**\n"
+            f"모집 메시지의 **내전시작** 버튼을 누르면 자동으로 팀이 분배되고 통화방이 생성되며 인원이 이동됩니다."
+        )
+
+    @app_commands.command(name="내전목록", description="현재 채널의 내전 로비 목록을 확인합니다.")
+    async def lobby_list(self, interaction: discord.Interaction):
+        await self.send_lobby_list(interaction, active_only=False)
+
     @app_commands.command(name="내전생성", description="팝업창을 통해 내전을 상세 설정합니다.")
-    @app_commands.choices(게임=[
-        app_commands.Choice(name="VALORANT", value="valorant"),
-        app_commands.Choice(name="League of Legends", value="lol"),
-        app_commands.Choice(name="Overwatch 2", value="overwatch"),
-        app_commands.Choice(name="PUBG", value="pubg")
-    ])
-    async def create_recruit(self, interaction: discord.Interaction, 게임: app_commands.Choice[str]):
+    @app_commands.choices(게임=GAME_OPTIONS)
+    async def create(self, interaction: discord.Interaction, 게임: app_commands.Choice[str]):
+        if not isinstance(interaction.user, discord.Member) or not member_has_access(interaction.user):
+            await interaction.response.send_message("설정된 인증 역할이 있어야 내전을 만들 수 있습니다.", ephemeral=True)
+            return
+
+        settings = db.get_settings(interaction.guild_id)
+        if not settings or not settings["recruit_role_id"] or not settings["category_id"]:
+            await interaction.response.send_message("먼저 /설정역할 과 /설정카테고리 를 해주세요.", ephemeral=True)
+            return
+
+        if not db.has_premium_plan(interaction.guild_id, "supporter") and db.count_active_guild_lobbies(interaction.guild_id) >= 2:
+            await interaction.response.send_message(
+                "무료 서버는 동시에 최대 2개의 내전만 생성할 수 있습니다. 2개 이상은 서포터 이상 패키지에서 사용 가능합니다.",
+                ephemeral=True,
+            )
+            return
+
         await interaction.response.send_modal(RecruitCreateModal(self, 게임.value, 게임.name))
 
-async def setup(bot: commands.Bot):
-    cog = RecruitCog(bot)
+    @app_commands.command(name="내전시간수정", description="팝업창을 통해 내전 시작 시간을 직관적으로 수정합니다.")
+    @app_commands.describe(로비아이디="수정할 로비 ID (채널에 1개일 경우 생략 가능)")
+    async def edit_lobby_time(self, interaction: discord.Interaction, 로비아이디: int | None = None):
+        try:
+            lobby = await self.resolve_lobby(interaction, 로비아이디)
+            if not lobby:
+                return
+
+            if interaction.user.id != lobby["host_id"] and not interaction.user.guild_permissions.administrator:
+                await interaction.response.send_message("호스트(방장) 또는 서버 관리자만 시간을 수정할 수 있습니다.", ephemeral=True)
+                return
+
+            await interaction.response.send_modal(RecruitEditTimeModal(self, lobby))
+        except Exception as e:
+            await interaction.response.send_message(f"오류 발생: {e}", ephemeral=True)
+
+    @app_commands.command(name="파티생성", description="배그 듀오/스쿼드 파티를 생성합니다.")
+    @app_commands.describe(로비아이디="파티를 만들 로비 ID")
+    async def create_party(self, interaction: discord.Interaction, 로비아이디: int | None = None):
+        try:
+            lobby = await self.resolve_lobby(interaction, 로비아이디)
+            if not lobby:
+                return
+
+            if lobby["game"] != "pubg" or lobby["team_size"] not in [2, 4]:
+                await interaction.response.send_message("파티 시스템은 배그 듀오 / 스쿼드에서만 사용합니다.", ephemeral=True)
+                return
+
+            party = db.create_lobby_party_by_id(
+                lobby["lobby_id"],
+                interaction.user.id,
+                interaction.user.display_name,
+                lobby["team_size"],
+            )
+
+            await interaction.response.send_message(
+                f"파티 생성 완료\n"
+                f"로비 ID: `{lobby['lobby_id']}`\n"
+                f"파티 코드: `{party['party_code']}`\n"
+                f"정원: {party['mode_size']}명\n"
+                f"다른 멤버는 `/파티참가 로비아이디:{lobby['lobby_id']} 파티코드:{party['party_code']}` 로 들어오면 됩니다.",
+                ephemeral=True,
+            )
+
+            await self.refresh_lobby_message(interaction.channel, lobby["lobby_id"])
+            await send_operation_log(
+                interaction.guild,
+                "운영 로그 · 파티 생성",
+                f"사용자: {interaction.user.mention}\n채널: {interaction.channel.mention}\n로비 ID: {lobby['lobby_id']}\n파티 코드: `{party['party_code']}`\n정원: {party['mode_size']}명",
+                discord.Color.teal(),
+            )
+
+        except Exception as e:
+            await interaction.response.send_message(f"오류 발생: {e}", ephemeral=True)
+
+    @app_commands.command(name="파티참가", description="배그 듀오/스쿼드 파티 코드로 파티에 참가합니다.")
+    @app_commands.describe(로비아이디="참가할 로비 ID", 파티코드="파티 코드 입력")
+    async def join_party(self, interaction: discord.Interaction, 파티코드: str, 로비아이디: int | None = None):
+        try:
+            lobby = await self.resolve_lobby(interaction, 로비아이디)
+            if not lobby:
+                return
+
+            if lobby["game"] != "pubg" or lobby["team_size"] not in [2, 4]:
+                await interaction.response.send_message("파티 시스템은 배그 듀오 / 스쿼드에서만 사용합니다.", ephemeral=True)
+                return
+
+            party = db.join_lobby_party_by_id(
+                lobby["lobby_id"],
+                파티코드.strip().upper(),
+                interaction.user.id,
+                interaction.user.display_name,
+            )
+
+            members = db.get_party_members_by_id(lobby["lobby_id"], party["id"])
+
+            await interaction.response.send_message(
+                f"파티 참가 완료\n"
+                f"로비 ID: `{lobby['lobby_id']}`\n"
+                f"파티 코드: `{party['party_code']}`\n"
+                f"현재 인원: {len(members)} / {party['mode_size']}",
+                ephemeral=True,
+            )
+
+            await self.refresh_lobby_message(interaction.channel, lobby["lobby_id"])
+            await send_operation_log(
+                interaction.guild,
+                "운영 로그 · 파티 참가",
+                f"사용자: {interaction.user.mention}\n채널: {interaction.channel.mention}\n로비 ID: {lobby['lobby_id']}\n파티 코드: `{party['party_code']}`\n현재 인원: {len(members)} / {party['mode_size']}",
+                discord.Color.teal(),
+            )
+
+        except Exception as e:
+            await interaction.response.send_message(f"오류 발생: {e}", ephemeral=True)
+
+    @app_commands.command(name="파티나가기", description="현재 배그 파티에서 나갑니다.")
+    @app_commands.describe(로비아이디="나갈 로비 ID")
+    async def leave_party(self, interaction: discord.Interaction, 로비아이디: int | None = None):
+        try:
+            lobby = await self.resolve_lobby(interaction, 로비아이디)
+            if not lobby:
+                return
+
+            result = db.leave_lobby_party_by_id(lobby["lobby_id"], interaction.user.id)
+
+            if result["action"] == "none":
+                await interaction.response.send_message("현재 속한 파티가 없습니다.", ephemeral=True)
+                return
+
+            if result["action"] == "disbanded":
+                await interaction.response.send_message(
+                    f"파티장이라 파티 `{result['party_code']}` 가 해체되었습니다. (로비 ID: {lobby['lobby_id']})",
+                    ephemeral=True,
+                )
+            else:
+                await interaction.response.send_message(
+                    f"파티 `{result['party_code']}` 에서 나갔습니다. (로비 ID: {lobby['lobby_id']})",
+                    ephemeral=True,
+                )
+
+            await self.refresh_lobby_message(interaction.channel, lobby["lobby_id"])
+            await send_operation_log(
+                interaction.guild,
+                "운영 로그 · 파티 이탈",
+                f"사용자: {interaction.user.mention}\n채널: {interaction.channel.mention}\n로비 ID: {lobby['lobby_id']}\n결과: {result['action']}\n파티 코드: `{result.get('party_code', '-')}`",
+                discord.Color.teal(),
+            )
+
+        except Exception as e:
+            await interaction.response.send_message(f"오류 발생: {e}", ephemeral=True)
+
+    @app_commands.command(name="파티상태", description="현재 채널의 배그 파티 상태를 확인합니다.")
+    @app_commands.describe(로비아이디="확인할 로비 ID")
+    async def party_status(self, interaction: discord.Interaction, 로비아이디: int | None = None):
+        lobby = await self.resolve_lobby(interaction, 로비아이디)
+        if not lobby:
+            return
+
+        if lobby["game"] != "pubg" or lobby["team_size"] not in [2, 4]:
+            await interaction.response.send_message("파티 시스템은 배그 듀오 / 스쿼드에서만 사용합니다.", ephemeral=True)
+            return
+
+        lines = build_party_lines(lobby["lobby_id"])
+        if not lines:
+            await interaction.response.send_message("현재 파티가 없습니다.", ephemeral=True)
+            return
+
+        await interaction.response.send_message(
+            f"현재 파티 목록 (로비 ID: {lobby['lobby_id']})\n" + "\n".join(lines),
+            ephemeral=True,
+        )
+
+    @app_commands.command(name="내전상태", description="현재 채널 로비 상태를 확인합니다.")
+    @app_commands.describe(로비아이디="확인할 로비 ID")
+    async def lobby_status(self, interaction: discord.Interaction, 로비아이디: int | None = None):
+        if 로비아이디 is None:
+            lobbies = self.get_channel_lobbies(interaction.channel_id, interaction.guild_id, active_only=True)
+            if not lobbies:
+                lobbies = self.get_channel_lobbies(interaction.channel_id, interaction.guild_id, active_only=False)
+
+            if not lobbies:
+                await interaction.response.send_message("이 채널에 로비가 없습니다.", ephemeral=True)
+                return
+
+            if len(lobbies) > 1:
+                embed = build_lobby_list_embed(interaction.channel, lobbies)
+                await interaction.response.send_message(
+                    content="같은 채널에 여러 로비가 있습니다. `로비아이디`를 지정해서 다시 확인해주세요.",
+                    embed=embed,
+                    ephemeral=True,
+                )
+                return
+
+            lobby = lobbies[0]
+        else:
+            lobby = await self.resolve_lobby(interaction, 로비아이디, send_list_on_ambiguous=False)
+            if not lobby:
+                return
+
+        players = db.get_lobby_players_by_id(lobby["lobby_id"])
+        team_a = db.get_team_members_by_id(lobby["lobby_id"], "A")
+        team_b = db.get_team_members_by_id(lobby["lobby_id"], "B")
+        embed = build_lobby_embed(lobby, players, team_a, team_b)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+async def setup(bot):
+    cog = Recruit(bot)
     bot.add_view(RecruitView(cog))
     await bot.add_cog(cog)
