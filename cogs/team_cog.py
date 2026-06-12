@@ -204,8 +204,10 @@ class Team(commands.Cog):
             if not lobby:
                 return
 
+            await interaction.response.defer()
+
             if lobby["game"] == "pubg":
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     "배그는 배틀로얄 모집형이라 `/밸런스팀`을 사용하지 않습니다.\n정원이 차면 자동으로 모집 완료 처리됩니다.",
                     ephemeral=True,
                 )
@@ -215,7 +217,7 @@ class Team(commands.Cog):
             need = lobby["team_size"] * 2
 
             if len(players) < need:
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     f"인원이 부족합니다. 현재 {len(players)} / 필요 {need}",
                     ephemeral=True,
                 )
@@ -235,7 +237,7 @@ class Team(commands.Cog):
             a_sum = sum(p["mmr"] for p in team_a)
             b_sum = sum(p["mmr"] for p in team_b)
 
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 f"팀 분배 완료 ({mode_text})\n"
                 f"로비 ID: **{lobby['lobby_id']}**\n\n"
                 f"**A팀 총합:** {a_sum}\n{format_team_block(team_a)}\n\n"
@@ -275,8 +277,10 @@ class Team(commands.Cog):
             if not lobby:
                 return
 
+            await interaction.response.defer()
+
             if lobby["game"] == "pubg":
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     "배그 배틀로얄 모집형은 현재 `/결과기록`을 지원하지 않습니다.",
                     ephemeral=True,
                 )
@@ -284,15 +288,19 @@ class Team(commands.Cog):
 
             winner = 승리팀.upper()
             if winner not in ["A", "B"]:
-                await interaction.response.send_message("승리팀은 A 또는 B만 가능합니다.", ephemeral=True)
+                await interaction.followup.send("승리팀은 A 또는 B만 가능합니다.", ephemeral=True)
                 return
 
-            team_a_ids = db.get_team_members_by_id(lobby["lobby_id"], "A")
-            team_b_ids = db.get_team_members_by_id(lobby["lobby_id"], "B")
+            raw_team_a = db.get_team_members_by_id(lobby["lobby_id"], "A")
+            raw_team_b = db.get_team_members_by_id(lobby["lobby_id"], "B")
 
-            if not team_a_ids or not team_b_ids:
-                await interaction.response.send_message("먼저 팀 분배를 완료하세요.", ephemeral=True)
+            if not raw_team_a or not raw_team_b:
+                await interaction.followup.send("먼저 팀 분배를 완료하세요.", ephemeral=True)
                 return
+
+            # DB 반환 형태 대비 안전한 user_id 추출
+            team_a_ids = [x["user_id"] if isinstance(x, dict) else x for x in raw_team_a]
+            team_b_ids = [x["user_id"] if isinstance(x, dict) else x for x in raw_team_b]
 
             players = db.get_lobby_players_by_id(lobby["lobby_id"])
             mmr_map = {p["user_id"]: p["mmr"] for p in players}
@@ -329,7 +337,7 @@ class Team(commands.Cog):
                 sign = "+" if delta >= 0 else ""
                 lines.append(f"{name_map.get(uid, uid)}: {sign}{delta}")
 
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 f"결과 기록 완료\n"
                 f"로비 ID: **{lobby['lobby_id']}**\n"
                 f"승리팀: **{winner}팀**\n"
@@ -361,9 +369,11 @@ class Team(commands.Cog):
             lobby = await self.resolve_lobby(interaction, 로비아이디, active_preferred=False)
             if not lobby:
                 return
+            
+            await interaction.response.defer()
 
             if interaction.user.id != lobby["host_id"] and not interaction.user.guild_permissions.administrator:
-                await interaction.response.send_message("호스트 또는 관리자만 종료할 수 있습니다.", ephemeral=True)
+                await interaction.followup.send("호스트 또는 관리자만 종료할 수 있습니다.", ephemeral=True)
                 return
 
             waiting_ch = interaction.guild.get_channel(lobby["waiting_voice_id"]) if lobby.get("waiting_voice_id") else None
@@ -379,7 +389,7 @@ class Team(commands.Cog):
 
             db.delete_lobby_by_id(lobby["lobby_id"])
 
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 f"내전 종료 완료\n로비 ID: **{lobby['lobby_id']}**"
             )
 
