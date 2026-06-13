@@ -104,22 +104,6 @@ class Profile(commands.Cog):
         self._apply_tier(guild_id, user_id, display_name, "overwatch", avg_mmr)
         return avg_mmr
 
-    def _build_tier_embed(self, title: str, description: str, scores: dict[str, int]) -> discord.Embed:
-        embed = discord.Embed(title=title, description=description, color=discord.Color.blurple())
-        lines = [f"**{tier}** : `{score}`" for tier, score in scores.items()]
-        chunk=[]
-        chunks=[]
-        for line in lines:
-            if sum(len(x)+1 for x in chunk)+len(line)>900:
-                chunks.append("\n".join(chunk)); chunk=[line]
-            else:
-                chunk.append(line)
-        if chunk: chunks.append("\n".join(chunk))
-        for idx,text in enumerate(chunks, start=1):
-            embed.add_field(name="티어 점수표" if idx==1 else f"티어 점수표 {idx}", value=text, inline=False)
-        embed.set_footer(text="점수표 메세지는 서버 전체에 공개됩니다.")
-        return embed
-
     @app_commands.command(name="발로티어점수표", description="발로란트 티어 점수표를 보여줍니다.")
     async def valorant_tier_table(self, interaction: discord.Interaction):
         await interaction.response.send_message(embed=self._build_tier_embed("🎯 발로란트 티어 점수표", "발로란트 티어별 MMR 기준표입니다.", VALORANT_TIER_SCORES))
@@ -190,6 +174,22 @@ class Profile(commands.Cog):
             "- 시즌 생성/종료: **프로 이상**\n"
             "- 결과기록 / ELO 반영: **프로 이상**",
             ephemeral=True,
+        )
+
+    @app_commands.command(name="mmr수정", description="[관리자용] 특정 유저의 MMR을 지정한 수치로 강제 수정합니다.")
+    @app_commands.describe(유저="MMR을 수정할 대상", 게임="수정할 게임", 점수="적용할 MMR 점수")
+    @app_commands.choices(게임=[
+        app_commands.Choice(name="발로란트", value="valorant"),
+        app_commands.Choice(name="롤", value="lol"),
+        app_commands.Choice(name="오버워치", value="overwatch"),
+    ])
+    @app_commands.default_permissions(administrator=True)
+    async def admin_edit_mmr(self, interaction: discord.Interaction, 유저: discord.Member, 게임: app_commands.Choice[str], 점수: int):
+        self._apply_tier(interaction.guild_id, 유저.id, 유저.display_name, 게임.value, 점수)
+        
+        await interaction.response.send_message(
+            f"{유저.mention} 님의 **{게임.name}** MMR이 **{점수}** 점으로 수정되었습니다.",
+            ephemeral=True
         )
 
 

@@ -266,13 +266,6 @@ class Team(commands.Cog):
     @app_commands.describe(승리팀="A 또는 B", 로비아이디="결과를 기록할 로비 ID")
     async def record_result(self, interaction: discord.Interaction, 승리팀: str, 로비아이디: int | None = None):
         try:
-            if not db.is_premium_guild(interaction.guild_id):
-                await interaction.response.send_message(
-                    "⚠️ ELO 기능은 프리미엄 서버 전용입니다.",
-                    ephemeral=True,
-                )
-                return
-
             lobby = await self.resolve_lobby(interaction, 로비아이디, active_preferred=True)
             if not lobby:
                 return
@@ -298,7 +291,6 @@ class Team(commands.Cog):
                 await interaction.followup.send("먼저 팀 분배를 완료하세요.", ephemeral=True)
                 return
 
-            # DB 반환 형태 대비 안전한 user_id 추출
             team_a_ids = [x["user_id"] if isinstance(x, dict) else x for x in raw_team_a]
             team_b_ids = [x["user_id"] if isinstance(x, dict) else x for x in raw_team_b]
 

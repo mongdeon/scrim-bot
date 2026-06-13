@@ -630,15 +630,14 @@ GUIDE_HTML = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>명령어 / 프리미엄 소개</title>
+    <title>명령어 및 프리미엄 안내 - 내전봇</title>
     """ + BASE_STYLE + """
 </head>
 <body>
 <div class="container">
     <div class="page-title">💿 명령어 / 프리미엄 소개</div>
-
     <div class="action-row">
-        <a href="/" class="action-btn btn-guide">🏠 홈으로</a>
+        <a href="/" class="action-btn btn-season">🏠 메인 페이지로</a>
         <a href="/support" class="action-btn btn-support">💖 후원 / 프리미엄 신청</a>
         <a href="/season" class="action-btn btn-season">🏆 시즌 페이지</a>
     </div>
@@ -652,7 +651,7 @@ GUIDE_HTML = """
             </div>
             <div class="guide-item">
                 <h3>기본 내전 운영</h3>
-                <p>/내전생성, /내전상태, /밸런스팀, /내전종료, 내전 시간 / 날짜 설정 가능</p>
+                <p>/내전생성, /내전상태, /밸런스팀, /결과기록, /내전종료, 내전 시간 / 날짜 설정 가능</p>
             </div>
             <div class="guide-item">
                 <h3>배그 모집</h3>
@@ -660,35 +659,27 @@ GUIDE_HTML = """
             </div>
             <div class="guide-item">
                 <h3>기본 프로필 기능</h3>
-                <p>/발로티어등록, /옵치티어등록, /롤티어등록, /발로티어점수표, /옵치티어점수표, /롤티어점수표</p>
+                <p>/발로티어등록, /옵치티어등록, /롤티어등록, /배그티어등록</p>
             </div>
         </div>
     </div>
 
     <div class="card">
-        <h2 class="section-title">⭐ 패키지형 프리미엄</h2>
-        <div class="guide-list">
+        <h2 class="section-title">⭐ 프리미엄 패키지</h2>
+        <div class="grid-2">
             <div class="guide-item">
-                <h3>서포터 패키지 · 3,000원</h3>
-                <p>/맵뽑기, /시즌확인, /시즌목록, /시즌랭킹 사용 가능<br>웹 상세 전적 페이지와 시즌 페이지 조회 가능</p>
+                <h3>서포터 패키지 · 3,000원 (30일)</h3>
+                <p>전적 웹사이트 내 서버 검색 지원<br>티어 자동 역할 부여 연동</p>
             </div>
-            <div class="guide-item">
-                <h3>프로 패키지 · 4,990원</h3>
-                <p>서포터 기능 포함<br>/결과기록, /시즌생성, /시즌종료 사용 가능</p>
+            <div class="guide-item" style="border: 1px solid #d946ef;">
+                <h3>프로 패키지 · 4,990원 (30일)</h3>
+                <p>서포터 기능 포함<br>/시즌생성, /시즌종료 사용 가능</p>
             </div>
-            <div class="guide-item">
-                <h3>클랜 패키지 · 7,990원</h3>
-                <p>프로 기능 포함<br>반복 예약, 시작 전 알림, 운영 로그, 웹 브랜딩, 공지 템플릿, 독립 클랜 페이지 지원</p>
+            <div class="guide-item" style="border: 1px solid #8b5cf6;">
+                <h3>클랜 패키지 · 7,990원 (30일)</h3>
+                <p>프로 기능 포함<br>클랜 맞춤형 전적 웹사이트 브랜딩 적용<br>우선 지원 및 개발 요청</p>
             </div>
         </div>
-    </div>
-
-    <div class="card">
-        <h2 class="section-title">📌 빠른 정리</h2>
-        <div class="feature-box">무료: 기본 모집 / 기본 팀분배 / 티어등록
-서포터: 맵뽑기 / 시즌 조회 / 웹 상세 전적
-프로: 결과기록 / 시즌 생성·종료
-클랜: 프로 포함 + 반복 예약 + 공지 자동화 + 웹 브랜딩</div>
     </div>
 </div>
 </body>
