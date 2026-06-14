@@ -1,1833 +1,595 @@
 import os
-
-from flask import Flask, render_template_string, request, jsonify, abort
-from psycopg2.extras import RealDictCursor
-import psycopg2
-
-from core.db import (
-    init_premium_tables,
-    create_premium_request,
-    get_premium_requests,
-    approve_premium_request,
-    reject_premium_request,
-    cleanup_expired_premium_guilds,
-    count_active_premium_guilds,
-    is_guild_premium,
-    has_premium_plan,
-    get_premium_info,
-    get_active_season,
-    get_season_ranking,
-    get_season_matches,
-    get_season_stats_summary,
-    get_registered_guilds,
-    get_plan_label,
-    get_clan_branding,
-)
+from flask import Flask, render_template_string
 
 app = Flask(__name__)
 
-DATABASE_URL = os.environ.get("DATABASE_URL")
-ADMIN_SECRET = os.environ.get("PREMIUM_ADMIN_SECRET", "").strip()
-
-BANK_NAME = "토스뱅크"
-ACCOUNT_NUMBER = "1000-0103-2111"
-ACCOUNT_HOLDER = "김태용"
-PREMIUM_PRICE = 5000
-PREMIUM_DAYS = 30
-
-PREMIUM_PACKAGES = {
-    "supporter": {"name": "서포터", "price": 3000, "days": 30},
-    "pro": {"name": "프로", "price": 4990, "days": 30},
-    "clan": {"name": "클랜", "price": 7990, "days": 30},
-}
-
-init_premium_tables()
-cleanup_expired_premium_guilds()
-
-
-def get_conn():
-    if not DATABASE_URL:
-        raise RuntimeError("DATABASE_URL 환경변수가 설정되지 않았습니다.")
-    return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
-
-
-BASE_STYLE = """
-<style>
-    * { box-sizing: border-box; }
-    body {
-        margin: 0;
-        padding: 0;
-        font-family: Arial, sans-serif;
-        background: #071633;
-        color: #e2e8f0;
-    }
-    .container {
-        max-width: 1200px;
-        margin: 0 auto;
-        padding: 28px 16px 60px;
-    }
-    .page-title {
-        font-size: 28px;
-        font-weight: 800;
-        margin-bottom: 20px;
-    }
-    .action-row {
-        display: flex;
-        gap: 12px;
-        flex-wrap: wrap;
-        margin-bottom: 20px;
-    }
-    .action-btn {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        padding: 12px 18px;
-        border-radius: 12px;
-        color: #fff;
-        text-decoration: none;
-        font-weight: 700;
-    }
-    .btn-guide { background: #16a34a; }
-    .btn-support { background: #ec4899; }
-    .btn-admin { background: #7c3aed; }
-    .btn-season { background: #2563eb; }
-
-    .card {
-        background: #1f2f49;
-        border-radius: 20px;
-        padding: 22px;
-        margin-bottom: 24px;
-        box-shadow: 0 10px 30px rgba(0,0,0,0.18);
-    }
-
-    .section-title {
-        font-size: 18px;
-        font-weight: 800;
-        margin: 0 0 16px 0;
-    }
-
-    .pill {
-        display: inline-block;
-        padding: 9px 13px;
-        border-radius: 999px;
-        background: #324766;
-        margin-right: 8px;
-        margin-bottom: 8px;
-        font-size: 13px;
-        font-weight: 700;
-    }
-
-    .filters {
-        display: flex;
-        gap: 12px;
-        flex-wrap: wrap;
-        align-items: center;
-    }
-
-    select, input, textarea, button {
-        font: inherit;
-    }
-
-    select, input, textarea {
-        width: 100%;
-        padding: 13px 14px;
-        border-radius: 12px;
-        border: 1px solid #4b6286;
-        background: #08162f;
-        color: #e2e8f0;
-        outline: none;
-    }
-
-    textarea {
-        min-height: 120px;
-        resize: vertical;
-    }
-
-    .submit-btn {
-        background: #2f6fe4;
-        color: #fff;
-        border: none;
-        padding: 12px 18px;
-        border-radius: 12px;
-        font-weight: 700;
-        cursor: pointer;
-    }
-
-    .primary-btn {
-        background: linear-gradient(135deg, #ec4899, #d946ef);
-        color: #fff;
-        border: none;
-        padding: 13px 20px;
-        border-radius: 12px;
-        font-weight: 700;
-        cursor: pointer;
-    }
-
-    .top3 {
-        display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        gap: 16px;
-        margin-bottom: 24px;
-    }
-
-    .top-card {
-        background: #394b67;
-        border-radius: 18px;
-        padding: 18px;
-    }
-
-    .top-card h3 {
-        margin: 0 0 14px 0;
-        font-size: 20px;
-    }
-
-    .top-card p {
-        margin: 0 0 10px;
-        font-size: 18px;
-    }
-
-    table {
-        width: 100%;
-        border-collapse: collapse;
-    }
-
-    th, td {
-        padding: 13px 12px;
-        border-bottom: 1px solid #334155;
-        text-align: left;
-    }
-
-    th {
-        background: #394b67;
-        font-weight: 800;
-    }
-
-    tr:last-child td {
-        border-bottom: none;
-    }
-
-    a {
-        color: #60a5fa;
-        text-decoration: none;
-    }
-
-    .muted {
-        color: #94a3b8;
-    }
-
-    .match-item {
-        margin-bottom: 12px;
-    }
-
-    .empty-box {
-        background: #394b67;
-        border-radius: 16px;
-        padding: 18px;
-        color: #cbd5e1;
-        line-height: 1.7;
-    }
-
-    .tab-row {
-        display: flex;
-        gap: 10px;
-        flex-wrap: wrap;
-        margin: 14px 0 0;
-    }
-
-    .tab-link {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        padding: 10px 16px;
-        border-radius: 999px;
-        background: #324766;
-        color: #e2e8f0;
-        font-weight: 700;
-        text-decoration: none;
-        border: 1px solid transparent;
-    }
-
-    .tab-link.active {
-        background: var(--brand-color);
-        color: #ffffff;
-    }
-
-    .stat-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-        gap: 14px;
-    }
-
-    .stat-card {
-        background: #394b67;
-        border-radius: 16px;
-        padding: 16px;
-    }
-
-    .stat-label {
-        font-size: 13px;
-        color: #cbd5e1;
-        margin-bottom: 8px;
-    }
-
-    .stat-value {
-        font-size: 24px;
-        font-weight: 800;
-    }
-
-    .grid-2 {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 18px;
-    }
-
-    .guide-list {
-        display: grid;
-        gap: 14px;
-    }
-
-    .guide-item {
-        background: #394b67;
-        border-radius: 16px;
-        padding: 18px;
-    }
-
-    .guide-item h3 {
-        margin: 0 0 10px 0;
-        font-size: 20px;
-    }
-
-    .guide-item p {
-        margin: 0;
-        line-height: 1.7;
-    }
-
-    .feature-box {
-        background: #394b67;
-        border-radius: 16px;
-        padding: 18px;
-        line-height: 1.9;
-        white-space: pre-line;
-    }
-
-    .account-box {
-        background: #394b67;
-        border-radius: 14px;
-        padding: 14px;
-        margin-bottom: 12px;
-        font-weight: 700;
-        word-break: break-all;
-    }
-
-    .form-group {
-        margin-bottom: 14px;
-    }
-
-    .form-group label {
-        display: block;
-        margin-bottom: 8px;
-        font-weight: 700;
-    }
-
-    .status {
-        margin-top: 14px;
-        font-weight: 800;
-    }
-
-    .ok { color: #86efac; }
-    .err { color: #fca5a5; }
-
-    .admin-login-row {
-        display: flex;
-        gap: 10px;
-        flex-wrap: wrap;
-    }
-
-    .request-card {
-        background: #394b67;
-        padding: 16px;
-        border-radius: 16px;
-        margin-bottom: 14px;
-    }
-
-    .request-row {
-        margin-bottom: 8px;
-    }
-
-    .status-badge {
-        display: inline-block;
-        padding: 6px 10px;
-        border-radius: 999px;
-        background: #24344f;
-        font-size: 12px;
-        font-weight: 800;
-    }
-
-    .days-input {
-        width: 100px;
-        margin-right: 8px;
-    }
-
-    .approve-btn {
-        background: #16a34a;
-        color: white;
-        border: none;
-        padding: 10px 14px;
-        border-radius: 10px;
-        cursor: pointer;
-        font-weight: 700;
-        margin-right: 8px;
-    }
-
-    .reject-btn {
-        background: #dc2626;
-        color: white;
-        border: none;
-        padding: 10px 14px;
-        border-radius: 10px;
-        cursor: pointer;
-        font-weight: 700;
-    }
-
-    .brand-card {
-        border: 1px solid var(--brand-color, #8b5cf6);
-        box-shadow: 0 0 0 1px rgba(255,255,255,0.03), 0 14px 30px rgba(0,0,0,0.22);
-        background: linear-gradient(135deg, rgba(139,92,246,0.18), rgba(31,47,73,0.96));
-    }
-
-    .brand-title {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        font-size: 24px;
-        font-weight: 800;
-        margin-bottom: 12px;
-    }
-
-    .brand-badge {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        padding: 8px 12px;
-        border-radius: 999px;
-        font-size: 12px;
-        font-weight: 800;
-        background: var(--brand-color, #8b5cf6);
-        color: #fff;
-    }
-
-    .brand-sub {
-        color: #dbeafe;
-        line-height: 1.8;
-    }
-
-    @media (max-width: 900px) {
-        .top3 {
-            grid-template-columns: 1fr;
-        }
-        .grid-2 {
-            grid-template-columns: 1fr;
-        }
-    }
-
-    @media (max-width: 640px) {
-        .action-btn {
-            width: 100%;
-        }
-    }
-</style>
-"""
-
-def get_brand_css(brand: dict | None) -> str:
-    color = '#8b5cf6'
-    if brand and brand.get('is_clan') and brand.get('brand_color'):
-        color = brand['brand_color']
-    return f"<style>:root{{--brand-color:{color};}}</style>"
-
-
-def get_selected_guild_brand(guild_id_raw: str):
-    if not guild_id_raw or not str(guild_id_raw).isdigit():
-        return None
-    return get_clan_branding(int(guild_id_raw))
-
-
-OVERWATCH_ROLE_TABS = [
-    {"value": "all", "label": "전체"},
-    {"value": "돌격", "label": "돌격"},
-    {"value": "딜러", "label": "딜러"},
-    {"value": "지원", "label": "지원"},
-]
-
-
-def normalize_overwatch_role_tab(value: str | None) -> str:
-    value = (value or "all").strip()
-    allowed = {"all", "돌격", "딜러", "지원"}
-    return value if value in allowed else "all"
-
-
-def get_overwatch_role_tab_label(value: str) -> str:
-    for item in OVERWATCH_ROLE_TABS:
-        if item["value"] == value:
-            return item["label"]
-    return "전체"
-
-
-INDEX_HTML = """
+# Tailwind CSS 및 모던 UI가 적용된 HTML 템플릿
+# 별도의 HTML 파일 없이 이 변수에서 웹 페이지의 모든 디자인을 관리합니다.
+HTML_TEMPLATE = """
 <!DOCTYPE html>
-<html lang="ko">
+<html lang="ko" class="scroll-smooth">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>내전봇 전적 사이트</title>
-    """ + BASE_STYLE + """
-</head>
-<body>
-<div class="container">
-    <div class="page-title">🎮 내전봇 전적 사이트</div>
+    <title>내전랩 - 완벽한 디스코드 내전 솔루션</title>
+    <!-- Tailwind CSS (CDN) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome 아이콘 -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <!-- Pretendard 폰트 -->
+    <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.8/dist/web/static/pretendard.css" />
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Pretendard', 'sans-serif'],
+                    },
+                    colors: {
+                        discord: '#5865F2',
+                        discordHover: '#4752C4',
+                        darkBg: '#0F1014',
+                        cardBg: '#1E1E1E',
+                        premium: '#F5C451',
+                    }
+                }
+            }
+        }
 
-    {% if brand and brand.is_clan %}
-    <div class="card brand-card">
-        <div class="brand-title">
-            <span class="brand-badge">{{ brand.badge_text }}</span>
-            <span>{{ brand.brand_name }}</span>
-        </div>
-        <div class="brand-sub">
-            클랜 패키지 서버 전용 브랜딩이 적용된 전적 화면입니다.<br>
-            패키지: <strong>{{ brand.plan_name }}</strong>
-        </div>
-    </div>
-    {% endif %}
+        // 모달 열기/닫기 스크립트
+        function openModal(modalId) {
+            document.getElementById(modalId).classList.remove('hidden');
+            document.getElementById(modalId).classList.add('flex');
+            document.body.style.overflow = 'hidden'; // 배경 스크롤 방지
+        }
 
-    <div class="action-row">
-        <a href="/guide" class="action-btn btn-guide">💿 명령어 / 프리미엄 소개</a>
-        <a href="/support" class="action-btn btn-support">💖 후원 / 프리미엄 신청</a>
-        <a href="/admin/premium" class="action-btn btn-admin">🔐 관리자 페이지</a>
-        <a href="/season" class="action-btn btn-season">🏆 시즌 페이지</a>
-    </div>
+        function closeModal(modalId) {
+            document.getElementById(modalId).classList.add('hidden');
+            document.getElementById(modalId).classList.remove('flex');
+            document.body.style.overflow = 'auto'; // 배경 스크롤 원복
+        }
 
-    <div class="card">
-        <div class="pill">패키지형 프리미엄 운영</div>
-        <div class="pill">서포터 3,000원 / 프로 4,990원 / 클랜 7,990원</div>
-        <div class="pill">활성 프리미엄 서버 수: {{ active_premium_count }}</div>
-    </div>
+        // 공통 커스텀 알림(Alert) 기능
+        function showAlert(message) {
+            document.getElementById('alertMessage').innerText = message;
+            openModal('alertModal');
+        }
 
-    <div class="card">
-        <form method="get" class="filters">
-            <select name="guild_id" style="max-width:320px;">
-                <option value="">전체 서버</option>
-                {% for guild in guilds %}
-                    <option value="{{ guild.guild_id }}" {% if selected_guild_id == guild.guild_id|string %}selected{% endif %}>
-                        {{ guild.guild_name or ("Guild " ~ guild.guild_id) }}
-                    </option>
-                {% endfor %}
-            </select>
+        // 관리자 권한 확인 및 모달 열기 (비밀번호 보호)
+        function checkAdminAndOpen() {
+            // 커스텀 비밀번호 입력 모달 열기
+            document.getElementById('adminPasswordInput').value = '';
+            document.getElementById('adminAuthError').classList.add('hidden');
+            openModal('adminAuthModal');
+        }
 
-            <select name="game" style="max-width:220px;">
-                <option value="">전체 게임</option>
-                {% for g in games %}
-                    <option value="{{ g }}" {% if selected_game == g %}selected{% endif %}>{{ g }}</option>
-                {% endfor %}
-            </select>
+        // 비밀번호 검증 기능
+        function verifyAdminPassword() {
+            const password = document.getElementById('adminPasswordInput').value;
+            const ADMIN_PASSWORD = "secretlabcode07128"; 
 
-            <input type="text" name="q" placeholder="닉네임 또는 유저 ID 검색" value="{{ q or '' }}" style="max-width:320px;">
-            <button type="submit" class="submit-btn">적용</button>
-        </form>
+            if (password === ADMIN_PASSWORD) {
+                closeModal('adminAuthModal');
+                openModal('adminModal');
+            } else {
+                document.getElementById('adminAuthError').classList.remove('hidden');
+            }
+        }
 
-        {% if selected_game == 'overwatch' %}
-        <div class="tab-row">
-            {% for tab in overwatch_role_tabs %}
-            <a
-                href="/?guild_id={{ selected_guild_id or '' }}&game=overwatch&q={{ q or '' }}&ow_role={{ tab.value }}"
-                class="tab-link {% if selected_ow_role == tab.value %}active{% endif %}"
-            >
-                {{ tab.label }}
-            </a>
-            {% endfor %}
-        </div>
-        {% endif %}
-    </div>
+        // 관리자 권한 부여 기능 (프론트 UI 테스트용)
+        function grantPremium() {
+            const serverId = document.getElementById('adminServerId').value;
+            const packageType = document.getElementById('adminPackage').options[document.getElementById('adminPackage').selectedIndex].text;
+            if(!serverId) { 
+                showAlert("서버 ID를 입력해주세요."); 
+                return; 
+            }
+            showAlert("✅ 서버 ID [" + serverId + "] 에 [" + packageType + "] 권한이 성공적으로 부여되었습니다.");
+            closeModal('adminModal');
+            document.getElementById('adminServerId').value = '';
+        }
 
-    {% if ranking|length >= 1 %}
-    <div class="top3">
-        {% for row in ranking[:3] %}
-        <div class="top-card">
-            <h3>#{{ loop.index }} {{ row.display_name or row.user_id }}</h3>
-            <p>{{ mmr_column_label }} {{ row.mmr }}</p>
-            <p>{{ row.win }}승 {{ row.lose }}패 | 승률 {{ row.winrate }}%</p>
-        </div>
-        {% endfor %}
-    </div>
-    {% elif selected_guild_id %}
-    <div class="card">
-        <div class="empty-box">
-            이 서버는 아직 전적 데이터가 없습니다.<br>
-            내전을 진행하면 랭킹과 최근 경기 기록이 자동으로 표시됩니다.
-        </div>
-    </div>
-    {% endif %}
-
-    <div class="card">
-        <h2 class="section-title">🏆 랭킹 TOP 50</h2>
-        {% if ranking %}
-        <table>
-            <thead>
-                <tr>
-                    <th>#</th>
-                    <th>닉네임</th>
-                    <th>유저 ID</th>
-                    <th>{{ mmr_column_label }}</th>
-                    <th>승</th>
-                    <th>패</th>
-                    <th>승률</th>
-                    <th>상세</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for row in ranking %}
-                <tr>
-                    <td>{{ loop.index }}</td>
-                    <td>{{ row.display_name or "-" }}</td>
-                    <td>{{ row.user_id }}</td>
-                    <td>{{ row.mmr }}</td>
-                    <td>{{ row.win }}</td>
-                    <td>{{ row.lose }}</td>
-                    <td>{{ row.winrate }}%</td>
-                    <td><a href="/player/{{ row.guild_id }}/{{ row.user_id }}{% if selected_game == 'overwatch' %}?ow_role={{ selected_ow_role }}{% endif %}">보기</a></td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-        {% else %}
-        <div class="empty-box">표시할 랭킹 데이터가 없습니다.</div>
-        {% endif %}
-    </div>
-
-    <div class="card">
-        <h2 class="section-title">📝 최근 경기</h2>
-        {% if matches %}
-            {% for match in matches %}
-            <div class="match-item">
-                <span class="pill">Guild {{ match.guild_id }}</span>
-                <span class="pill">{{ match.game }}</span>
-                <span class="pill">승리팀 {{ match.winner_team }}</span>
-                <span class="pill">A평균 {{ match.team_a_avg }}</span>
-                <span class="pill">B평균 {{ match.team_b_avg }}</span>
-                <span class="pill">{{ match.created_at }}</span>
-            </div>
-            {% endfor %}
-        {% else %}
-            <div class="empty-box">표시할 최근 경기 데이터가 없습니다.</div>
-        {% endif %}
-    </div>
-</div>
-</body>
-</html>
-"""
-
-GUIDE_HTML = """
-<!DOCTYPE html>
-<html lang="ko">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>명령어 및 프리미엄 안내 - 내전봇</title>
-    """ + BASE_STYLE + """
-</head>
-<body>
-<div class="container">
-    <div class="page-title">💿 명령어 / 프리미엄 소개</div>
-    <div class="action-row">
-        <a href="/" class="action-btn btn-season">🏠 메인 페이지로</a>
-        <a href="/support" class="action-btn btn-support">💖 후원 / 프리미엄 신청</a>
-        <a href="/season" class="action-btn btn-season">🏆 시즌 페이지</a>
-    </div>
-
-    <div class="card">
-        <h2 class="section-title">🆓 무료 기본 기능</h2>
-        <div class="guide-list">
-            <div class="guide-item">
-                <h3>서버 설정</h3>
-                <p>/설정역할, /설정카테고리, /설정팀결과채널, /설정공지채널, /설정로그채널, /설정보기</p>
-            </div>
-            <div class="guide-item">
-                <h3>기본 내전 운영</h3>
-                <p>/내전생성, /내전상태, /밸런스팀, /결과기록, /내전종료, 내전 시간 / 날짜 설정 가능</p>
-            </div>
-            <div class="guide-item">
-                <h3>배그 모집</h3>
-                <p>PUBG 배틀로얄 모집형, 솔로/듀오/스쿼드 규칙 지원</p>
-            </div>
-            <div class="guide-item">
-                <h3>기본 프로필 기능</h3>
-                <p>/발로티어등록, /옵치티어등록, /롤티어등록, /배그티어등록</p>
-            </div>
-        </div>
-    </div>
-
-    <div class="card">
-        <h2 class="section-title">⭐ 프리미엄 패키지</h2>
-        <div class="grid-2">
-            <div class="guide-item">
-                <h3>서포터 패키지 · 3,000원 (30일)</h3>
-                <p>전적 웹사이트 내 서버 검색 지원<br>티어 자동 역할 부여 연동</p>
-            </div>
-            <div class="guide-item" style="border: 1px solid #d946ef;">
-                <h3>프로 패키지 · 4,990원 (30일)</h3>
-                <p>서포터 기능 포함<br>/시즌생성, /시즌종료 사용 가능</p>
-            </div>
-            <div class="guide-item" style="border: 1px solid #8b5cf6;">
-                <h3>클랜 패키지 · 7,990원 (30일)</h3>
-                <p>프로 기능 포함<br>클랜 맞춤형 전적 웹사이트 브랜딩 적용<br>우선 지원 및 개발 요청</p>
-            </div>
-        </div>
-    </div>
-</div>
-</body>
-</html>
-"""
-
-SUPPORT_HTML = """
-<!DOCTYPE html>
-<html lang="ko">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>후원 / 프리미엄 신청</title>
-    """ + BASE_STYLE + """
-</head>
-<body>
-<div class="container">
-    <div class="page-title">💖 후원 / 프리미엄 신청</div>
-
-    <div class="action-row">
-        <a href="/" class="action-btn btn-guide">🏠 홈으로</a>
-        <a href="/guide" class="action-btn btn-support">💿 명령어 / 프리미엄 소개</a>
-        <a href="/admin/premium" class="action-btn btn-admin">🔐 관리자 페이지</a>
-    </div>
-
-    <div class="grid-2">
-        <div>
-            <div class="card">
-                <h2 class="section-title">📖 패키지형 프리미엄 안내</h2>
-                <p style="line-height:1.8; margin:0;">
-                    입금 후 아래 신청 폼을 작성하면 관리자가 확인 후 해당 패키지를 활성화합니다.<br>
-                    현재 패키지는 <strong>서포터 / 프로 / 클랜</strong> 3단계로 운영됩니다.<br>
-                    기능 제한은 디스코드 명령어와 웹사이트에 동일하게 적용됩니다.
-                </p>
-            </div>
-
-            <div class="card">
-                <h2 class="section-title">⭐ 패키지 구성</h2>
-                <div class="guide-list">
-                    <div class="guide-item">
-                        <h3>서포터 · 3,000원 / 30일</h3>
-                        <p>/맵뽑기, /시즌확인, /시즌목록, /시즌랭킹 사용 가능<br>웹 상세 전적 페이지와 시즌 페이지 조회 가능</p>
+        // 임시 전적 검색 기능
+        function searchRecords() {
+            const resultDiv = document.getElementById('searchResult');
+            resultDiv.classList.remove('hidden');
+            resultDiv.innerHTML = '<div class="animate-pulse text-discord"><i class="fa-solid fa-spinner fa-spin mr-2"></i>서버 데이터를 불러오는 중...</div>';
+            
+            setTimeout(() => {
+                resultDiv.innerHTML = `
+                    <div class="text-left mt-6">
+                        <div class="flex items-center gap-4 mb-6">
+                            <div class="w-12 h-12 rounded-full bg-gray-700 flex items-center justify-center text-xl font-bold">🎯</div>
+                            <div>
+                                <h3 class="text-xl font-bold text-white">검색된 서버: 발로란트 내전방</h3>
+                                <p class="text-sm text-gray-400">총 진행된 내전: 1,284회</p>
+                            </div>
+                        </div>
+                        <div class="bg-[#121212] rounded-xl p-4 border border-white/5">
+                            <p class="text-gray-400 text-sm text-center">웹 대시보드와 DB가 연동되면 이곳에 서버 유저들의 랭킹과 전적이 표시됩니다.</p>
+                        </div>
                     </div>
-                    <div class="guide-item">
-                        <h3>프로 · 4,990원 / 30일</h3>
-                        <p>서포터 기능 포함<br>/결과기록, /시즌생성, /시즌종료 사용 가능</p>
+                `;
+            }, 800);
+        }
+
+        // 계좌번호 복사 기능
+        function copyAccount(text) {
+            try {
+                const textArea = document.createElement("textarea");
+                textArea.value = text;
+                document.body.appendChild(textArea);
+                textArea.select();
+                document.execCommand("copy");
+                document.body.removeChild(textArea);
+                showAlert("계좌번호가 복사되었습니다.");
+            } catch (err) {
+                showAlert("계좌번호 복사에 실패했습니다.");
+            }
+        }
+    </script>
+    <style>
+        body {
+            background-color: #0F1014;
+            color: #FFFFFF;
+            overflow-x: hidden;
+        }
+        .glass-card {
+            background: rgba(30, 30, 30, 0.6);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            transition: transform 0.3s ease, border-color 0.3s ease;
+        }
+        .glass-card:hover {
+            border-color: rgba(88, 101, 242, 0.5);
+        }
+        .gradient-text {
+            background: linear-gradient(135deg, #5865F2, #00D4FF);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .premium-gradient-text {
+            background: linear-gradient(135deg, #F5C451, #FF8C00);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .glow-button {
+            box-shadow: 0 0 15px rgba(88, 101, 242, 0.4);
+            transition: all 0.3s ease;
+        }
+        .glow-button:hover {
+            box-shadow: 0 0 25px rgba(88, 101, 242, 0.7);
+        }
+        
+        /* 스크롤바 커스텀 */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #0F1014; }
+        ::-webkit-scrollbar-thumb { background: #2D2F36; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #5865F2; }
+    </style>
+</head>
+<body class="antialiased min-h-screen flex flex-col font-sans relative">
+
+    <!-- 네비게이션 바 -->
+    <nav class="fixed w-full z-50 glass-card border-b border-white/10" style="transform: none !important;">
+        <div class="max-w-7xl mx-auto px-6 lg:px-8">
+            <div class="flex items-center justify-between h-16">
+                <div class="flex items-center gap-3">
+                    <div class="w-8 h-8 rounded-full bg-discord flex items-center justify-center">
+                        <i class="fa-solid fa-gamepad text-white text-sm"></i>
                     </div>
-                    <div class="guide-item">
-                        <h3>클랜 · 7,990원 / 30일</h3>
-                        <p>프로 기능 포함<br>반복 예약, 시작 전 알림, 운영 로그, 웹 브랜딩, 공지 템플릿, 독립 클랜 페이지 지원</p>
+                    <span class="font-bold text-xl tracking-tight text-white">내전랩</span>
+                </div>
+                <div class="hidden md:block">
+                    <div class="ml-10 flex items-center space-x-6">
+                        <a href="#features" class="text-gray-300 hover:text-white px-3 py-2 rounded-md text-sm font-medium transition-colors">기능 소개</a>
+                        <a href="#records" class="text-gray-300 hover:text-white px-3 py-2 rounded-md text-sm font-medium transition-colors">서버 전적</a>
+                        <button onclick="openModal('donateModal')" class="text-premium hover:text-white px-3 py-2 rounded-md text-sm font-bold transition-colors flex items-center gap-1">
+                            <i class="fa-solid fa-crown"></i> 후원하기
+                        </button>
+                        <button onclick="checkAdminAndOpen()" class="text-red-400 hover:text-red-300 px-3 py-2 rounded-md text-sm font-bold transition-colors flex items-center gap-1">
+                            <i class="fa-solid fa-shield-halved"></i> 관리자
+                        </button>
+                        <a href="https://discord.com/oauth2/authorize?client_id=1485512756550570094&permissions=20016128&integration_type=0&scope=bot+applications.commands" target="_blank" class="bg-discord hover:bg-discordHover text-white px-4 py-2 rounded-md text-sm font-bold transition-colors shadow-lg ml-2">
+                            <i class="fa-brands fa-discord mr-1"></i> 디스코드 추가
+                        </a>
                     </div>
                 </div>
             </div>
         </div>
+    </nav>
 
-        <div>
-            <div class="card">
-                <h2 class="section-title">💳 후원 계좌</h2>
+    <!-- 히어로 섹션 (메인 화면) -->
+    <main class="flex-grow pt-32 pb-12 flex items-center justify-center relative">
+        <!-- 배경 장식 효과 -->
+        <div class="absolute top-1/4 left-1/4 w-96 h-96 bg-discord/20 rounded-full blur-[120px] pointer-events-none"></div>
+        <div class="absolute bottom-1/4 right-1/4 w-96 h-96 bg-cyan-500/20 rounded-full blur-[120px] pointer-events-none"></div>
 
-                <div style="margin-bottom:8px; font-weight:700;">은행</div>
-                <div class="account-box">{{ bank_name }}</div>
+        <div class="max-w-7xl mx-auto px-6 lg:px-8 relative z-10 text-center mt-8 mb-12">
+            <h1 class="text-5xl md:text-7xl font-extrabold tracking-tight mb-6">
+                당신의 디스코드 서버를 위한<br/>
+                <span class="gradient-text">완벽한 내전 봇</span>
+            </h1>
+            <p class="mt-4 max-w-2xl mx-auto text-xl text-gray-400 mb-10 leading-relaxed">
+                MMR 기반 자동 팀 밸런싱부터 맵 밴픽, 체계적인 시즌 랭킹 전적까지.<br/>
+                내전랩 봇 하나로 모든 귀찮은 과정을 자동화하세요.
+            </p>
+            <div class="flex flex-col sm:flex-row justify-center gap-4">
+                <a href="https://discord.com/oauth2/authorize?client_id=1485512756550570094&permissions=20016128&integration_type=0&scope=bot+applications.commands" target="_blank" class="glow-button bg-discord hover:bg-discordHover text-white font-bold py-4 px-8 rounded-lg text-lg flex items-center justify-center gap-2">
+                    <i class="fa-brands fa-discord text-xl"></i>
+                    서버에 봇 초대하기
+                </a>
+                <button onclick="openModal('manualModal')" class="glass-card hover:bg-white/10 text-white font-semibold py-4 px-8 rounded-lg text-lg flex items-center justify-center gap-2 transition-colors cursor-pointer">
+                    <i class="fa-solid fa-book"></i>
+                    초보자용 사용 설명서
+                </button>
+            </div>
+        </div>
+    </main>
 
-                <div style="margin-bottom:8px; font-weight:700;">계좌번호</div>
-                <div class="account-box">{{ account_number }}</div>
+    <!-- 주요 기능 섹션 (패키지별 안내) -->
+    <section id="features" class="py-20 relative z-10 bg-[#0A0A0C]">
+        <div class="max-w-7xl mx-auto px-6 lg:px-8">
+            
+            <div class="text-center mb-16">
+                <h2 class="text-3xl font-bold text-white mb-4">내전랩 패키지 안내</h2>
+                <p class="text-gray-400">서버의 규모와 운영 방식에 맞는 최적의 패키지를 선택하세요.</p>
+                <div class="w-16 h-1 bg-discord mx-auto rounded-full mt-6"></div>
+            </div>
+            
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-8 items-center">
+                
+                <!-- 서포터 패키지 -->
+                <div class="glass-card p-8 rounded-2xl flex flex-col h-[500px] hover:-translate-y-2 transition-transform duration-300">
+                    <div class="mb-6">
+                        <span class="text-blue-400 font-bold tracking-wider text-xs uppercase bg-blue-500/10 px-3 py-1 rounded-full border border-blue-500/20">Supporter</span>
+                        <h3 class="text-2xl font-bold text-white mt-4 mb-2">서포터</h3>
+                        <p class="text-gray-400 text-sm">소규모 내전 서버를 위한 기본 강화 패키지</p>
+                    </div>
+                    <ul class="space-y-4 mb-8 flex-grow">
+                        <li class="flex items-start gap-3 text-sm text-gray-300">
+                            <i class="fa-solid fa-check text-discord mt-0.5"></i>
+                            <span>자동 맵 뽑기 기능 지원</span>
+                        </li>
+                        <li class="flex items-start gap-3 text-sm text-gray-300">
+                            <i class="fa-solid fa-check text-discord mt-0.5"></i>
+                            <span>유저 프로필 서포터 역할 부여</span>
+                        </li>
+                    </ul>
+                    <button onclick="openModal('donateModal')" class="w-full py-3 rounded-lg font-bold bg-white/5 hover:bg-white/10 text-white border border-white/10 transition-colors">자세히 보기</button>
+                </div>
+                
+                <!-- 프로 패키지 (강조) -->
+                <div class="glass-card p-8 rounded-2xl flex flex-col h-[550px] border-premium/50 shadow-[0_0_30px_rgba(245,196,81,0.1)] relative transform md:-translate-y-4 z-10 bg-gradient-to-b from-[#1E1E1E] to-[#121212]">
+                    <div class="absolute -top-3 left-1/2 transform -translate-x-1/2 bg-premium text-[#0F1014] font-extrabold text-xs px-4 py-1.5 rounded-full flex items-center gap-1 shadow-lg">
+                        <i class="fa-solid fa-star"></i> BEST PICK
+                    </div>
+                    <div class="mb-6">
+                        <span class="text-premium font-bold tracking-wider text-xs uppercase bg-premium/10 px-3 py-1 rounded-full border border-premium/20">Pro</span>
+                        <h3 class="text-3xl font-bold text-white mt-4 mb-2">프로</h3>
+                        <p class="text-gray-400 text-sm">가장 인기있는 체계적인 내전 운영 패키지</p>
+                    </div>
+                    <ul class="space-y-4 mb-8 flex-grow">
+                        <li class="flex items-start gap-3 text-sm text-gray-300 font-medium">
+                            <i class="fa-solid fa-plus text-premium mt-0.5"></i>
+                            <span class="text-white">서포터 패키지의 모든 기능 포함</span>
+                        </li>
+                        <li class="flex items-start gap-3 text-sm text-gray-300">
+                            <i class="fa-solid fa-check text-premium mt-0.5"></i>
+                            <span>정규 시즌제 및 티어 랭킹 시스템</span>
+                        </li>
+                        <li class="flex items-start gap-3 text-sm text-gray-300">
+                            <i class="fa-solid fa-check text-premium mt-0.5"></i>
+                            <span>상세 전적 분석 스탯 제공</span>
+                        </li>
+                        <li class="flex items-start gap-3 text-sm text-gray-300">
+                            <i class="fa-solid fa-check text-premium mt-0.5"></i>
+                            <span>서버 맞춤형 커스텀 전적 프로필 생성</span>
+                        </li>
+                    </ul>
+                    <button onclick="openModal('donateModal')" class="w-full py-4 rounded-lg font-bold bg-premium hover:bg-yellow-500 text-[#0F1014] transition-colors shadow-lg shadow-premium/20">패키지 신청하기</button>
+                </div>
 
-                <div style="margin-bottom:8px; font-weight:700;">예금주</div>
-                <div class="account-box">{{ account_holder }}</div>
+                <!-- 클랜 패키지 -->
+                <div class="glass-card p-8 rounded-2xl flex flex-col h-[500px] hover:-translate-y-2 transition-transform duration-300">
+                    <div class="mb-6">
+                        <span class="text-purple-400 font-bold tracking-wider text-xs uppercase bg-purple-500/10 px-3 py-1 rounded-full border border-purple-500/20">Clan</span>
+                        <h3 class="text-2xl font-bold text-white mt-4 mb-2">클랜</h3>
+                        <p class="text-gray-400 text-sm">대규모 클랜 및 커뮤니티 전용 프리미엄 패키지</p>
+                    </div>
+                    <ul class="space-y-4 mb-8 flex-grow">
+                        <li class="flex items-start gap-3 text-sm text-gray-300 font-medium">
+                            <i class="fa-solid fa-plus text-purple-400 mt-0.5"></i>
+                            <span class="text-white">프로 패키지의 모든 기능 포함</span>
+                        </li>
+                        <li class="flex items-start gap-3 text-sm text-gray-300">
+                            <i class="fa-solid fa-check text-discord mt-0.5"></i>
+                            <span>서버 전용 독립 봇 (이름/프사 커스텀)</span>
+                        </li>
+                        <li class="flex items-start gap-3 text-sm text-gray-300">
+                            <i class="fa-solid fa-check text-discord mt-0.5"></i>
+                            <span>클랜전 전용 매칭 및 통계 시스템</span>
+                        </li>
+                        <li class="flex items-start gap-3 text-sm text-gray-300">
+                            <i class="fa-solid fa-check text-discord mt-0.5"></i>
+                            <span>매칭 서버 최우선 할당 및 딜레이 제거</span>
+                        </li>
+                    </ul>
+                    <button onclick="openModal('donateModal')" class="w-full py-3 rounded-lg font-bold bg-white/5 hover:bg-white/10 text-white border border-white/10 transition-colors">자세히 보기</button>
+                </div>
+
+            </div>
+        </div>
+    </section>
+
+    <!-- 서버별 전적 검색 섹션 -->
+    <section id="records" class="py-20 relative z-10 bg-[#0F1014] border-t border-white/5">
+        <div class="max-w-4xl mx-auto px-6 lg:px-8 text-center">
+            <i class="fa-solid fa-magnifying-glass-chart text-4xl text-discord mb-6"></i>
+            <h2 class="text-3xl font-bold text-white mb-4">서버별 내전 전적 검색</h2>
+            <p class="text-gray-400 mb-10">디스코드 서버에 기록된 유저들의 실시간 랭킹과 전적을 확인해보세요.</p>
+            
+            <div class="glass-card p-4 rounded-xl flex flex-col sm:flex-row gap-3">
+                <div class="relative flex-grow">
+                    <i class="fa-solid fa-server absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400"></i>
+                    <input type="text" placeholder="서버 이름 또는 서버 ID를 입력하세요" class="w-full bg-[#121212] border border-white/10 rounded-lg pl-12 pr-4 py-4 text-white focus:outline-none focus:border-discord transition-colors placeholder-gray-600" />
+                </div>
+                <button onclick="searchRecords()" class="bg-discord hover:bg-discordHover text-white px-8 py-4 rounded-lg font-bold transition-colors whitespace-nowrap shadow-lg">
+                    전적 검색
+                </button>
             </div>
 
-            <div class="card">
-                <h2 class="section-title">📝 프리미엄 신청</h2>
+            <!-- 검색 결과 표시 영역 (기본 숨김) -->
+            <div id="searchResult" class="hidden mt-8 glass-card p-8 rounded-xl transition-all duration-300">
+                <!-- 결과 내용은 스크립트에서 채워집니다 -->
+            </div>
+        </div>
+    </section>
 
-                <div class="form-group">
-                    <label for="guildId">서버 ID</label>
-                    <input type="number" id="guildId" placeholder="예: 123456789012345678">
+    <!-- 푸터 -->
+    <footer class="bg-[#050505] py-10 border-t border-white/10 relative z-10">
+        <div class="max-w-7xl mx-auto px-6 lg:px-8 flex flex-col md:flex-row items-center justify-between">
+            <div class="flex items-center gap-2 mb-4 md:mb-0">
+                <i class="fa-solid fa-gamepad text-discord"></i>
+                <span class="text-white font-bold text-xl">내전랩 <span class="text-sm text-gray-500 font-normal">Scrim Lab</span></span>
+            </div>
+            <p class="text-gray-500 text-sm text-center md:text-left">
+                &copy; 2026 Scrim Lab Bot. All rights reserved.<br/>
+                디스코드 내전을 가장 스마트하게 관리하는 방법.
+            </p>
+            <div class="flex gap-5 mt-6 md:mt-0">
+                <a href="https://discord.com/oauth2/authorize?client_id=1485512756550570094&permissions=20016128&integration_type=0&scope=bot+applications.commands" target="_blank" class="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center text-gray-400 hover:bg-discord hover:text-white transition-all"><i class="fa-brands fa-discord"></i></a>
+                <a href="#" class="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center text-gray-400 hover:text-white transition-all"><i class="fa-solid fa-envelope"></i></a>
+            </div>
+        </div>
+    </footer>
+
+    <!-- 사용 설명서 모달 -->
+    <div id="manualModal" class="fixed inset-0 z-[100] hidden items-center justify-center p-4 sm:p-6 bg-black/80 backdrop-blur-sm transition-opacity">
+        <div class="glass-card w-full max-w-3xl max-h-[90vh] overflow-hidden flex flex-col rounded-2xl relative border-discord/30 shadow-[0_0_50px_rgba(88,101,242,0.15)]">
+            
+            <div class="p-6 border-b border-white/10 flex justify-between items-center bg-[#121212]/80">
+                <h2 class="text-2xl font-bold text-white flex items-center gap-2">
+                    <i class="fa-solid fa-book-open text-discord"></i> 내전랩 5분 완성 가이드
+                </h2>
+                <button onclick="closeModal('manualModal')" class="text-gray-400 hover:text-white bg-white/5 hover:bg-white/10 w-8 h-8 rounded-full flex items-center justify-center transition-colors">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+            
+            <div class="p-6 overflow-y-auto custom-scrollbar flex-grow bg-[#0A0A0C]">
+                <p class="text-gray-400 mb-8">내전랩 봇을 처음 사용하시나요? 아래 순서대로 슬래시(<code>/</code>) 명령어를 입력하여 내전을 시작해보세요!</p>
+
+                <div class="space-y-6">
+                    <!-- Step 1 -->
+                    <div class="flex gap-4">
+                        <div class="flex-shrink-0 w-8 h-8 rounded-full bg-discord text-white flex items-center justify-center font-bold">1</div>
+                        <div>
+                            <h3 class="text-lg font-bold text-white mb-1"><span class="text-discord bg-discord/10 px-2 py-0.5 rounded text-sm mr-2">/설정...</span>초기 설정하기</h3>
+                            <p class="text-gray-400 text-sm">봇을 서버에 초대한 후 관리자가 가장 먼저 해야 할 일입니다. <code>/설정보기</code>, <code>/설정역할</code>, <code>/설정카테고리</code>, <code>/설정로그채널</code>, <code>/설정팀결과채널</code>, <code>/설정공지채널</code> 명령어를 통해 서버 환경에 맞게 봇을 세팅합니다.</p>
+                        </div>
+                    </div>
+
+                    <!-- Step 2 -->
+                    <div class="flex gap-4">
+                        <div class="flex-shrink-0 w-8 h-8 rounded-full bg-blue-500 text-white flex items-center justify-center font-bold">2</div>
+                        <div>
+                            <h3 class="text-lg font-bold text-white mb-1"><span class="text-blue-400 bg-blue-500/10 px-2 py-0.5 rounded text-sm mr-2">/내전생성</span>내전 인원 모으기</h3>
+                            <p class="text-gray-400 text-sm">명령어를 입력하면 참가 버튼이 있는 패널이 생성됩니다. 서버 유저들은 <strong>[참가하기]</strong> 버튼을 눌러 내전에 등록합니다.</p>
+                        </div>
+                    </div>
+
+                    <!-- Step 3 -->
+                    <div class="flex gap-4">
+                        <div class="flex-shrink-0 w-8 h-8 rounded-full bg-purple-500 text-white flex items-center justify-center font-bold">3</div>
+                        <div>
+                            <h3 class="text-lg font-bold text-white mb-1"><span class="text-purple-400 bg-purple-500/10 px-2 py-0.5 rounded text-sm mr-2">/팀분배</span>밸런스 팀 나누기</h3>
+                            <p class="text-gray-400 text-sm">인원이 모두 모이면 이 명령어를 사용하세요. 봇이 유저들의 과거 전적과 MMR을 분석하여 가장 공평한 두 팀(1팀/2팀)으로 알아서 나누어 줍니다.</p>
+                        </div>
+                    </div>
+
+                    <!-- Step 4 -->
+                    <div class="flex gap-4">
+                        <div class="flex-shrink-0 w-8 h-8 rounded-full bg-red-500 text-white flex items-center justify-center font-bold">4</div>
+                        <div>
+                            <h3 class="text-lg font-bold text-white mb-1"><span class="text-red-400 bg-red-500/10 px-2 py-0.5 rounded text-sm mr-2">/맵뽑기</span>(선택) 맵 정하기</h3>
+                            <p class="text-gray-400 text-sm">경기를 진행할 맵을 정해야 한다면 이 명령어를 사용하세요. 해당 게임의 공식 맵들 중에서 무작위로 하나의 맵이 자동으로 뽑힙니다.</p>
+                        </div>
+                    </div>
+
+                    <!-- Step 5 -->
+                    <div class="flex gap-4">
+                        <div class="flex-shrink-0 w-8 h-8 rounded-full bg-green-500 text-white flex items-center justify-center font-bold">5</div>
+                        <div>
+                            <h3 class="text-lg font-bold text-white mb-1"><span class="text-green-400 bg-green-500/10 px-2 py-0.5 rounded text-sm mr-2">/결과기록</span>경기 결과 기록하기</h3>
+                            <p class="text-gray-400 text-sm">내전이 끝난 후 이기고 진 팀을 기록합니다. 결과가 반영되면 참가자들의 MMR 점수와 전적이 자동으로 갱신되며 시즌 랭킹에 반영됩니다.</p>
+                        </div>
+                    </div>
                 </div>
-
-                <div class="form-group">
-                    <label for="planKey">패키지 선택</label>
-                    <select id="planKey">
-                        <option value="supporter">서포터 (3,000원 / 30일)</option>
-                        <option value="pro">프로 (4,990원 / 30일)</option>
-                        <option value="clan">클랜 (7,990원 / 30일)</option>
-                    </select>
-                </div>
-
-                <div class="form-group">
-                    <label for="applicantName">입금자명</label>
-                    <input type="text" id="applicantName" placeholder="예: 홍길동">
-                </div>
-
-                <div class="form-group">
-                    <label for="discordTag">디스코드 아이디</label>
-                    <input type="text" id="discordTag" placeholder="예: user1234">
-                </div>
-
-                <div class="form-group">
-                    <label for="amount">입금 금액</label>
-                    <input type="number" id="amount" placeholder="예: 4990">
-                </div>
-
-                <div class="form-group">
-                    <label for="memo">메모</label>
-                    <textarea id="memo" placeholder="추가로 전달할 내용이 있으면 적어주세요."></textarea>
-                </div>
-
-                <button class="primary-btn" onclick="submitPremiumRequest()">프리미엄 신청하기</button>
-                <div id="statusText" class="status"></div>
+            </div>
+            
+            <div class="p-4 border-t border-white/10 bg-[#121212]/80 text-right">
+                <button onclick="closeModal('manualModal')" class="bg-gray-700 hover:bg-gray-600 text-white px-6 py-2 rounded-lg text-sm font-bold transition-colors">닫기</button>
             </div>
         </div>
     </div>
-</div>
 
-<script>
-async function submitPremiumRequest() {
-    const guildId = document.getElementById("guildId").value.trim();
-    const planKey = document.getElementById("planKey").value.trim();
-    const applicantName = document.getElementById("applicantName").value.trim();
-    const discordTag = document.getElementById("discordTag").value.trim();
-    const amount = document.getElementById("amount").value.trim();
-    const memo = document.getElementById("memo").value.trim();
-    const statusText = document.getElementById("statusText");
+    <!-- 후원/패키지 신청 안내 모달 -->
+    <div id="donateModal" class="fixed inset-0 z-[100] hidden items-center justify-center p-4 sm:p-6 bg-black/80 backdrop-blur-sm transition-opacity">
+        <div class="glass-card w-full max-w-md overflow-hidden flex flex-col rounded-2xl relative border-premium/30 shadow-[0_0_50px_rgba(245,196,81,0.15)]">
+            
+            <div class="p-6 border-b border-white/10 flex justify-between items-center bg-[#121212]/80">
+                <h2 class="text-xl font-bold text-white flex items-center gap-2">
+                    <i class="fa-solid fa-crown text-premium"></i> 내전랩 패키지 후원
+                </h2>
+                <button onclick="closeModal('donateModal')" class="text-gray-400 hover:text-white bg-white/5 hover:bg-white/10 w-8 h-8 rounded-full flex items-center justify-center transition-colors">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+            
+            <div class="p-8 bg-[#0A0A0C]">
+                <div class="text-center mb-6">
+                    <div class="w-16 h-16 bg-premium/20 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <i class="fa-solid fa-hand-holding-dollar text-3xl text-premium"></i>
+                    </div>
+                    <p class="text-gray-300 text-sm leading-relaxed">
+                        후원해주신 서버에는<br/>
+                        <strong class="text-premium">내전랩 패키지별 프리미엄 기능 권한</strong>이 부여됩니다.
+                    </p>
+                </div>
 
-    statusText.textContent = "";
-    statusText.className = "status";
+                <!-- 후원 계좌 안내 영역 -->
+                <div class="bg-[#121212] p-4 rounded-xl border border-white/5 mb-6">
+                    <h4 class="text-white font-bold text-sm mb-3 flex items-center"><i class="fa-solid fa-won-sign text-green-400 mr-2"></i>후원 계좌 안내</h4>
+                    
+                    <div class="flex justify-between items-center bg-black/40 p-3 rounded-lg">
+                        <div class="flex flex-col">
+                            <span class="text-xs text-gray-500 mb-1">토스뱅크 (예금주: 김태용)</span>
+                            <span class="text-gray-300 text-sm font-mono">3333-00-0000000</span>
+                        </div>
+                        <button onclick="copyAccount('100001032111')" class="text-xs bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded transition-colors text-white font-bold">복사</button>
+                    </div>
+                </div>
 
-    if (!guildId) {
-        statusText.textContent = "서버 ID를 입력해주세요.";
-        statusText.classList.add("err");
-        return;
-    }
+                <!-- 프리미엄 신청 절차 영역 -->
+                <div class="text-left mb-6">
+                    <h4 class="text-white font-bold text-sm mb-3 flex items-center"><i class="fa-brands fa-discord text-discord mr-2"></i>패키지 신청 방법</h4>
+                    <ol class="text-sm text-gray-400 space-y-2.5 ml-1">
+                        <li class="flex items-start"><span class="text-discord font-bold mr-2">1.</span> 위 계좌로 원하시는 패키지 금액을 후원합니다.</li>
+                        <li class="flex items-start"><span class="text-discord font-bold mr-2">2.</span> 아래 버튼을 눌러 공식 디스코드 서버에 입장합니다.</li>
+                        <li class="flex items-start"><span class="text-discord font-bold mr-2">3.</span> <span class="bg-white/10 px-1.5 py-0.5 rounded text-gray-200 text-xs mt-0.5 mx-1">#프리미엄-신청</span> 채널에서 티켓을 열고 내역을 남겨주세요.</li>
+                    </ol>
+                </div>
 
-    if (!applicantName) {
-        statusText.textContent = "입금자명을 입력해주세요.";
-        statusText.classList.add("err");
-        return;
-    }
+                <a href="https://discord.gg/FgX5mkY93K" target="_blank" class="flex justify-center items-center gap-2 w-full bg-discord hover:bg-discordHover text-white font-bold py-3.5 rounded-lg transition-colors shadow-lg">
+                    <i class="fa-brands fa-discord"></i> 공식 서포트 서버 입장하기
+                </a>
+            </div>
+        </div>
+    </div>
 
-    if (!amount) {
-        statusText.textContent = "입금 금액을 입력해주세요.";
-        statusText.classList.add("err");
-        return;
-    }
+    <!-- 관리자 전용 서버 ID 프리미엄 부여 모달 -->
+    <div id="adminModal" class="fixed inset-0 z-[100] hidden items-center justify-center p-4 sm:p-6 bg-black/80 backdrop-blur-sm transition-opacity">
+        <div class="glass-card w-full max-w-md overflow-hidden flex flex-col rounded-2xl relative border-red-500/30 shadow-[0_0_50px_rgba(239,68,68,0.15)]">
+            
+            <div class="p-6 border-b border-white/10 flex justify-between items-center bg-[#121212]/80">
+                <h2 class="text-xl font-bold text-white flex items-center gap-2">
+                    <i class="fa-solid fa-shield-halved text-red-400"></i> 관리자 대시보드
+                </h2>
+                <button onclick="closeModal('adminModal')" class="text-gray-400 hover:text-white bg-white/5 hover:bg-white/10 w-8 h-8 rounded-full flex items-center justify-center transition-colors">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+            
+            <div class="p-8 bg-[#0A0A0C]">
+                <div class="text-center mb-6">
+                    <p class="text-gray-300 text-sm leading-relaxed">
+                        계좌 입금 내역을 확인한 후,<br/>
+                        대상 서버에 프리미엄 권한을 수동으로 부여합니다.
+                    </p>
+                </div>
 
-    try {
-        const response = await fetch("/api/premium/request", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                guild_id: guildId,
-                applicant_name: applicantName,
-                discord_tag: discordTag,
-                amount: amount,
-                memo: memo,
-                plan_key: planKey
-            })
-        });
+                <div class="space-y-4 mb-6">
+                    <div>
+                        <label class="block text-sm font-bold text-gray-400 mb-2">디스코드 서버 ID</label>
+                        <input type="text" id="adminServerId" placeholder="예: 123456789012345678" class="w-full bg-[#121212] border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-red-400 transition-colors placeholder-gray-600" />
+                    </div>
+                    
+                    <div>
+                        <label class="block text-sm font-bold text-gray-400 mb-2">부여할 패키지 선택</label>
+                        <select id="adminPackage" class="w-full bg-[#121212] border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-red-400 transition-colors appearance-none">
+                            <option value="supporter">서포터 (Supporter)</option>
+                            <option value="pro">프로 (Pro)</option>
+                            <option value="clan">클랜 (Clan)</option>
+                        </select>
+                    </div>
+                </div>
 
-        const result = await response.json();
-        if (result.ok) {
-            statusText.textContent = "프리미엄 신청이 접수되었습니다. 신청번호: " + result.request_id;
-            statusText.classList.add("ok");
-        } else {
-            statusText.textContent = result.message || "신청 접수에 실패했습니다.";
-            statusText.classList.add("err");
-        }
-    } catch (error) {
-        statusText.textContent = "서버와 통신 중 오류가 발생했습니다.";
-        statusText.classList.add("err");
-    }
-}
-</script>
+                <button onclick="grantPremium()" class="flex justify-center items-center gap-2 w-full bg-red-500 hover:bg-red-600 text-white font-bold py-3.5 rounded-lg transition-colors shadow-lg">
+                    <i class="fa-solid fa-check"></i> 프리미엄 권한 즉시 부여
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 관리자 인증 (비밀번호 입력) 모달 -->
+    <div id="adminAuthModal" class="fixed inset-0 z-[110] hidden items-center justify-center p-4 sm:p-6 bg-black/80 backdrop-blur-sm transition-opacity">
+        <div class="glass-card w-full max-w-sm overflow-hidden flex flex-col rounded-2xl relative border-red-500/30 shadow-[0_0_50px_rgba(239,68,68,0.15)]">
+            <div class="p-5 border-b border-white/10 flex justify-between items-center bg-[#121212]/80">
+                <h2 class="text-lg font-bold text-white flex items-center gap-2">
+                    <i class="fa-solid fa-lock text-red-400"></i> 관리자 인증
+                </h2>
+                <button onclick="closeModal('adminAuthModal')" class="text-gray-400 hover:text-white bg-white/5 hover:bg-white/10 w-8 h-8 rounded-full flex items-center justify-center transition-colors">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+            <div class="p-6 bg-[#0A0A0C]">
+                <p class="text-gray-400 text-sm mb-4">관리자 전용 페이지입니다. 비밀번호를 입력하세요.</p>
+                <input type="password" id="adminPasswordInput" class="w-full bg-[#121212] border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-red-400 transition-colors mb-2" placeholder="비밀번호 입력" onkeydown="if(event.key === 'Enter') verifyAdminPassword()">
+                <p id="adminAuthError" class="text-red-500 text-xs hidden mb-4">⛔ 비밀번호가 일치하지 않습니다.</p>
+                <button onclick="verifyAdminPassword()" class="w-full mt-2 bg-red-500 hover:bg-red-600 text-white font-bold py-3 rounded-lg transition-colors">확인</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 커스텀 알림(Alert) 모달 -->
+    <div id="alertModal" class="fixed inset-0 z-[120] hidden items-center justify-center p-4 sm:p-6 bg-black/80 backdrop-blur-sm transition-opacity">
+        <div class="glass-card w-full max-w-sm overflow-hidden flex flex-col rounded-2xl relative border-discord/30">
+            <div class="p-6 bg-[#0A0A0C] text-center">
+                <div class="w-12 h-12 bg-discord/20 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <i class="fa-solid fa-circle-info text-2xl text-discord"></i>
+                </div>
+                <p id="alertMessage" class="text-white text-sm mb-6"></p>
+                <button onclick="closeModal('alertModal')" class="w-full bg-discord hover:bg-discordHover text-white font-bold py-3 rounded-lg transition-colors">확인</button>
+            </div>
+        </div>
+    </div>
+
 </body>
 </html>
 """
 
-SEASON_HTML = """
-<!DOCTYPE html>
-<html lang="ko">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>시즌 페이지</title>
-    """ + BASE_STYLE + """
-</head>
-<body>
-<div class="container">
-    <div class="page-title">🏆 시즌 페이지</div>
-
-    {% if brand and brand.is_clan %}
-    <div class="card brand-card">
-        <div class="brand-title"><span class="brand-badge">{{ brand.badge_text }}</span><span>{{ brand.brand_name }}</span></div>
-        <div class="brand-sub">클랜 패키지 서버 전용 시즌 브랜딩이 적용된 화면입니다.</div>
-    </div>
-    {% endif %}
-
-    <div class="action-row">
-        <a href="/" class="action-btn btn-guide">🏠 홈으로</a>
-        <a href="/guide" class="action-btn btn-support">💿 명령어 / 프리미엄 소개</a>
-        <a href="/support" class="action-btn btn-season">💖 후원 / 프리미엄 신청</a>
-    </div>
-
-    <div class="card">
-        <form method="get" class="filters">
-            <select name="guild_id" style="max-width:320px;">
-                <option value="">서버 선택</option>
-                {% for guild in guilds %}
-                    <option value="{{ guild.guild_id }}" {% if guild_id == guild.guild_id|string %}selected{% endif %}>
-                        {{ guild.guild_name or ("Guild " ~ guild.guild_id) }}
-                    </option>
-                {% endfor %}
-            </select>
-
-            <select name="game" style="max-width:240px;">
-                <option value="">게임 선택</option>
-                {% for g in games %}
-                    <option value="{{ g }}" {% if selected_game == g %}selected{% endif %}>{{ g }}</option>
-                {% endfor %}
-            </select>
-            <button type="submit" class="submit-btn">조회</button>
-        </form>
-    </div>
-
-    {% if error_message %}
-    <div class="card">
-        <div class="empty-box">{{ error_message }}</div>
-    </div>
-    {% endif %}
-
-    {% if season %}
-    <div class="card">
-        <h2 class="section-title">현재 시즌</h2>
-        <div class="pill">서버: {{ season.guild_id }}</div>
-        <div class="pill">게임: {{ season.game }}</div>
-        <div class="pill">시즌명: {{ season.season_name }}</div>
-        <div class="pill">시작일: {{ season.started_at }}</div>
-        <div class="pill">상태: {% if season.is_active %}진행 중{% else %}종료{% endif %}</div>
-    </div>
-
-    <div class="card">
-        <h2 class="section-title">시즌 요약</h2>
-        <div class="pill">참가자 수: {{ summary.player_count }}</div>
-        <div class="pill">평균 MMR: {{ summary.avg_mmr }}</div>
-        <div class="pill">최고 MMR: {{ summary.top_mmr }}</div>
-        <div class="pill">경기 수: {{ summary.match_count }}</div>
-    </div>
-
-    <div class="card">
-        <h2 class="section-title">시즌 랭킹</h2>
-        {% if ranking %}
-        <table>
-            <thead>
-                <tr>
-                    <th>#</th>
-                    <th>닉네임</th>
-                    <th>유저 ID</th>
-                    <th>MMR</th>
-                    <th>승</th>
-                    <th>패</th>
-                    <th>승률</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for row in ranking %}
-                <tr>
-                    <td>{{ loop.index }}</td>
-                    <td>{{ row.display_name or "-" }}</td>
-                    <td>{{ row.user_id }}</td>
-                    <td>{{ row.mmr }}</td>
-                    <td>{{ row.win }}</td>
-                    <td>{{ row.lose }}</td>
-                    <td>{{ row.winrate }}%</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-        {% else %}
-        <div class="empty-box">시즌 전적이 아직 없습니다.</div>
-        {% endif %}
-    </div>
-
-    <div class="card">
-        <h2 class="section-title">시즌 최근 경기</h2>
-        {% if matches %}
-            {% for match in matches %}
-            <div class="match-item">
-                <span class="pill">승리팀 {{ match.winner_team }}</span>
-                <span class="pill">A평균 {{ match.team_a_avg }}</span>
-                <span class="pill">B평균 {{ match.team_b_avg }}</span>
-                <span class="pill">{{ match.created_at }}</span>
-            </div>
-            {% endfor %}
-        {% else %}
-        <div class="empty-box">시즌 경기 기록이 아직 없습니다.</div>
-        {% endif %}
-    </div>
-    {% endif %}
-</div>
-</body>
-</html>
-"""
-
-PLAYER_HTML = """
-<!DOCTYPE html>
-<html lang="ko">
-<head>
-    <meta charset="UTF-8">
-    <title>유저 전적</title>
-    """ + BASE_STYLE + """
-</head>
-<body>
-<div class="container">
-    <div class="action-row">
-        <a href="/" class="action-btn btn-guide">🏠 홈으로</a>
-    </div>
-
-    {% if brand and brand.is_clan %}
-    <div class="card brand-card">
-        <div class="brand-title"><span class="brand-badge">{{ brand.badge_text }}</span><span>{{ brand.brand_name }}</span></div>
-        <div class="brand-sub">클랜 패키지 서버 전용 상세 전적 화면입니다.</div>
-    </div>
-    {% endif %}
-
-    <div class="card">
-        <h1>👤 유저 전적</h1>
-        <p>닉네임: {{ player.display_name or "-" }}</p>
-        <p>Guild ID: {{ player.guild_id }}</p>
-        <p>User ID: {{ player.user_id }}</p>
-        <p>전체 MMR: {{ player.mmr }}</p>
-        <p>전체 승: {{ player.win }}</p>
-        <p>전체 패: {{ player.lose }}</p>
-        <p>전체 승률: {{ winrate }}%</p>
-    </div>
-
-    {% if has_overwatch_data %}
-    <div class="card">
-        <h2 class="section-title">🛡️ 오버워치 상세 전적</h2>
-        <div class="tab-row">
-            {% for tab in overwatch_role_tabs %}
-            <a
-                href="/player/{{ player.guild_id }}/{{ player.user_id }}?ow_role={{ tab.value }}"
-                class="tab-link {% if selected_ow_role == tab.value %}active{% endif %}"
-            >
-                {{ tab.label }}
-            </a>
-            {% endfor %}
-        </div>
-
-        {% if selected_ow_role == 'all' %}
-        <div class="stat-grid" style="margin-top:16px;">
-            <div class="stat-card">
-                <div class="stat-label">오버워치 평균 MMR</div>
-                <div class="stat-value">{{ overwatch_summary_mmr }}</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-label">오버워치 승</div>
-                <div class="stat-value">{{ overwatch_summary_win }}</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-label">오버워치 패</div>
-                <div class="stat-value">{{ overwatch_summary_lose }}</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-label">오버워치 승률</div>
-                <div class="stat-value">{{ overwatch_summary_winrate }}%</div>
-            </div>
-        </div>
-        <table style="margin-top:16px;">
-            <thead>
-                <tr>
-                    <th>역할군</th>
-                    <th>MMR</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for row in overwatch_role_rows %}
-                <tr>
-                    <td>{{ row.role }}</td>
-                    <td>{{ row.mmr }}</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-        {% else %}
-        <div class="stat-grid" style="margin-top:16px;">
-            <div class="stat-card">
-                <div class="stat-label">{{ selected_ow_role_label }} MMR</div>
-                <div class="stat-value">{{ selected_overwatch_role_mmr if selected_overwatch_role_mmr is not none else '-' }}</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-label">오버워치 전체 승</div>
-                <div class="stat-value">{{ overwatch_summary_win }}</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-label">오버워치 전체 패</div>
-                <div class="stat-value">{{ overwatch_summary_lose }}</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-label">오버워치 전체 승률</div>
-                <div class="stat-value">{{ overwatch_summary_winrate }}%</div>
-            </div>
-        </div>
-        <p class="muted" style="margin-top:14px;">역할군별 승/패는 저장되지 않아 승/패/승률은 오버워치 전체 전적 기준으로 표시됩니다.</p>
-        {% endif %}
-    </div>
-    {% endif %}
-
-    <div class="card">
-        <h2 class="section-title">🎯 게임별 전적</h2>
-        <table>
-            <thead>
-                <tr>
-                    <th>게임</th>
-                    <th>MMR</th>
-                    <th>승</th>
-                    <th>패</th>
-                    <th>승률</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for row in game_rows %}
-                <tr>
-                    <td>{{ row.game }}</td>
-                    <td>{{ row.mmr }}</td>
-                    <td>{{ row.win }}</td>
-                    <td>{{ row.lose }}</td>
-                    <td>{{ row.winrate }}%</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
-</div>
-</body>
-</html>
-"""
-
-LOCKED_HTML = """
-<!DOCTYPE html>
-<html lang="ko">
-<head>
-    <meta charset="UTF-8">
-    <title>프리미엄 전용</title>
-    """ + BASE_STYLE + """
-</head>
-<body>
-<div class="container">
-    <div class="card">
-        <h1>🔒 프리미엄 전용</h1>
-        <p>{{ message }}</p>
-        <p>필요 패키지: <strong>{{ required_plan_label }}</strong> 이상</p>
-        <p><a href="/support">→ 프리미엄 신청하러 가기</a></p>
-        <p><a href="/">← 홈으로 돌아가기</a></p>
-    </div>
-</div>
-</body>
-</html>
-"""
-
-ADMIN_PREMIUM_HTML = """
-<!DOCTYPE html>
-<html lang="ko">
-<head>
-    <meta charset="UTF-8">
-    <title>프리미엄 관리자</title>
-    """ + BASE_STYLE + """
-</head>
-<body>
-<div class="container">
-    <div class="page-title">🔐 프리미엄 관리자 페이지</div>
-
-    <div class="action-row">
-        <a href="/" class="action-btn btn-guide">🏠 홈으로</a>
-        <a href="/guide" class="action-btn btn-support">💿 명령어 / 프리미엄 소개</a>
-        <a href="/support" class="action-btn btn-admin">💖 프리미엄 신청 페이지</a>
-    </div>
-
-    <div class="card">
-        <h2 class="section-title">관리자 로그인</h2>
-        <div class="admin-login-row">
-            <input type="password" id="adminSecret" placeholder="관리자 시크릿 입력" style="min-width:320px; max-width:360px;">
-            <button class="submit-btn" onclick="loadRequests()">불러오기</button>
-        </div>
-        <div id="loginStatus" class="status"></div>
-    </div>
-
-    <div class="card">
-        <h2 class="section-title">프리미엄 신청 목록</h2>
-        <div id="requestList"></div>
-    </div>
-</div>
-
-<script>
-async function loadRequests() {
-    const secret = document.getElementById("adminSecret").value.trim();
-    const loginStatus = document.getElementById("loginStatus");
-    const requestList = document.getElementById("requestList");
-
-    requestList.innerHTML = "";
-    loginStatus.textContent = "";
-    loginStatus.className = "status";
-
-    try {
-        const response = await fetch("/api/admin/premium/requests", {
-            method: "GET",
-            headers: { "X-Admin-Secret": secret }
-        });
-        const result = await response.json();
-
-        if (!result.ok) {
-            loginStatus.textContent = result.message;
-            loginStatus.classList.add("err");
-            return;
-        }
-
-        loginStatus.textContent = "불러오기 완료";
-        loginStatus.classList.add("ok");
-
-        if (!result.requests || result.requests.length === 0) {
-            requestList.innerHTML = "<p class='muted'>신청 내역이 없습니다.</p>";
-            return;
-        }
-
-        requestList.innerHTML = result.requests.map((item) => `
-            <div class="request-card">
-                <div class="request-row"><strong>신청번호:</strong> #${item.id}</div>
-                <div class="request-row"><strong>서버 ID:</strong> ${item.guild_id}</div>
-                <div class="request-row"><strong>입금자명:</strong> ${item.applicant_name}</div>
-                <div class="request-row"><strong>디스코드:</strong> ${item.discord_tag || "-"}</div>
-                <div class="request-row"><strong>입금 금액:</strong> ${item.amount}원</div>
-                <div class="request-row"><strong>메모:</strong> ${item.memo || "-"}</div>
-                <div class="request-row"><strong>상태:</strong> <span class="status-badge">${item.status}</span></div>
-                <div class="request-row"><strong>신청일:</strong> ${item.created_at}</div>
-                <br>
-                <input class="days-input" type="number" id="days-${item.id}" value="30" min="1">
-                <button class="approve-btn" onclick="approveRequest(${item.id})">승인</button>
-                <button class="reject-btn" onclick="rejectRequest(${item.id})">거절</button>
-                <div id="status-${item.id}" class="status"></div>
-            </div>
-        `).join("");
-    } catch (e) {
-        loginStatus.textContent = "오류 발생";
-        loginStatus.classList.add("err");
-    }
-}
-
-async function approveRequest(requestId) {
-    const secret = document.getElementById("adminSecret").value.trim();
-    const days = document.getElementById(`days-${requestId}`).value.trim();
-    const statusBox = document.getElementById(`status-${requestId}`);
-
-    statusBox.textContent = "";
-    statusBox.className = "status";
-
-    try {
-        const response = await fetch("/api/admin/premium/approve", {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "X-Admin-Secret": secret
-            },
-            body: JSON.stringify({
-                request_id: requestId,
-                days: days,
-                approved_by: "admin_page"
-            })
-        });
-
-        const result = await response.json();
-        if (result.ok) {
-            statusBox.textContent = "승인 완료 / premium_until: " + result.premium_until;
-            statusBox.classList.add("ok");
-            loadRequests();
-        } else {
-            statusBox.textContent = result.message;
-            statusBox.classList.add("err");
-        }
-    } catch (e) {
-        statusBox.textContent = "오류 발생";
-        statusBox.classList.add("err");
-    }
-}
-
-async function rejectRequest(requestId) {
-    const secret = document.getElementById("adminSecret").value.trim();
-    const statusBox = document.getElementById(`status-${requestId}`);
-
-    statusBox.textContent = "";
-    statusBox.className = "status";
-
-    try {
-        const response = await fetch("/api/admin/premium/reject", {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "X-Admin-Secret": secret
-            },
-            body: JSON.stringify({ request_id: requestId })
-        });
-
-        const result = await response.json();
-        if (result.ok) {
-            statusBox.textContent = "거절 완료";
-            statusBox.classList.add("ok");
-            loadRequests();
-        } else {
-            statusBox.textContent = result.message;
-            statusBox.classList.add("err");
-        }
-    } catch (e) {
-        statusBox.textContent = "오류 발생";
-        statusBox.classList.add("err");
-    }
-}
-</script>
-</body>
-</html>
-"""
-
-
-@app.route("/")
+@app.route('/')
 def index():
-    cleanup_expired_premium_guilds()
-
-    selected_guild_id = request.args.get("guild_id", "").strip()
-    selected_game = request.args.get("game", "").strip()
-    q = request.args.get("q", "").strip()
-    selected_ow_role = normalize_overwatch_role_tab(request.args.get("ow_role", "all"))
-
-    if selected_game != "overwatch":
-        selected_ow_role = "all"
-
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            guilds = get_registered_guilds(active_only=True)
-            cur.execute("SELECT DISTINCT game FROM player_game_stats ORDER BY game ASC")
-            games = [row["game"] for row in cur.fetchall()]
-
-            ranking = []
-            matches = []
-
-            filters = []
-            params = []
-
-            if selected_guild_id:
-                filters.append("guild_id = %s")
-                params.append(int(selected_guild_id))
-
-            if selected_game:
-                filters.append("game = %s")
-                params.append(selected_game)
-
-            if q:
-                filters.append("(display_name ILIKE %s OR CAST(user_id AS TEXT) ILIKE %s)")
-                params.append(f"%{q}%")
-                params.append(f"%{q}%")
-
-            mmr_column_label = "MMR"
-
-            if selected_game == "overwatch" and selected_ow_role != "all":
-                where_parts = []
-                ranking_params = []
-
-                if selected_guild_id:
-                    where_parts.append("orm.guild_id = %s")
-                    ranking_params.append(int(selected_guild_id))
-
-                if q:
-                    where_parts.append("(COALESCE(orm.display_name, pgs.display_name, p.display_name) ILIKE %s OR CAST(orm.user_id AS TEXT) ILIKE %s)")
-                    ranking_params.append(f"%{q}%")
-                    ranking_params.append(f"%{q}%")
-
-                where_parts.append("orm.role = %s")
-                ranking_params.append(selected_ow_role)
-
-                where_clause = "WHERE " + " AND ".join(where_parts) if where_parts else ""
-
-                ranking_sql = f"""
-                    SELECT
-                        orm.guild_id,
-                        orm.user_id,
-                        COALESCE(orm.display_name, pgs.display_name, p.display_name) AS display_name,
-                        orm.mmr,
-                        COALESCE(pgs.win, 0) AS win,
-                        COALESCE(pgs.lose, 0) AS lose,
-                        CASE
-                            WHEN (COALESCE(pgs.win, 0) + COALESCE(pgs.lose, 0)) = 0 THEN 0
-                            ELSE ROUND((CAST(COALESCE(pgs.win, 0) AS NUMERIC) / (COALESCE(pgs.win, 0) + COALESCE(pgs.lose, 0))) * 100, 1)
-                        END AS winrate
-                    FROM overwatch_role_mmr orm
-                    LEFT JOIN player_game_stats pgs
-                        ON orm.guild_id = pgs.guild_id AND orm.user_id = pgs.user_id AND pgs.game = 'overwatch'
-                    LEFT JOIN players p
-                        ON orm.guild_id = p.guild_id AND orm.user_id = p.user_id
-                    {where_clause}
-                    ORDER BY orm.mmr DESC, COALESCE(pgs.win, 0) DESC
-                    LIMIT 50
-                """
-                cur.execute(ranking_sql, tuple(ranking_params))
-                ranking = cur.fetchall()
-                mmr_column_label = f"{get_overwatch_role_tab_label(selected_ow_role)} MMR"
-            elif selected_game:
-                where_clause = ""
-                if filters:
-                    safe_filters = []
-                    for f in filters:
-                        f = f.replace("guild_id", "pgs.guild_id")
-                        f = f.replace("game", "pgs.game")
-                        f = f.replace("user_id", "pgs.user_id")
-                        f = f.replace("display_name", "COALESCE(pgs.display_name, p.display_name)")
-                        safe_filters.append(f)
-                    where_clause = "WHERE " + " AND ".join(safe_filters)
-
-                ranking_sql = f"""
-                    SELECT
-                        pgs.guild_id,
-                        pgs.user_id,
-                        COALESCE(pgs.display_name, p.display_name) AS display_name,
-                        pgs.mmr,
-                        pgs.win,
-                        pgs.lose,
-                        CASE
-                            WHEN (pgs.win + pgs.lose) = 0 THEN 0
-                            ELSE ROUND((CAST(pgs.win AS NUMERIC) / (pgs.win + pgs.lose)) * 100, 1)
-                        END AS winrate
-                    FROM player_game_stats pgs
-                    LEFT JOIN players p
-                        ON pgs.guild_id = p.guild_id AND pgs.user_id = p.user_id
-                    {where_clause}
-                    ORDER BY pgs.mmr DESC, pgs.win DESC
-                    LIMIT 50
-                """
-                cur.execute(ranking_sql, tuple(params))
-                ranking = cur.fetchall()
-            else:
-                where_clause = ""
-                if filters:
-                    where_clause = "WHERE " + " AND ".join(filters)
-
-                ranking_sql = f"""
-                    SELECT
-                        guild_id,
-                        user_id,
-                        display_name,
-                        mmr,
-                        win,
-                        lose,
-                        CASE
-                            WHEN (win + lose) = 0 THEN 0
-                            ELSE ROUND((CAST(win AS NUMERIC) / (win + lose)) * 100, 1)
-                        END AS winrate
-                    FROM players
-                    {where_clause}
-                    ORDER BY mmr DESC, win DESC
-                    LIMIT 50
-                """
-                cur.execute(ranking_sql, tuple(params))
-                ranking = cur.fetchall()
-
-            match_params = []
-            match_filters = []
-
-            if selected_guild_id:
-                match_filters.append("guild_id = %s")
-                match_params.append(int(selected_guild_id))
-
-            if selected_game:
-                match_filters.append("game = %s")
-                match_params.append(selected_game)
-
-            match_where = ""
-            if match_filters:
-                match_where = "WHERE " + " AND ".join(match_filters)
-
-            cur.execute(
-                f"""
-                SELECT id, guild_id, game, winner_team, team_a_avg, team_b_avg, created_at
-                FROM matches
-                {match_where}
-                ORDER BY id DESC
-                LIMIT 20
-                """,
-                tuple(match_params)
-            )
-            matches = cur.fetchall()
-
-    active_premium_count = count_active_premium_guilds()
-    brand = get_selected_guild_brand(selected_guild_id)
-
-    return render_template_string(
-        get_brand_css(brand) + INDEX_HTML,
-        ranking=ranking,
-        matches=matches,
-        guilds=guilds,
-        games=games,
-        selected_guild_id=selected_guild_id,
-        selected_game=selected_game,
-        selected_ow_role=selected_ow_role,
-        overwatch_role_tabs=OVERWATCH_ROLE_TABS,
-        mmr_column_label=mmr_column_label,
-        q=q,
-        premium_price=PREMIUM_PRICE,
-        premium_days=PREMIUM_DAYS,
-        active_premium_count=active_premium_count,
-        brand=brand,
-    )
-
-
-
-@app.route("/guide")
-def guide_page():
-    return render_template_string(GUIDE_HTML)
-
-
-@app.route("/support")
-def support_page():
-    return render_template_string(
-        SUPPORT_HTML,
-        bank_name=BANK_NAME,
-        account_number=ACCOUNT_NUMBER,
-        account_holder=ACCOUNT_HOLDER,
-        premium_price=PREMIUM_PRICE,
-        premium_days=PREMIUM_DAYS,
-    )
-
-
-@app.route("/season")
-def season_page():
-    cleanup_expired_premium_guilds()
-
-    guild_id_raw = request.args.get("guild_id", "").strip()
-    selected_game = request.args.get("game", "").strip()
-
-    guilds = get_registered_guilds(active_only=True)
-
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT DISTINCT game FROM player_game_stats ORDER BY game ASC")
-            games = [row["game"] for row in cur.fetchall()]
-
-    season = None
-    ranking = []
-    matches = []
-    summary = {"player_count": 0, "avg_mmr": 0, "top_mmr": 0, "match_count": 0}
-    error_message = ""
-    brand = get_selected_guild_brand(guild_id_raw)
-
-    if guild_id_raw and selected_game:
-        if not guild_id_raw.isdigit():
-            error_message = "Guild ID는 숫자만 입력해주세요."
-        else:
-            guild_id = int(guild_id_raw)
-            if not has_premium_plan(guild_id, "supporter"):
-                error_message = "해당 서버는 서포터 이상 패키지가 아니어서 시즌 페이지를 사용할 수 없습니다."
-            else:
-                season = get_active_season(guild_id, selected_game)
-                if not season:
-                    error_message = "현재 이 게임의 활성 시즌이 없습니다."
-                else:
-                    ranking = get_season_ranking(guild_id, selected_game, season["id"], limit=50)
-                    matches = get_season_matches(guild_id, selected_game, season["id"], limit=20)
-                    summary = get_season_stats_summary(guild_id, selected_game, season["id"])
-
-    return render_template_string(
-        get_brand_css(brand) + SEASON_HTML,
-        guild_id=guild_id_raw,
-        selected_game=selected_game,
-        guilds=guilds,
-        games=games,
-        season=season,
-        ranking=ranking,
-        matches=matches,
-        summary=summary,
-        error_message=error_message,
-        brand=brand
-    )
-
-
-@app.route("/player/<int:guild_id>/<int:user_id>")
-def player_page(guild_id, user_id):
-    cleanup_expired_premium_guilds()
-
-    if not has_premium_plan(guild_id, "supporter"):
-        return render_template_string(
-            get_brand_css(get_clan_branding(guild_id)) + LOCKED_HTML,
-            message="상세 전적 페이지는 서포터 이상 패키지 전용입니다.",
-            required_plan_label=get_plan_label("supporter")
-        )
-
-    selected_ow_role = normalize_overwatch_role_tab(request.args.get("ow_role", "all"))
-
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT guild_id, user_id, display_name, mmr, win, lose
-                FROM players
-                WHERE guild_id = %s AND user_id = %s
-                """,
-                (guild_id, user_id)
-            )
-            player = cur.fetchone()
-
-            cur.execute(
-                """
-                SELECT game, mmr, win, lose,
-                CASE
-                    WHEN (win + lose) = 0 THEN 0
-                    ELSE ROUND((CAST(win AS NUMERIC) / (win + lose)) * 100, 1)
-                END AS winrate
-                FROM player_game_stats
-                WHERE guild_id = %s AND user_id = %s
-                ORDER BY game ASC
-                """,
-                (guild_id, user_id)
-            )
-            game_rows = cur.fetchall()
-
-            cur.execute(
-                """
-                SELECT role, mmr
-                FROM overwatch_role_mmr
-                WHERE guild_id = %s AND user_id = %s
-                ORDER BY CASE role
-                    WHEN '돌격' THEN 1
-                    WHEN '딜러' THEN 2
-                    WHEN '지원' THEN 3
-                    ELSE 99
-                END ASC
-                """,
-                (guild_id, user_id)
-            )
-            overwatch_role_rows = cur.fetchall()
-
-    if not player:
-        abort(404)
-
-    total = player["win"] + player["lose"]
-    winrate = round((player["win"] / total) * 100, 1) if total > 0 else 0.0
-
-    overwatch_row = next((row for row in game_rows if row["game"] == "overwatch"), None)
-    role_mmr_map = {row["role"]: row["mmr"] for row in overwatch_role_rows}
-    has_overwatch_data = bool(overwatch_row or overwatch_role_rows)
-
-    if selected_ow_role != "all" and selected_ow_role not in role_mmr_map:
-        selected_ow_role = "all"
-
-    selected_overwatch_role_mmr = role_mmr_map.get(selected_ow_role) if selected_ow_role != "all" else None
-    overwatch_summary_mmr = overwatch_row["mmr"] if overwatch_row else 0
-    overwatch_summary_win = overwatch_row["win"] if overwatch_row else 0
-    overwatch_summary_lose = overwatch_row["lose"] if overwatch_row else 0
-    overwatch_summary_winrate = overwatch_row["winrate"] if overwatch_row else 0
-
-    brand = get_clan_branding(guild_id)
-
-    return render_template_string(
-        get_brand_css(brand) + PLAYER_HTML,
-        player=player,
-        winrate=winrate,
-        game_rows=game_rows,
-        brand=brand,
-        has_overwatch_data=has_overwatch_data,
-        overwatch_role_tabs=OVERWATCH_ROLE_TABS,
-        selected_ow_role=selected_ow_role,
-        selected_ow_role_label=get_overwatch_role_tab_label(selected_ow_role),
-        overwatch_role_rows=overwatch_role_rows,
-        selected_overwatch_role_mmr=selected_overwatch_role_mmr,
-        overwatch_summary_mmr=overwatch_summary_mmr,
-        overwatch_summary_win=overwatch_summary_win,
-        overwatch_summary_lose=overwatch_summary_lose,
-        overwatch_summary_winrate=overwatch_summary_winrate,
-    )
-
-
-
-@app.route("/admin/premium")
-def admin_premium_page():
-    return render_template_string(ADMIN_PREMIUM_HTML)
-
-
-@app.route("/health")
-def health():
-    return {"ok": True}
-
-
-@app.route("/api/premium/request", methods=["POST"])
-def api_premium_request():
-    try:
-        data = request.get_json()
-
-        guild_id = str(data.get("guild_id") or "").strip()
-        plan_key = str(data.get("plan_key") or "supporter").strip().lower()
-        applicant_name = (data.get("applicant_name") or "").strip()
-        discord_tag = (data.get("discord_tag") or "").strip()
-        amount = str(data.get("amount") or "").strip()
-        memo = (data.get("memo") or "").strip()
-
-        if not guild_id:
-            return jsonify({"ok": False, "message": "서버 ID를 입력해주세요."}), 400
-
-        if not guild_id.isdigit():
-            return jsonify({"ok": False, "message": "서버 ID는 숫자만 입력해주세요."}), 400
-
-        if not applicant_name:
-            return jsonify({"ok": False, "message": "입금자명을 입력해주세요."}), 400
-
-        if not amount:
-            return jsonify({"ok": False, "message": "입금 금액을 입력해주세요."}), 400
-
-        if not amount.isdigit():
-            return jsonify({"ok": False, "message": "입금 금액은 숫자만 입력해주세요."}), 400
-
-        if plan_key not in PREMIUM_PACKAGES:
-            return jsonify({"ok": False, "message": "올바른 패키지를 선택해주세요."}), 400
-
-        row = create_premium_request(
-            guild_id=int(guild_id),
-            applicant_name=applicant_name,
-            amount=int(amount),
-            discord_tag=discord_tag if discord_tag else None,
-            memo=memo if memo else None,
-            plan_key=plan_key
-        )
-
-        return jsonify({
-            "ok": True,
-            "message": "프리미엄 신청이 접수되었습니다.",
-            "request_id": row["id"]
-        })
-
-    except Exception as e:
-        return jsonify({
-            "ok": False,
-            "message": f"서버 오류가 발생했습니다: {str(e)}"
-        }), 500
-
-
-@app.route("/api/admin/premium/requests", methods=["GET"])
-def api_admin_premium_requests():
-    try:
-        secret = request.headers.get("X-Admin-Secret", "").strip()
-        if not ADMIN_SECRET or secret != ADMIN_SECRET:
-            return jsonify({"ok": False, "message": "관리자 인증 실패"}), 403
-
-        rows = get_premium_requests(limit=200)
-
-        requests_data = []
-        for row in rows:
-            requests_data.append({
-                "id": row["id"],
-                "guild_id": row["guild_id"],
-                "applicant_name": row["applicant_name"],
-                "discord_tag": row.get("discord_tag"),
-                "amount": row["amount"],
-                "plan_key": row.get("plan_key"),
-                "plan_name": row.get("plan_name"),
-                "memo": row.get("memo"),
-                "status": row["status"],
-                "created_at": str(row["created_at"]),
-                "approved_at": str(row["approved_at"]) if row.get("approved_at") else None,
-                "approved_by": row.get("approved_by"),
-            })
-
-        return jsonify({"ok": True, "requests": requests_data})
-
-    except Exception as e:
-        return jsonify({
-            "ok": False,
-            "message": f"서버 오류가 발생했습니다: {str(e)}"
-        }), 500
-
-
-@app.route("/api/admin/premium/approve", methods=["POST"])
-def api_admin_premium_approve():
-    try:
-        secret = request.headers.get("X-Admin-Secret", "").strip()
-        if not ADMIN_SECRET or secret != ADMIN_SECRET:
-            return jsonify({"ok": False, "message": "관리자 인증 실패"}), 403
-
-        data = request.get_json()
-        request_id = str(data.get("request_id") or "").strip()
-        days = str(data.get("days") or PREMIUM_DAYS).strip()
-        plan_key = str(data.get("plan_key") or "supporter").strip().lower()
-        approved_by = (data.get("approved_by") or "admin").strip()
-
-        if not request_id or not request_id.isdigit():
-            return jsonify({"ok": False, "message": "request_id가 올바르지 않습니다."}), 400
-
-        if not str(days).isdigit():
-            return jsonify({"ok": False, "message": "days는 숫자여야 합니다."}), 400
-
-        if plan_key not in PREMIUM_PACKAGES:
-            return jsonify({"ok": False, "message": "plan_key가 올바르지 않습니다."}), 400
-
-        row = approve_premium_request(
-            request_id=int(request_id),
-            days=int(days),
-            approved_by=approved_by,
-            plan_key=plan_key
-        )
-
-        return jsonify({
-            "ok": True,
-            "message": "프리미엄이 활성화되었습니다.",
-            "guild_id": row["guild_id"],
-            "plan_key": row.get("plan_key"),
-            "plan_name": row.get("plan_name"),
-            "premium_until": str(row["premium_until"])
-        })
-
-    except Exception as e:
-        return jsonify({
-            "ok": False,
-            "message": f"서버 오류가 발생했습니다: {str(e)}"
-        }), 500
-
-
-@app.route("/api/admin/premium/reject", methods=["POST"])
-def api_admin_premium_reject():
-    try:
-        secret = request.headers.get("X-Admin-Secret", "").strip()
-        if not ADMIN_SECRET or secret != ADMIN_SECRET:
-            return jsonify({"ok": False, "message": "관리자 인증 실패"}), 403
-
-        data = request.get_json()
-        request_id = str(data.get("request_id") or "").strip()
-
-        if not request_id or not request_id.isdigit():
-            return jsonify({"ok": False, "message": "request_id가 올바르지 않습니다."}), 400
-
-        row = reject_premium_request(int(request_id))
-
-        if not row:
-            return jsonify({"ok": False, "message": "신청 내역을 찾을 수 없습니다."}), 404
-
-        return jsonify({
-            "ok": True,
-            "message": "프리미엄 신청이 거절 처리되었습니다.",
-            "request_id": row["id"]
-        })
-
-    except Exception as e:
-        return jsonify({
-            "ok": False,
-            "message": f"서버 오류가 발생했습니다: {str(e)}"
-        }), 500
-
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    """
+    루트 경로 접속 시 HTML_TEMPLATE을 렌더링하여 반환합니다.
+    """
+    return render_template_string(HTML_TEMPLATE)
+
+@app.route('/health')
+def health_check():
+    """웹 서버 및 봇의 상태를 확인하기 위한 API 엔드포인트입니다."""
+    return {"status": "online", "bot": "Scrim Lab"}, 200
+
+def run_web_server():
+    """
+    Flask 서버를 실행하는 함수입니다.
+    Heroku 등의 환경에서 PORT 환경 변수를 받아 사용합니다.
+    """
+    port = int(os.environ.get('PORT', 8080))
+    # debug=False로 설정하여 프로덕션 환경에 맞게 구동합니다.
+    app.run(host='0.0.0.0', port=port, debug=False)
+
+if __name__ == '__main__':
+    run_web_server()
