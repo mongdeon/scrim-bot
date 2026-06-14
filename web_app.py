@@ -1,10 +1,11 @@
 import os
-from flask import Flask, render_template_string
+from flask import Flask, render_template_string, request, jsonify
+# 실제 봇 DB와 연동하기 위해 core.db 모듈의 함수를 불러옵니다.
+from core.db import set_premium_days
 
 app = Flask(__name__)
 
 # Tailwind CSS 및 모던 UI가 적용된 HTML 템플릿
-# 별도의 HTML 파일 없이 이 변수에서 웹 페이지의 모든 디자인을 관리합니다.
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="ko" class="scroll-smooth">
@@ -12,11 +13,8 @@ HTML_TEMPLATE = """
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>내전랩 - 완벽한 디스코드 내전 솔루션</title>
-    <!-- Tailwind CSS (CDN) -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- FontAwesome 아이콘 -->
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
-    <!-- Pretendard 폰트 -->
     <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.8/dist/web/static/pretendard.css" />
     
     <script>
@@ -41,13 +39,13 @@ HTML_TEMPLATE = """
         function openModal(modalId) {
             document.getElementById(modalId).classList.remove('hidden');
             document.getElementById(modalId).classList.add('flex');
-            document.body.style.overflow = 'hidden'; // 배경 스크롤 방지
+            document.body.style.overflow = 'hidden'; 
         }
 
         function closeModal(modalId) {
             document.getElementById(modalId).classList.add('hidden');
             document.getElementById(modalId).classList.remove('flex');
-            document.body.style.overflow = 'auto'; // 배경 스크롤 원복
+            document.body.style.overflow = 'auto'; 
         }
 
         // 공통 커스텀 알림(Alert) 기능
@@ -58,7 +56,6 @@ HTML_TEMPLATE = """
 
         // 관리자 권한 확인 및 모달 열기 (비밀번호 보호)
         function checkAdminAndOpen() {
-            // 커스텀 비밀번호 입력 모달 열기
             document.getElementById('adminPasswordInput').value = '';
             document.getElementById('adminAuthError').classList.add('hidden');
             openModal('adminAuthModal');
@@ -77,17 +74,41 @@ HTML_TEMPLATE = """
             }
         }
 
-        // 관리자 권한 부여 기능 (프론트 UI 테스트용)
-        function grantPremium() {
+        // [핵심] 실제 봇 서버(DB)와 통신하여 권한을 부여하는 기능
+        async function grantPremium() {
             const serverId = document.getElementById('adminServerId').value;
             const packageType = document.getElementById('adminPackage').options[document.getElementById('adminPackage').selectedIndex].text;
+            const password = document.getElementById('adminPasswordInput').value;
+
             if(!serverId) { 
                 showAlert("서버 ID를 입력해주세요."); 
                 return; 
             }
-            showAlert("✅ 서버 ID [" + serverId + "] 에 [" + packageType + "] 권한이 성공적으로 부여되었습니다.");
-            closeModal('adminModal');
-            document.getElementById('adminServerId').value = '';
+            
+            try {
+                // Flask 백엔드의 /api/premium 라우트로 POST 요청 전송
+                const response = await fetch('/api/premium', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        guild_id: serverId,
+                        package_type: packageType,
+                        password: password
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    showAlert(result.message);
+                    closeModal('adminModal');
+                    document.getElementById('adminServerId').value = '';
+                } else {
+                    showAlert("⛔ 오류: " + result.message);
+                }
+            } catch (error) {
+                showAlert("❌ 서버 통신 중 오류가 발생했습니다.");
+            }
         }
 
         // 임시 전적 검색 기능
@@ -171,7 +192,6 @@ HTML_TEMPLATE = """
 </head>
 <body class="antialiased min-h-screen flex flex-col font-sans relative">
 
-    <!-- 네비게이션 바 -->
     <nav class="fixed w-full z-50 glass-card border-b border-white/10" style="transform: none !important;">
         <div class="max-w-7xl mx-auto px-6 lg:px-8">
             <div class="flex items-center justify-between h-16">
@@ -200,9 +220,7 @@ HTML_TEMPLATE = """
         </div>
     </nav>
 
-    <!-- 히어로 섹션 (메인 화면) -->
     <main class="flex-grow pt-32 pb-12 flex items-center justify-center relative">
-        <!-- 배경 장식 효과 -->
         <div class="absolute top-1/4 left-1/4 w-96 h-96 bg-discord/20 rounded-full blur-[120px] pointer-events-none"></div>
         <div class="absolute bottom-1/4 right-1/4 w-96 h-96 bg-cyan-500/20 rounded-full blur-[120px] pointer-events-none"></div>
 
@@ -228,10 +246,8 @@ HTML_TEMPLATE = """
         </div>
     </main>
 
-    <!-- 주요 기능 섹션 (패키지별 안내) -->
     <section id="features" class="py-20 relative z-10 bg-[#0A0A0C]">
         <div class="max-w-7xl mx-auto px-6 lg:px-8">
-            
             <div class="text-center mb-16">
                 <h2 class="text-3xl font-bold text-white mb-4">내전랩 패키지 안내</h2>
                 <p class="text-gray-400">서버의 규모와 운영 방식에 맞는 최적의 패키지를 선택하세요.</p>
@@ -240,7 +256,6 @@ HTML_TEMPLATE = """
             
             <div class="grid grid-cols-1 md:grid-cols-3 gap-8 items-center">
                 
-                <!-- 서포터 패키지 -->
                 <div class="glass-card p-8 rounded-2xl flex flex-col h-[500px] hover:-translate-y-2 transition-transform duration-300">
                     <div class="mb-6">
                         <span class="text-blue-400 font-bold tracking-wider text-xs uppercase bg-blue-500/10 px-3 py-1 rounded-full border border-blue-500/20">Supporter</span>
@@ -260,7 +275,6 @@ HTML_TEMPLATE = """
                     <button onclick="openModal('donateModal')" class="w-full py-3 rounded-lg font-bold bg-white/5 hover:bg-white/10 text-white border border-white/10 transition-colors">자세히 보기</button>
                 </div>
                 
-                <!-- 프로 패키지 (강조) -->
                 <div class="glass-card p-8 rounded-2xl flex flex-col h-[550px] border-premium/50 shadow-[0_0_30px_rgba(245,196,81,0.1)] relative transform md:-translate-y-4 z-10 bg-gradient-to-b from-[#1E1E1E] to-[#121212]">
                     <div class="absolute -top-3 left-1/2 transform -translate-x-1/2 bg-premium text-[#0F1014] font-extrabold text-xs px-4 py-1.5 rounded-full flex items-center gap-1 shadow-lg">
                         <i class="fa-solid fa-star"></i> BEST PICK
@@ -291,7 +305,6 @@ HTML_TEMPLATE = """
                     <button onclick="openModal('donateModal')" class="w-full py-4 rounded-lg font-bold bg-premium hover:bg-yellow-500 text-[#0F1014] transition-colors shadow-lg shadow-premium/20">패키지 신청하기</button>
                 </div>
 
-                <!-- 클랜 패키지 -->
                 <div class="glass-card p-8 rounded-2xl flex flex-col h-[500px] hover:-translate-y-2 transition-transform duration-300">
                     <div class="mb-6">
                         <span class="text-purple-400 font-bold tracking-wider text-xs uppercase bg-purple-500/10 px-3 py-1 rounded-full border border-purple-500/20">Clan</span>
@@ -318,12 +331,10 @@ HTML_TEMPLATE = """
                     </ul>
                     <button onclick="openModal('donateModal')" class="w-full py-3 rounded-lg font-bold bg-white/5 hover:bg-white/10 text-white border border-white/10 transition-colors">자세히 보기</button>
                 </div>
-
             </div>
         </div>
     </section>
 
-    <!-- 서버별 전적 검색 섹션 -->
     <section id="records" class="py-20 relative z-10 bg-[#0F1014] border-t border-white/5">
         <div class="max-w-4xl mx-auto px-6 lg:px-8 text-center">
             <i class="fa-solid fa-magnifying-glass-chart text-4xl text-discord mb-6"></i>
@@ -339,15 +350,10 @@ HTML_TEMPLATE = """
                     전적 검색
                 </button>
             </div>
-
-            <!-- 검색 결과 표시 영역 (기본 숨김) -->
-            <div id="searchResult" class="hidden mt-8 glass-card p-8 rounded-xl transition-all duration-300">
-                <!-- 결과 내용은 스크립트에서 채워집니다 -->
-            </div>
+            <div id="searchResult" class="hidden mt-8 glass-card p-8 rounded-xl transition-all duration-300"></div>
         </div>
     </section>
 
-    <!-- 푸터 -->
     <footer class="bg-[#050505] py-10 border-t border-white/10 relative z-10">
         <div class="max-w-7xl mx-auto px-6 lg:px-8 flex flex-col md:flex-row items-center justify-between">
             <div class="flex items-center gap-2 mb-4 md:mb-0">
@@ -365,10 +371,8 @@ HTML_TEMPLATE = """
         </div>
     </footer>
 
-    <!-- 사용 설명서 모달 -->
     <div id="manualModal" class="fixed inset-0 z-[100] hidden items-center justify-center p-4 sm:p-6 bg-black/80 backdrop-blur-sm transition-opacity">
         <div class="glass-card w-full max-w-3xl max-h-[90vh] overflow-hidden flex flex-col rounded-2xl relative border-discord/30 shadow-[0_0_50px_rgba(88,101,242,0.15)]">
-            
             <div class="p-6 border-b border-white/10 flex justify-between items-center bg-[#121212]/80">
                 <h2 class="text-2xl font-bold text-white flex items-center gap-2">
                     <i class="fa-solid fa-book-open text-discord"></i> 내전랩 5분 완성 가이드
@@ -377,12 +381,10 @@ HTML_TEMPLATE = """
                     <i class="fa-solid fa-xmark"></i>
                 </button>
             </div>
-            
             <div class="p-6 overflow-y-auto custom-scrollbar flex-grow bg-[#0A0A0C]">
                 <p class="text-gray-400 mb-8">내전랩 봇을 처음 사용하시나요? 아래 순서대로 슬래시(<code>/</code>) 명령어를 입력하여 내전을 시작해보세요!</p>
 
                 <div class="space-y-6">
-                    <!-- Step 1 -->
                     <div class="flex gap-4">
                         <div class="flex-shrink-0 w-8 h-8 rounded-full bg-discord text-white flex items-center justify-center font-bold">1</div>
                         <div>
@@ -390,8 +392,6 @@ HTML_TEMPLATE = """
                             <p class="text-gray-400 text-sm">봇을 서버에 초대한 후 관리자가 가장 먼저 해야 할 일입니다. <code>/설정보기</code>, <code>/설정역할</code>, <code>/설정카테고리</code>, <code>/설정로그채널</code>, <code>/설정팀결과채널</code>, <code>/설정공지채널</code> 명령어를 통해 서버 환경에 맞게 봇을 세팅합니다.</p>
                         </div>
                     </div>
-
-                    <!-- Step 2 -->
                     <div class="flex gap-4">
                         <div class="flex-shrink-0 w-8 h-8 rounded-full bg-blue-500 text-white flex items-center justify-center font-bold">2</div>
                         <div>
@@ -399,8 +399,6 @@ HTML_TEMPLATE = """
                             <p class="text-gray-400 text-sm">명령어를 입력하면 참가 버튼이 있는 패널이 생성됩니다. 서버 유저들은 <strong>[참가하기]</strong> 버튼을 눌러 내전에 등록합니다.</p>
                         </div>
                     </div>
-
-                    <!-- Step 3 -->
                     <div class="flex gap-4">
                         <div class="flex-shrink-0 w-8 h-8 rounded-full bg-purple-500 text-white flex items-center justify-center font-bold">3</div>
                         <div>
@@ -408,8 +406,6 @@ HTML_TEMPLATE = """
                             <p class="text-gray-400 text-sm">인원이 모두 모이면 이 명령어를 사용하세요. 봇이 유저들의 과거 전적과 MMR을 분석하여 가장 공평한 두 팀(1팀/2팀)으로 알아서 나누어 줍니다.</p>
                         </div>
                     </div>
-
-                    <!-- Step 4 -->
                     <div class="flex gap-4">
                         <div class="flex-shrink-0 w-8 h-8 rounded-full bg-red-500 text-white flex items-center justify-center font-bold">4</div>
                         <div>
@@ -417,8 +413,6 @@ HTML_TEMPLATE = """
                             <p class="text-gray-400 text-sm">경기를 진행할 맵을 정해야 한다면 이 명령어를 사용하세요. 해당 게임의 공식 맵들 중에서 무작위로 하나의 맵이 자동으로 뽑힙니다.</p>
                         </div>
                     </div>
-
-                    <!-- Step 5 -->
                     <div class="flex gap-4">
                         <div class="flex-shrink-0 w-8 h-8 rounded-full bg-green-500 text-white flex items-center justify-center font-bold">5</div>
                         <div>
@@ -428,17 +422,14 @@ HTML_TEMPLATE = """
                     </div>
                 </div>
             </div>
-            
             <div class="p-4 border-t border-white/10 bg-[#121212]/80 text-right">
                 <button onclick="closeModal('manualModal')" class="bg-gray-700 hover:bg-gray-600 text-white px-6 py-2 rounded-lg text-sm font-bold transition-colors">닫기</button>
             </div>
         </div>
     </div>
 
-    <!-- 후원/패키지 신청 안내 모달 -->
     <div id="donateModal" class="fixed inset-0 z-[100] hidden items-center justify-center p-4 sm:p-6 bg-black/80 backdrop-blur-sm transition-opacity">
         <div class="glass-card w-full max-w-md overflow-hidden flex flex-col rounded-2xl relative border-premium/30 shadow-[0_0_50px_rgba(245,196,81,0.15)]">
-            
             <div class="p-6 border-b border-white/10 flex justify-between items-center bg-[#121212]/80">
                 <h2 class="text-xl font-bold text-white flex items-center gap-2">
                     <i class="fa-solid fa-crown text-premium"></i> 내전랩 패키지 후원
@@ -447,7 +438,6 @@ HTML_TEMPLATE = """
                     <i class="fa-solid fa-xmark"></i>
                 </button>
             </div>
-            
             <div class="p-8 bg-[#0A0A0C]">
                 <div class="text-center mb-6">
                     <div class="w-16 h-16 bg-premium/20 rounded-full flex items-center justify-center mx-auto mb-4">
@@ -458,21 +448,16 @@ HTML_TEMPLATE = """
                         <strong class="text-premium">내전랩 패키지별 프리미엄 기능 권한</strong>이 부여됩니다.
                     </p>
                 </div>
-
-                <!-- 후원 계좌 안내 영역 -->
                 <div class="bg-[#121212] p-4 rounded-xl border border-white/5 mb-6">
                     <h4 class="text-white font-bold text-sm mb-3 flex items-center"><i class="fa-solid fa-won-sign text-green-400 mr-2"></i>후원 계좌 안내</h4>
-                    
                     <div class="flex justify-between items-center bg-black/40 p-3 rounded-lg">
                         <div class="flex flex-col">
                             <span class="text-xs text-gray-500 mb-1">토스뱅크 (예금주: 김태용)</span>
-                            <span class="text-gray-300 text-sm font-mono">3333-00-0000000</span>
+                            <span class="text-gray-300 text-sm font-mono">1000-0103-2111</span>
                         </div>
                         <button onclick="copyAccount('100001032111')" class="text-xs bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded transition-colors text-white font-bold">복사</button>
                     </div>
                 </div>
-
-                <!-- 프리미엄 신청 절차 영역 -->
                 <div class="text-left mb-6">
                     <h4 class="text-white font-bold text-sm mb-3 flex items-center"><i class="fa-brands fa-discord text-discord mr-2"></i>패키지 신청 방법</h4>
                     <ol class="text-sm text-gray-400 space-y-2.5 ml-1">
@@ -481,7 +466,6 @@ HTML_TEMPLATE = """
                         <li class="flex items-start"><span class="text-discord font-bold mr-2">3.</span> <span class="bg-white/10 px-1.5 py-0.5 rounded text-gray-200 text-xs mt-0.5 mx-1">#프리미엄-신청</span> 채널에서 티켓을 열고 내역을 남겨주세요.</li>
                     </ol>
                 </div>
-
                 <a href="https://discord.gg/FgX5mkY93K" target="_blank" class="flex justify-center items-center gap-2 w-full bg-discord hover:bg-discordHover text-white font-bold py-3.5 rounded-lg transition-colors shadow-lg">
                     <i class="fa-brands fa-discord"></i> 공식 서포트 서버 입장하기
                 </a>
@@ -489,10 +473,8 @@ HTML_TEMPLATE = """
         </div>
     </div>
 
-    <!-- 관리자 전용 서버 ID 프리미엄 부여 모달 -->
     <div id="adminModal" class="fixed inset-0 z-[100] hidden items-center justify-center p-4 sm:p-6 bg-black/80 backdrop-blur-sm transition-opacity">
         <div class="glass-card w-full max-w-md overflow-hidden flex flex-col rounded-2xl relative border-red-500/30 shadow-[0_0_50px_rgba(239,68,68,0.15)]">
-            
             <div class="p-6 border-b border-white/10 flex justify-between items-center bg-[#121212]/80">
                 <h2 class="text-xl font-bold text-white flex items-center gap-2">
                     <i class="fa-solid fa-shield-halved text-red-400"></i> 관리자 대시보드
@@ -501,7 +483,6 @@ HTML_TEMPLATE = """
                     <i class="fa-solid fa-xmark"></i>
                 </button>
             </div>
-            
             <div class="p-8 bg-[#0A0A0C]">
                 <div class="text-center mb-6">
                     <p class="text-gray-300 text-sm leading-relaxed">
@@ -509,13 +490,11 @@ HTML_TEMPLATE = """
                         대상 서버에 프리미엄 권한을 수동으로 부여합니다.
                     </p>
                 </div>
-
                 <div class="space-y-4 mb-6">
                     <div>
                         <label class="block text-sm font-bold text-gray-400 mb-2">디스코드 서버 ID</label>
                         <input type="text" id="adminServerId" placeholder="예: 123456789012345678" class="w-full bg-[#121212] border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-red-400 transition-colors placeholder-gray-600" />
                     </div>
-                    
                     <div>
                         <label class="block text-sm font-bold text-gray-400 mb-2">부여할 패키지 선택</label>
                         <select id="adminPackage" class="w-full bg-[#121212] border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-red-400 transition-colors appearance-none">
@@ -525,7 +504,6 @@ HTML_TEMPLATE = """
                         </select>
                     </div>
                 </div>
-
                 <button onclick="grantPremium()" class="flex justify-center items-center gap-2 w-full bg-red-500 hover:bg-red-600 text-white font-bold py-3.5 rounded-lg transition-colors shadow-lg">
                     <i class="fa-solid fa-check"></i> 프리미엄 권한 즉시 부여
                 </button>
@@ -533,7 +511,6 @@ HTML_TEMPLATE = """
         </div>
     </div>
 
-    <!-- 관리자 인증 (비밀번호 입력) 모달 -->
     <div id="adminAuthModal" class="fixed inset-0 z-[110] hidden items-center justify-center p-4 sm:p-6 bg-black/80 backdrop-blur-sm transition-opacity">
         <div class="glass-card w-full max-w-sm overflow-hidden flex flex-col rounded-2xl relative border-red-500/30 shadow-[0_0_50px_rgba(239,68,68,0.15)]">
             <div class="p-5 border-b border-white/10 flex justify-between items-center bg-[#121212]/80">
@@ -553,7 +530,6 @@ HTML_TEMPLATE = """
         </div>
     </div>
     
-    <!-- 커스텀 알림(Alert) 모달 -->
     <div id="alertModal" class="fixed inset-0 z-[120] hidden items-center justify-center p-4 sm:p-6 bg-black/80 backdrop-blur-sm transition-opacity">
         <div class="glass-card w-full max-w-sm overflow-hidden flex flex-col rounded-2xl relative border-discord/30">
             <div class="p-6 bg-[#0A0A0C] text-center">
@@ -572,10 +548,38 @@ HTML_TEMPLATE = """
 
 @app.route('/')
 def index():
-    """
-    루트 경로 접속 시 HTML_TEMPLATE을 렌더링하여 반환합니다.
-    """
+    """루트 경로 접속 시 HTML_TEMPLATE을 렌더링하여 반환합니다."""
     return render_template_string(HTML_TEMPLATE)
+
+# [추가된 부분] 프론트엔드의 JavaScript에서 데이터를 받아 실제 DB에 프리미엄 권한을 부여하는 API
+@app.route('/api/premium', methods=['POST'])
+def api_grant_premium():
+    data = request.json
+    guild_id = data.get('guild_id')
+    package_type = data.get('package_type')
+    password = data.get('password')
+
+    # 보안 검증 (프론트엔드와 일치하는지 재확인)
+    if password != "secretlabcode07128":
+        return jsonify({"success": False, "message": "권한이 거부되었습니다. 비밀번호를 확인해주세요."}), 403
+
+    if not guild_id or not package_type:
+        return jsonify({"success": False, "message": "서버 ID와 패키지 종류가 정확하지 않습니다."}), 400
+
+    plan_map = {
+        "서포터 (Supporter)": "supporter",
+        "프로 (Pro)": "pro",
+        "클랜 (Clan)": "clan"
+    }
+    
+    plan_key = plan_map.get(package_type, "supporter")
+    
+    try:
+        # 실제 봇의 데이터베이스(core/db.py)에 권한 부여 (기본 30일 설정)
+        set_premium_days(int(guild_id), days=30, plan_key=plan_key)
+        return jsonify({"success": True, "message": f"서버 ID [{guild_id}]에 [{package_type}] 권한이 성공적으로 부여되었습니다!"})
+    except Exception as e:
+        return jsonify({"success": False, "message": f"데이터베이스 업데이트 실패: {str(e)}"}), 500
 
 @app.route('/health')
 def health_check():
@@ -583,12 +587,8 @@ def health_check():
     return {"status": "online", "bot": "Scrim Lab"}, 200
 
 def run_web_server():
-    """
-    Flask 서버를 실행하는 함수입니다.
-    Heroku 등의 환경에서 PORT 환경 변수를 받아 사용합니다.
-    """
+    """Flask 서버를 실행하는 함수입니다. (Railway의 PORT 환경변수 대응)"""
     port = int(os.environ.get('PORT', 8080))
-    # debug=False로 설정하여 프로덕션 환경에 맞게 구동합니다.
     app.run(host='0.0.0.0', port=port, debug=False)
 
 if __name__ == '__main__':
