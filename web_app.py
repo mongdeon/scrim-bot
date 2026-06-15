@@ -265,10 +265,16 @@ HTML_TEMPLATE = """
             </div>
             
             <div class="grid grid-cols-1 md:grid-cols-3 gap-8 items-center">
+                
+                <!-- 서포터 패키지 -->
                 <div class="glass-card p-8 rounded-2xl flex flex-col h-[500px] hover:-translate-y-2 transition-transform duration-300">
                     <div class="mb-6">
                         <span class="text-blue-400 font-bold tracking-wider text-xs uppercase bg-blue-500/10 px-3 py-1 rounded-full border border-blue-500/20">Supporter</span>
-                        <h3 class="text-2xl font-bold text-white mt-4 mb-2">서포터</h3>
+                        <h3 class="text-2xl font-bold text-white mt-4 mb-1">서포터</h3>
+                        <div class="flex items-baseline gap-1 mb-2">
+                            <span class="text-3xl font-extrabold text-white">3,000</span>
+                            <span class="text-gray-400 font-medium">원 / 30일</span>
+                        </div>
                         <p class="text-gray-400 text-sm">소규모 내전 서버를 위한 기본 강화 패키지</p>
                     </div>
                     <ul class="space-y-4 mb-8 flex-grow">
@@ -284,13 +290,18 @@ HTML_TEMPLATE = """
                     <button onclick="openModal('donateModal')" class="w-full py-3 rounded-lg font-bold bg-white/5 hover:bg-white/10 text-white border border-white/10 transition-colors">자세히 보기</button>
                 </div>
                 
+                <!-- 프로 패키지 -->
                 <div class="glass-card p-8 rounded-2xl flex flex-col h-[550px] border-premium/50 shadow-[0_0_30px_rgba(245,196,81,0.1)] relative transform md:-translate-y-4 z-10 bg-gradient-to-b from-[#1E1E1E] to-[#121212]">
                     <div class="absolute -top-3 left-1/2 transform -translate-x-1/2 bg-premium text-[#0F1014] font-extrabold text-xs px-4 py-1.5 rounded-full flex items-center gap-1 shadow-lg">
                         <i class="fa-solid fa-star"></i> BEST PICK
                     </div>
                     <div class="mb-6">
                         <span class="text-premium font-bold tracking-wider text-xs uppercase bg-premium/10 px-3 py-1 rounded-full border border-premium/20">Pro</span>
-                        <h3 class="text-3xl font-bold text-white mt-4 mb-2">프로</h3>
+                        <h3 class="text-3xl font-bold text-white mt-4 mb-1">프로</h3>
+                        <div class="flex items-baseline gap-1 mb-2">
+                            <span class="text-4xl font-extrabold text-white">4,990</span>
+                            <span class="text-gray-400 font-medium">원 / 30일</span>
+                        </div>
                         <p class="text-gray-400 text-sm">가장 인기있는 체계적인 내전 운영 패키지</p>
                     </div>
                     <ul class="space-y-4 mb-8 flex-grow">
@@ -314,10 +325,15 @@ HTML_TEMPLATE = """
                     <button onclick="openModal('donateModal')" class="w-full py-4 rounded-lg font-bold bg-premium hover:bg-yellow-500 text-[#0F1014] transition-colors shadow-lg shadow-premium/20">패키지 신청하기</button>
                 </div>
 
+                <!-- 클랜 패키지 -->
                 <div class="glass-card p-8 rounded-2xl flex flex-col h-[500px] hover:-translate-y-2 transition-transform duration-300">
                     <div class="mb-6">
                         <span class="text-purple-400 font-bold tracking-wider text-xs uppercase bg-purple-500/10 px-3 py-1 rounded-full border border-purple-500/20">Clan</span>
-                        <h3 class="text-2xl font-bold text-white mt-4 mb-2">클랜</h3>
+                        <h3 class="text-2xl font-bold text-white mt-4 mb-1">클랜</h3>
+                        <div class="flex items-baseline gap-1 mb-2">
+                            <span class="text-3xl font-extrabold text-white">6,990</span>
+                            <span class="text-gray-400 font-medium">원 / 30일</span>
+                        </div>
                         <p class="text-gray-400 text-sm">대규모 클랜 및 커뮤니티 전용 프리미엄 패키지</p>
                     </div>
                     <ul class="space-y-4 mb-8 flex-grow">
@@ -386,6 +402,7 @@ HTML_TEMPLATE = """
         </div>
     </footer>
 
+    <!-- 모달 레이아웃 구조 -->
     <div id="manualModal" class="fixed inset-0 z-[100] hidden items-center justify-center p-4 sm:p-6 bg-black/80 backdrop-blur-sm transition-opacity">
         <div class="glass-card w-full max-w-3xl max-h-[90vh] overflow-hidden flex flex-col rounded-2xl relative border-discord/30 shadow-[0_0_50px_rgba(88,101,242,0.15)]">
             <div class="p-6 border-b border-white/10 flex justify-between items-center bg-[#121212]/80">

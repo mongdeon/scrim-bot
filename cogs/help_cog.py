@@ -19,7 +19,7 @@ class HelpView(discord.ui.View):
         # 프리미엄 패키지 안내 및 후원 버튼
         self.add_item(discord.ui.Button(
             label="프리미엄 패키지 안내", 
-            url="https://elegant-cooperation-production-03d5.up.railway.app/support", 
+            url="https://elegant-cooperation-production-03d5.up.railway.app/", 
             style=discord.ButtonStyle.link,
             emoji="⭐"
         ))

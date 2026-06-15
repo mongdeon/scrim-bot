@@ -3,7 +3,7 @@ from discord.ext import commands
 from discord import app_commands
 
 BOT_INVITE_URL = "https://discord.com/oauth2/authorize?client_id=1485512756550570094&permissions=20016128&integration_type=0&scope=bot+applications.commands"
-SUPPORT_SERVER_URL = "https://elegant-cooperation-production-03d5.up.railway.app//support"
+SUPPORT_SERVER_URL = "https://discord.gg/FgX5mkY93K"
 WEBSITE_URL = "https://elegant-cooperation-production-03d5.up.railway.app/"
 
 
