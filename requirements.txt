@@ -1,5 +1,4 @@
 discord.py
-psycopg2-binary
-python-dotenv
 Flask
-gunicorn
+motor
+asyncpg==0.29.0
