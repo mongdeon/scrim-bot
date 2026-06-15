@@ -1,4 +1,4 @@
 discord.py
 Flask
 motor
-asyncpg==0.29.0
+asyncpg
